@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Privacy Policy - AI VoiceSum</title>
+</head>
+<body>
+    <h1>Privacy Policy</h1>
+    <p><strong>Effective Date:</strong> 2024-07-05</p>
+
+    <h2>1. Introduction</h2>
+    <p>Welcome to <strong>AI VoiceSum</strong>. This Privacy Policy explains how we collect, use, and protect your personal information when you use our mobile application (the App).<br>
+    Your privacy is important to us, and we are committed to complying with applicable privacy laws and Google Play policies.</p>
+
+    <h2>2. Information We Collect</h2>
+    <p>When using our app, we may collect the following types of information:</p>
+    
+    <h3>a. Audio Recordings</h3>
+    <ul>
+        <li>We collect audio recordings that you choose to transcribe, translate, or summarize.</li>
+        <li>Audio data is processed by third-party services (AssemblyAI, translation services) to provide you with results.</li>
+        <li>Audio data is not stored on our servers permanently, only temporarily for processing.</li>
+    </ul>
+
+    <h3>b. Personal Information</h3>
+    <ul>
+        <li>If you sign in with Google or another authentication method, we may collect your name, email address, and profile picture.</li>
+        <li>This data is used only to create and manage your account.</li>
+    </ul>
+
+    <h3>c. Device Information</h3>
+    <ul>
+        <li>We may collect basic device information (e.g., device model, operating system) to improve app performance and troubleshoot issues.</li>
+    </ul>
+
+    <h2>3. How We Use Your Information</h2>
+    <ul>
+        <li>Transcribe and translate your audio recordings.</li>
+        <li>Generate AI-powered summaries.</li>
+        <li>Improve app functionality and user experience.</li>
+        <li>Provide customer support.</li>
+        <li>Comply with legal requirements.</li>
+    </ul>
+
+    <h2>4. Third-Party Services</h2>
+    <p>We may share your data with the following services strictly for processing purposes:</p>
+    <ul>
+        <li>AssemblyAI for speech recognition.</li>
+        <li>Translation APIs (e.g., LibreTranslate, Google Translate, Azure) for translations.</li>
+        <li>Authentication and payment providers (Google Play Billing, Google Sign-In).</li>
+    </ul>
+    <p>These services are required to comply with their own privacy policies and data protection standards.</p>
+
+    <h2>5. Data Security</h2>
+    <p>We implement reasonable security measures to protect your data. However, no system is 100% secure. By using our app, you acknowledge these risks.</p>
+
+    <h2>6. Data Retention</h2>
+    <ul>
+        <li>Audio and transcription data are only retained for the duration necessary to complete processing.</li>
+        <li>Personal account information is retained as long as your account is active.</li>
+    </ul>
+
+    <h2>7. Your Rights</h2>
+    <p>You may:</p>
+    <ul>
+        <li>Access, update, or delete your personal data by contacting us at: <a href="mailto:alaa.zekroum@gmail.com">alaa.zekroum@gmail.com</a></li>
+        <li>Delete your account and related data via the app's settings.</li>
+    </ul>
+
+    <h2>8. Children's Privacy</h2>
+    <p>This app is not intended for children under 13 years of age. If we learn that we have collected data from a child, we will delete it promptly.</p>
+
+</body>
+</html>
