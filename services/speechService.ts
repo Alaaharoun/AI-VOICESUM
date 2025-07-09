@@ -221,8 +221,16 @@ export class SpeechService {
         throw new Error('Request timeout. Please check your internet connection and try again.');
       }
       
-      // أعد رسالة الخطأ الحقيقية للمستخدم
-      throw new Error(error?.message || String(error) || 'Failed to transcribe audio via live translation server');
+      // حل بديل: استخدم AssemblyAI مباشرة
+      console.log('Falling back to direct AssemblyAI transcription...');
+      try {
+        const transcription = await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+        console.log('Direct AssemblyAI transcription successful:', transcription);
+        return transcription;
+      } catch (fallbackError) {
+        console.error('Fallback transcription also failed:', fallbackError);
+        throw new Error('All transcription methods failed. Please try again later.');
+      }
     }
   }
 

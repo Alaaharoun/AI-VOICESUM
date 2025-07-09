@@ -591,8 +591,8 @@ export default function RecordScreen() {
           setCurrentSummary('');
         } else {
           setCurrentSummary(summary);
-          // انتقل مباشرة إلى صفحة الملخص مع تمرير النصوص المطلوبة
-          router.push({
+          // انتقل إلى صفحة الملخص مع تمرير النصوص المطلوبة
+          router.navigate({
             pathname: '/(tabs)/summary-view',
             params: {
               summary,
@@ -600,9 +600,8 @@ export default function RecordScreen() {
               translation: currentTranslation,
               targetLanguage: selectedLanguage ? selectedLanguage.name : '',
             }
-          });
+          } as any);
         }
-        // لا نحفظ هنا لتجنب التعدد - سيتم الحفظ في handleBackToHome
       }, selectedLanguage?.code);
     } catch (error) {
       console.error('Summary generation error:', error);
