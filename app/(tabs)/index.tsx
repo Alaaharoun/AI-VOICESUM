@@ -546,37 +546,36 @@ export default function RecordScreen() {
   };
 
   const handleStopRecording = async () => {
+    if (!isRecording) return;
+    
     try {
-      if (isRealTimeMode) {
-        await stopRealTimeTranscription();
-      } else {
       const audioBlob = await stopRecording();
       
-      // Update daily usage for trial users
-      if (hasFreeTrial && !isSubscribed && recordingDuration > 0) {
-        await updateDailyUsage(recordingDuration);
-      }
-      
       if (audioBlob) {
+        console.log('Processing recorded audio...');
         await processAudio(
           audioBlob,
-            async (transcription) => {
-              setCurrentTranscription(transcription);
-              
-              // Translate if language is selected
-              if (selectedLanguage && transcription) {
-                try {
-                  const { SpeechService } = await import('@/services/speechService');
-                  const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
-                  setCurrentTranslation(translation);
-                } catch (error) {
-                  console.error('Translation error:', error);
-                  // Don't show alert for translation errors, just log them
-                }
-              }
-            },
-          () => {} // No automatic summary generation
+          (transcription) => {
+            setCurrentTranscription(transcription);
+            console.log('Transcription completed:', transcription);
+          },
+          (summary) => {
+            setCurrentSummary(summary);
+            console.log('Summary completed:', summary);
+          },
+          selectedLanguage?.code
         );
+        
+        // ترجمة النص إذا تم اختيار لغة هدف
+        if (selectedLanguage && currentTranscription) {
+          try {
+            const { SpeechService } = await import('@/services/speechService');
+            const translation = await SpeechService.translateText(currentTranscription, selectedLanguage.code);
+            setCurrentTranslation(translation);
+            console.log('Translation completed:', translation);
+          } catch (error) {
+            console.error('Translation error:', error);
+          }
         }
       }
     } catch (error) {

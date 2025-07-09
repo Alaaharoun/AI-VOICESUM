@@ -177,6 +177,7 @@ export class SpeechService {
       const formData = new FormData();
       // استخدم الصيغة الأصلية للصوت
       console.log('Sending audio to server with type:', audioBlob.type);
+      console.log('Audio blob size:', audioBlob.size);
       formData.append('audio', audioBlob, 'audio.' + audioBlob.type.split('/')[1]);
       formData.append('targetLanguage', targetLanguage || '');
       formData.append('sourceLanguage', sourceLanguage || '');
@@ -185,6 +186,7 @@ export class SpeechService {
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 ثانية timeout
 
+      console.log('Making request to server:', serverUrl);
       const response = await fetch(serverUrl, {
         method: 'POST',
         body: formData,
@@ -193,12 +195,17 @@ export class SpeechService {
       
       clearTimeout(timeoutId);
       
+      console.log('Server response status:', response.status);
+      console.log('Server response headers:', response.headers);
+      
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Live translation server error:', response.status, errorText);
         throw new Error(`Live translation server error: ${response.status} ${errorText}`);
       }
       const data = await response.json();
+      console.log('Server response data:', data);
+      
       if (!data.translatedText) {
         const errMsg = data.error || 'No translated text returned from live translation server';
         console.error('Live translation server error:', errMsg);
