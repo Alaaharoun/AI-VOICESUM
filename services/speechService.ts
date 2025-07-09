@@ -329,10 +329,12 @@ export class SpeechService {
             xhr.send(formData);
           });
         }
-      } catch (allMethodsError) {
-        console.log('All methods failed, trying text/plain...', allMethodsError);
+      }
+      
+      // المحاولة الرابعة: إرسال كـ text/plain إذا فشلت جميع الطرق
+      if (!response) {
+        console.log('All methods failed, trying text/plain...');
         
-        // المحاولة الرابعة: إرسال كـ text/plain
         try {
           const textBlob = new Blob([processedBlob], { type: 'text/plain' });
           const textFormData = new FormData();
@@ -347,7 +349,7 @@ export class SpeechService {
           });
         } catch (textError) {
           console.log('Text/plain also failed:', textError);
-          throw allMethodsError; // أعد الخطأ الأصلي
+          throw new Error('All transmission methods failed');
         }
       }
       
