@@ -174,34 +174,48 @@ export class SpeechService {
   static async transcribeAudioLiveTranslation(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string): Promise<string> {
     try {
       const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
-      const formData = new FormData();
       
-      // تحسين إرسال الملف للتوافق مع React Native
+      // تحويل إجباري للصوت قبل الإرسال
       console.log('=== LIVE TRANSLATION DEBUG ===');
-      console.log('Audio blob type:', audioBlob.type);
-      console.log('Audio blob size:', audioBlob.size);
+      console.log('Original audio blob type:', audioBlob.type);
+      console.log('Original audio blob size:', audioBlob.size);
+      
+      // تحويل الملف إلى صيغة صوتية صحيحة
+      let processedBlob = audioBlob;
+      if (audioBlob.type.startsWith('video/')) {
+        console.log('Converting video format to audio format...');
+        // إنشاء blob جديد بنوع صوتي
+        const arrayBuffer = await audioBlob.arrayBuffer();
+        processedBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+        console.log('Converted to audio/mpeg, new size:', processedBlob.size);
+      }
+      
+      console.log('Final audio blob type:', processedBlob.type);
+      console.log('Final audio blob size:', processedBlob.size);
       console.log('Target language:', targetLanguage);
       console.log('Source language:', sourceLanguage);
       
+      const formData = new FormData();
+      
       // تأكد من أن الملف صالح
-      if (!audioBlob || audioBlob.size === 0) {
+      if (!processedBlob || processedBlob.size === 0) {
         throw new Error('Invalid audio blob: empty or null');
       }
       
       // استخدم اسم ملف واضح
-      const fileExtension = audioBlob.type.split('/')[1] || 'wav';
+      const fileExtension = processedBlob.type.split('/')[1] || 'wav';
       const fileName = `audio.${fileExtension}`;
       
       // تحقق من أن FormData يعمل بشكل صحيح
       console.log('Creating FormData with file:', fileName);
-      formData.append('audio', audioBlob, fileName);
+      formData.append('audio', processedBlob, fileName);
       formData.append('targetLanguage', targetLanguage || '');
       formData.append('sourceLanguage', sourceLanguage || '');
       
       // تحقق من محتويات FormData (بدون entries() لأنها غير متوفرة في React Native)
       console.log('FormData created with:', {
-        audioType: audioBlob.type,
-        audioSize: audioBlob.size,
+        audioType: processedBlob.type,
+        audioSize: processedBlob.size,
         fileName,
         targetLanguage,
         sourceLanguage

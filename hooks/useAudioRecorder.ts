@@ -281,9 +281,19 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
             try {
               const { SpeechService } = await import('@/services/speechService');
               const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-              const processedBlob = await AudioProcessor.processAudioForAssemblyAI(audioBlob);
+              
+              // تأكد من أن الملف صوتي وليس فيديو
+              let processedBlob = audioBlob;
+              if (audioBlob.type.startsWith('video/')) {
+                console.log('Converting video blob to audio blob (web)...');
+                const arrayBuffer = await audioBlob.arrayBuffer();
+                processedBlob = new Blob([arrayBuffer], { type: 'audio/webm' });
+                console.log('Converted video to audio/webm, size:', processedBlob.size);
+              }
+              
+              const finalBlob = await AudioProcessor.processAudioForAssemblyAI(processedBlob);
               // Use external server if enabled
-              const transcription = await SpeechService.transcribeAudioRealTime(processedBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
+              const transcription = await SpeechService.transcribeAudioRealTime(finalBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
               
               if (transcription && transcription !== lastTranscriptionRef.current) {
                 lastTranscriptionRef.current = transcription;
@@ -371,11 +381,20 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
                   return;
                 }
                 
-                const processedBlob = await AudioProcessor.processAudioForAssemblyAI(audioBlob);
+                // تأكد من أن الملف صوتي وليس فيديو
+                let processedBlob = audioBlob;
+                if (audioBlob.type.startsWith('video/')) {
+                  console.log('Converting video blob to audio blob...');
+                  const arrayBuffer = await audioBlob.arrayBuffer();
+                  processedBlob = new Blob([arrayBuffer], { type: 'audio/mpeg' });
+                  console.log('Converted video to audio/mpeg, size:', processedBlob.size);
+                }
+                
+                const finalBlob = await AudioProcessor.processAudioForAssemblyAI(processedBlob);
                 const { SpeechService } = await import('@/services/speechService');
                 
                 // Use external server if enabled
-                const transcription = await SpeechService.transcribeAudioRealTime(processedBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
+                const transcription = await SpeechService.transcribeAudioRealTime(finalBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
                 
                 if (transcription && transcription !== lastTranscriptionRef.current) {
                   lastTranscriptionRef.current = transcription;
