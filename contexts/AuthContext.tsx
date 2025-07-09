@@ -20,11 +20,19 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const mountedRef = useRef(true);
 
   useEffect(() => {
+    console.log('[AuthContext] Initializing auth context...');
+    
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {
+      console.log('[AuthContext] Initial session loaded:', !!session);
       if (mountedRef.current) {
         setSession(session);
         setUser(session?.user ?? null);
+        setLoading(false);
+      }
+    }).catch((error) => {
+      console.error('[AuthContext] Error loading initial session:', error);
+      if (mountedRef.current) {
         setLoading(false);
       }
     });
@@ -33,6 +41,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     const {
       data: { subscription },
     } = supabase.auth.onAuthStateChange((_event, session) => {
+      console.log('[AuthContext] Auth state changed:', _event, !!session);
       if (mountedRef.current) {
         setSession(session);
         setUser(session?.user ?? null);
@@ -47,15 +56,38 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   const signIn = async (email: string, password: string) => {
-    return await supabase.auth.signInWithPassword({ email, password });
+    console.log('[AuthContext] Attempting sign in for:', email);
+    try {
+      const result = await supabase.auth.signInWithPassword({ email, password });
+      console.log('[AuthContext] Sign in result:', result.error ? 'Error' : 'Success');
+      return result;
+    } catch (error) {
+      console.error('[AuthContext] Sign in error:', error);
+      throw error;
+    }
   };
 
   const signUp = async (email: string, password: string) => {
-    return await supabase.auth.signUp({ email, password });
+    console.log('[AuthContext] Attempting sign up for:', email);
+    try {
+      const result = await supabase.auth.signUp({ email, password });
+      console.log('[AuthContext] Sign up result:', result.error ? 'Error' : 'Success');
+      return result;
+    } catch (error) {
+      console.error('[AuthContext] Sign up error:', error);
+      throw error;
+    }
   };
 
   const signOut = async () => {
-    await supabase.auth.signOut();
+    console.log('[AuthContext] Signing out...');
+    try {
+      await supabase.auth.signOut();
+      console.log('[AuthContext] Sign out successful');
+    } catch (error) {
+      console.error('[AuthContext] Sign out error:', error);
+      throw error;
+    }
   };
 
   return (

@@ -40,19 +40,36 @@ export default function LiveTranslationPage() {
   const [error, setError] = useState<string | null>(null);
 
   const processingInterval = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [showStop, setShowStop] = useState(true);
+  const [showSummarize, setShowSummarize] = useState(false);
+  const [isSummarizing, setIsSummarizing] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
+    console.log('[LiveTranslation] Starting real-time transcription...');
+    
     // Start real-time transcription with external server
     startRealTimeTranscription(
-      (text) => { if (isMounted) setTranscription(text); },
-      (translated) => { if (isMounted) setTranslation(translated); },
+      (text) => { 
+        if (isMounted) {
+          console.log('[LiveTranslation] Transcription update:', text);
+          setTranscription(text); 
+        }
+      },
+      (translated) => { 
+        if (isMounted) {
+          console.log('[LiveTranslation] Translation update:', translated);
+          setTranslation(translated); 
+        }
+      },
       targetLanguageCode,
       undefined, // sourceLanguage (add if available)
       true // useLiveTranslationServer
     ).catch((err: Error) => {
       console.error('Failed to start real-time transcription (live translation):', err);
-      setError(err.message ? `Recording failed: ${err.message}` : 'Failed to start recording.');
+      const errorMsg = err.message ? `Recording failed: ${err.message}` : 'Failed to start recording.';
+      setError(errorMsg);
+      Alert.alert('Recording Error', errorMsg);
     });
     return () => {
       isMounted = false;
@@ -74,6 +91,36 @@ export default function LiveTranslationPage() {
 
   const handleBack = () => {
     router.back();
+  };
+
+  const handleStop = async () => {
+    setShowStop(false);
+    setShowSummarize(true);
+    await stopRealTimeTranscription();
+  };
+
+  const handleSummarizeAndNavigate = async () => {
+    setIsSummarizing(true);
+    try {
+      const textToSummarize = translation || transcription;
+      let summary = '';
+      if (textToSummarize && textToSummarize.trim().length >= 50) {
+        summary = await SpeechService.summarizeText(textToSummarize, targetLanguageCode);
+      }
+      router.push({
+        pathname: '/summary-view',
+        params: {
+          transcription,
+          translation,
+          summary,
+          targetLanguage: targetLanguageName,
+        },
+      });
+    } catch (err) {
+      alert('Failed to summarize: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsSummarizing(false);
+    }
   };
 
   return (
@@ -125,6 +172,20 @@ export default function LiveTranslationPage() {
       )}
 
       <View style={styles.buttonContainer}>
+        {showStop && (
+          <TouchableOpacity style={styles.stopButton} onPress={handleStop}>
+            <Text style={styles.stopButtonText}>إيقاف</Text>
+          </TouchableOpacity>
+        )}
+        {showSummarize && (
+          <TouchableOpacity
+            style={[styles.stopButton, isSummarizing && { backgroundColor: '#9CA3AF' }]}
+            onPress={handleSummarizeAndNavigate}
+            disabled={isSummarizing}
+          >
+            <Text style={styles.stopButtonText}>{isSummarizing ? 'جاري التلخيص...' : 'AI Summarize'}</Text>
+          </TouchableOpacity>
+        )}
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
           <Text style={styles.backButtonText}>Back</Text>
         </TouchableOpacity>
@@ -245,5 +306,17 @@ const styles = StyleSheet.create({
     color: 'white',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  stopButton: {
+    backgroundColor: '#6B7280',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    flex: 1,
+  },
+  stopButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 }); 

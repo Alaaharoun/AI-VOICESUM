@@ -1,13 +1,14 @@
 import { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { Platform } from 'react-native';
+import { Platform, Alert } from 'react-native';
 import { useFonts, Inter_400Regular, Inter_600SemiBold, Inter_700Bold } from '@expo-google-fonts/inter';
 import * as SplashScreen from 'expo-splash-screen';
 import { Audio } from 'expo-av';
 import { useFrameworkReady } from '@/hooks/useFrameworkReady';
 import { AuthProvider } from '@/contexts/AuthContext';
 import { SubscriptionProvider } from '@/contexts/SubscriptionContext';
+import { checkEnvironmentVariables } from '@/utils/envChecker';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -25,6 +26,19 @@ export default function RootLayout() {
       SplashScreen.hideAsync();
     }
   }, [fontsLoaded, fontError]);
+
+  useEffect(() => {
+    // Check environment variables on app start
+    const envCheck = checkEnvironmentVariables();
+    if (!envCheck.isValid) {
+      console.error('Environment variables check failed:', envCheck.error);
+      Alert.alert(
+        'Configuration Error',
+        envCheck.error || 'Environment variables are not properly configured. Please check ENV_SETUP.md for instructions.',
+        [{ text: 'OK' }]
+      );
+    }
+  }, []);
 
   useEffect(() => {
     // Initialize audio system for mobile platforms

@@ -33,14 +33,21 @@ export default function SignInScreen() {
     }
 
     setLoading(true);
+    console.log('[SignIn] Starting sign in process...');
+    
     try {
+      console.log('[SignIn] Calling signIn function...');
       const { error } = await signIn(email, password);
+      
       if (error) {
+        console.error('[SignIn] Sign in error:', error);
         Alert.alert('Error', error.message);
       } else {
+        console.log('[SignIn] Sign in successful, navigating to tabs...');
         router.replace('/(tabs)');
       }
     } catch (error) {
+      console.error('[SignIn] Unexpected error:', error);
       Alert.alert('Error', 'Something went wrong. Please try again.');
     } finally {
       setLoading(false);

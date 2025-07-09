@@ -822,43 +822,13 @@ export default function RecordScreen() {
               marginBottom: 8,
               flexDirection: 'row',
             }}
-            onPress={() => setShowSourceLangSelector(true)}
+            onPress={() => setLiveTranslateEnabled(!liveTranslateEnabled)}
           >
             <Languages size={20} color={liveTranslateEnabled ? 'white' : '#2563EB'} style={{ marginRight: 8 }} />
             <Text style={{ color: liveTranslateEnabled ? 'white' : '#2563EB', fontWeight: 'bold', fontSize: 16 }}>
-              {liveTranslateEnabled ? `Live Translate: ${sourceLanguage ? sourceLanguage.name : 'Select source language'}` : 'Enable Live Translate'}
+              {liveTranslateEnabled ? 'تم تفعيل الترجمة الفورية من الإنجليزية إلى لغات العالم' : 'تفعيل الترجمة الفورية من الإنجليزية إلى لغات العالم'}
             </Text>
           </TouchableOpacity>
-          {/* Source Language Selector Modal */}
-          {showSourceLangSelector && (
-            <Modal
-              visible={showSourceLangSelector}
-              animationType="slide"
-              transparent={true}
-              onRequestClose={() => setShowSourceLangSelector(false)}
-            >
-              <View style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.3)', justifyContent: 'center', alignItems: 'center' }}>
-                <View style={{ backgroundColor: 'white', borderRadius: 16, padding: 24, width: '90%' }}>
-                  <Text style={{ fontSize: 18, fontWeight: 'bold', color: '#2563EB', marginBottom: 16 }}>Select Source Language</Text>
-                  <LanguageSelector
-                    selectedLanguage={sourceLanguage}
-                    onSelectLanguage={(lang) => {
-                      setSourceLanguage(lang);
-                      setLiveTranslateEnabled(true);
-                      setShowSourceLangSelector(false);
-                    }}
-                    disabled={isRecording || isProcessing}
-                  />
-                  <TouchableOpacity
-                    style={{ backgroundColor: '#6B7280', borderRadius: 8, paddingVertical: 10, alignItems: 'center', marginTop: 8 }}
-                    onPress={() => setShowSourceLangSelector(false)}
-                  >
-                    <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>Close</Text>
-                  </TouchableOpacity>
-                </View>
-              </View>
-            </Modal>
-          )}
           {!hasAccess && !subscriptionLoading && (
             <Text style={{ color: '#DC2626', textAlign: 'center', marginTop: 12 }}>
               Your free trial has expired. Please choose a subscription plan to enable recording.
@@ -929,39 +899,6 @@ export default function RecordScreen() {
           </View>
         )}
       </ScrollView>
-
-      {hasAccess && apiStatus === 'ready' && (
-        <View style={styles.settingsSection}>
-          <TouchableOpacity
-            style={styles.settingsToggle}
-            onPress={() => setShowLanguageSelector(!showLanguageSelector)}
-          >
-            <Settings size={20} color="#6B7280" />
-            <Text style={styles.settingsToggleText}>Translation Settings</Text>
-          </TouchableOpacity>
-          
-          {showLanguageSelector && (
-            <View style={styles.languageSelectorContainer}>
-              <Text style={styles.languageSelectorLabel}>Translate to:</Text>
-              <LanguageSelector
-                selectedLanguage={selectedLanguage}
-                onSelectLanguage={setSelectedLanguage}
-                disabled={isRecording || isProcessing}
-              />
-              {selectedLanguage && (
-                <Text style={styles.languageHint}>
-                  <Text>
-                    {isRealTimeMode 
-                      ? `Your speech will be translated to ${selectedLanguage.name} in real-time!`
-                      : `Your recordings will be automatically translated to ${selectedLanguage.name}`
-                    }
-                  </Text>
-                </Text>
-              )}
-            </View>
-          )}
-        </View>
-      )}
     </>
   );
 }

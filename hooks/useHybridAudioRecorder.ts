@@ -319,13 +319,20 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
     try {
       setError(null);
       setShowSettingsButton(false);
+      console.log('[Recorder] Starting recording process...');
+      
+      // Add user feedback
+      Alert.alert('Recording', 'Starting recording... Please wait.');
+      
       console.log('[Recorder] Requesting all permissions...');
       const allGranted = await requestAllPermissions();
       console.log('[Recorder] All permissions result:', allGranted);
       if (!allGranted) {
         const msg = 'Microphone and storage permissions are required. Please allow them in your device settings.';
+        console.error('[Recorder] Permissions denied:', msg);
         setError(msg);
         setShowSettingsButton(true);
+        Alert.alert('Permission Required', msg);
         return;
       }
       // Try native recording first
@@ -339,6 +346,7 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
         setCurrentDuration(0);
         setRecordTime('00:00:00');
         console.log('[Recorder] Native recording started successfully.');
+        Alert.alert('Recording Started', 'Native recording is now active!');
         recordingTimer.current = setInterval(() => {
           setCurrentPosition(prev => {
             const newPosition = prev + 100;
@@ -350,8 +358,10 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
         }, 100);
         return;
       } else if (typeof nativeResult === 'string') {
+        console.error('[Recorder] Native recording failed:', nativeResult);
         setError(nativeResult);
         setShowSettingsButton(false);
+        Alert.alert('Recording Failed', `Native recording failed: ${nativeResult}`);
         return;
       }
       // Fallback to Expo recording
@@ -365,6 +375,7 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
         setCurrentDuration(0);
         setRecordTime('00:00:00');
         console.log('[Recorder] Expo recording started successfully.');
+        Alert.alert('Recording Started', 'Expo recording is now active!');
         recordingTimer.current = setInterval(() => {
           setCurrentPosition(prev => {
             const newPosition = prev + 100;
@@ -374,8 +385,10 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
         }, 100);
         return;
       } else if (typeof expoResult === 'string') {
+        console.error('[Recorder] Expo recording failed:', expoResult);
         setError(expoResult);
         setShowSettingsButton(false);
+        Alert.alert('Recording Failed', `Expo recording failed: ${expoResult}`);
         return;
       }
     } catch (err) {
@@ -383,6 +396,7 @@ export const useHybridAudioRecorder = (): UseHybridAudioRecorderReturn => {
       console.error(msg);
       setError(msg);
       setShowSettingsButton(false);
+      Alert.alert('Recording Error', `Failed to start recording: ${err instanceof Error ? err.message : String(err)}`);
     }
   }, [requestAllPermissions, startNativeRecording, startExpoRecording]);
 

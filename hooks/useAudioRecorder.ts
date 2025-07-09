@@ -57,8 +57,11 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
 
   const startRecording = async (): Promise<void> => {
     try {
+      console.log('[AudioRecorder] Starting recording...');
+      
       if (Platform.OS === 'web') {
         // Web-based MediaRecorder
+        console.log('[AudioRecorder] Using web MediaRecorder...');
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: {
             sampleRate: 16000,
@@ -84,16 +87,21 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
 
         mediaRecorder.start();
         setIsRecording(true);
+        console.log('[AudioRecorder] Web recording started successfully');
       } else {
         // Mobile recording using expo-av with minimal settings
+        console.log('[AudioRecorder] Using mobile expo-av...');
+        
         if (!Audio) {
           throw new Error('Audio recording not supported on this device');
         }
 
+        console.log('[AudioRecorder] Requesting microphone permissions...');
         const { status } = await Audio.requestPermissionsAsync();
         if (status !== 'granted') {
           throw new Error('Microphone permission not granted');
         }
+        console.log('[AudioRecorder] Microphone permission granted');
 
         await Audio.setAudioModeAsync({
           allowsRecordingIOS: true,
@@ -101,6 +109,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
         });
 
         // Use the most basic recording settings possible - no specific format
+        console.log('[AudioRecorder] Creating recording...');
         const { recording } = await Audio.Recording.createAsync({
           android: {
             extension: '.mp3',
@@ -122,6 +131,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
         
         recordingRef.current = recording;
         setIsRecording(true);
+        console.log('[AudioRecorder] Mobile recording started successfully');
       }
     } catch (error) {
       console.error('Error starting recording:', error);

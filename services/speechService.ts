@@ -54,7 +54,7 @@ export class SpeechService {
       const audioUrl = uploadData.upload_url;
       console.log('Audio uploaded successfully, starting transcription...');
 
-      // Step 2: Request transcription with auto language detection only
+      // Step 2: Request transcription مع تفعيل التعرف التلقائي على اللغة فقط
       const transcriptRequestBody: any = {
         audio_url: audioUrl,
         language_detection: true, // Enable auto language detection
@@ -64,7 +64,7 @@ export class SpeechService {
         dual_channel: false,
         speaker_labels: false
       };
-      // لا ترسل أي خاصية ترجمة هنا
+      // لا ترسل أي خاصية ترجمة هنا ولا تحدد اللغة يدوياً
 
       const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
         method: 'POST',
@@ -173,12 +173,14 @@ export class SpeechService {
   // New: Real-time transcription for live translation via external server
   static async transcribeAudioLiveTranslation(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string): Promise<string> {
     try {
-      // Replace with your external server URL
       const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
       const formData = new FormData();
-      formData.append('audio', audioBlob, 'audio.webm');
-      formData.append('targetLanguage', targetLanguage ?? '');
-      formData.append('sourceLanguage', sourceLanguage ?? '');
+      // تأكد من إرسال الملف بصيغة wav
+      const wavBlob = new Blob([audioBlob], { type: 'audio/wav' });
+      console.log('Sending audio to server with type:', wavBlob.type);
+      formData.append('audio', wavBlob, 'audio.wav');
+      formData.append('targetLanguage', targetLanguage || '');
+      formData.append('sourceLanguage', sourceLanguage || '');
 
       const response = await fetch(serverUrl, {
         method: 'POST',
@@ -186,16 +188,21 @@ export class SpeechService {
       });
       if (!response.ok) {
         const errorText = await response.text();
+        console.error('Live translation server error:', response.status, errorText);
         throw new Error(`Live translation server error: ${response.status} ${errorText}`);
       }
       const data = await response.json();
       if (!data.translatedText) {
-        throw new Error('No translated text returned from live translation server');
+        const errMsg = data.error || 'No translated text returned from live translation server';
+        console.error('Live translation server error:', errMsg);
+        throw new Error(errMsg);
       }
       return data.translatedText;
-    } catch (error) {
-      console.error('Live translation server error:', error);
-      throw new Error('Failed to transcribe audio via live translation server');
+    } catch (error: any) {
+      // اطبع الخطأ الكامل
+      console.error('Live translation server error (catch):', error, error?.message);
+      // أعد رسالة الخطأ الحقيقية للمستخدم
+      throw new Error(error?.message || String(error) || 'Failed to transcribe audio via live translation server');
     }
   }
 
@@ -360,7 +367,9 @@ export class SpeechService {
       // Limit cache size to prevent memory issues
       if (this.translationCache.size > 100) {
         const firstKey = this.translationCache.keys().next().value;
-        this.translationCache.delete(firstKey);
+        if (firstKey) {
+          this.translationCache.delete(firstKey);
+        }
       }
       
       return translation;
