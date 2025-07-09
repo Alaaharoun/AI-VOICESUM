@@ -555,9 +555,33 @@ export default function RecordScreen() {
         console.log('Processing recorded audio...');
         await processAudio(
           audioBlob,
-          (transcription) => {
+          async (transcription) => {
             setCurrentTranscription(transcription);
             console.log('Transcription completed:', transcription);
+            
+            // ترجمة النص تلقائياً إذا تم اختيار لغة هدف
+            if (selectedLanguage && transcription) {
+              try {
+                const { SpeechService } = await import('@/services/speechService');
+                const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
+                setCurrentTranslation(translation);
+                console.log('Translation completed:', translation);
+              } catch (error) {
+                console.error('Translation error:', error);
+              }
+            }
+            
+            // توليد ملخص تلقائياً إذا كان النص طويلاً
+            if (transcription && transcription.length > 100) {
+              try {
+                const { SpeechService } = await import('@/services/speechService');
+                const summary = await SpeechService.summarizeText(transcription, selectedLanguage?.code);
+                setCurrentSummary(summary);
+                console.log('Summary completed:', summary);
+              } catch (error) {
+                console.error('Summary error:', error);
+              }
+            }
           },
           (summary) => {
             setCurrentSummary(summary);
@@ -565,18 +589,6 @@ export default function RecordScreen() {
           },
           selectedLanguage?.code
         );
-        
-        // ترجمة النص إذا تم اختيار لغة هدف
-        if (selectedLanguage && currentTranscription) {
-          try {
-            const { SpeechService } = await import('@/services/speechService');
-            const translation = await SpeechService.translateText(currentTranscription, selectedLanguage.code);
-            setCurrentTranslation(translation);
-            console.log('Translation completed:', translation);
-          } catch (error) {
-            console.error('Translation error:', error);
-          }
-        }
       }
     } catch (error) {
       console.error('Recording stop error:', error);
