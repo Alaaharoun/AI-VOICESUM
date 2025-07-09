@@ -174,7 +174,7 @@ export default function LiveTranslationPage() {
       <View style={styles.buttonContainer}>
         {showStop && (
           <TouchableOpacity style={styles.stopButton} onPress={handleStop}>
-            <Text style={styles.stopButtonText}>إيقاف</Text>
+            <Text style={styles.stopButtonText}>إيقاف الترجمة الفورية</Text>
           </TouchableOpacity>
         )}
         {showSummarize && (

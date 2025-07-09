@@ -504,15 +504,13 @@ export default function RecordScreen() {
       return;
     }
 
-    // If live translate is enabled, navigate to live-translation page with params
-    if (liveTranslateEnabled && sourceLanguage) {
+    // إذا كانت الترجمة الفورية مفعلة ويوجد لغة هدف، انتقل مباشرة إلى صفحة الترجمة الفورية
+    if (liveTranslateEnabled && selectedLanguage) {
       router.push({
         pathname: '/(tabs)/live-translation',
         params: {
-          sourceLanguage: String(sourceLanguage.code),
-          sourceLanguageName: String(sourceLanguage.name),
-          targetLanguage: selectedLanguage ? String(selectedLanguage.code) : '',
-          languageName: selectedLanguage ? String(selectedLanguage.name) : '',
+          targetLanguage: selectedLanguage.code,
+          languageName: selectedLanguage.name,
         },
       } as any);
       return;
@@ -540,26 +538,7 @@ export default function RecordScreen() {
       setCurrentTranslation('');
       setCurrentTranslationSummary('');
       setRecordingDuration(0);
-      
-      // Check if real-time mode is enabled and language is selected
-      if (isRealTimeMode) {
-        if (!selectedLanguage) {
-          Alert.alert(
-            'Language Required',
-            'Please select a target language for real-time translation.',
-            [{ text: 'OK', style: 'default' }]
-          );
-          return;
-        }
-        
-        router.push({
-          pathname: '/(tabs)/live-translation',
-          params: { targetLanguage: selectedLanguage.code, languageName: selectedLanguage.name }
-        });
-        return;
-      } else {
       await startRecording();
-      }
     } catch (error) {
       console.error('Recording start error:', error);
       Alert.alert('Recording Error', error instanceof Error ? error.message : 'Failed to start recording. Please try again.');
@@ -608,17 +587,14 @@ export default function RecordScreen() {
 
   const handleGenerateSummary = async () => {
     if (!currentTranscription) return;
-    
     setIsGeneratingSummary(true);
     try {
       await generateSummary(currentTranscription, async (summary) => {
-        console.log('AI summary generated:', summary);
         if (!summary || summary.trim() === '') {
           Alert.alert('Summary Error', 'AI did not return a summary. Try again with a longer or clearer recording.');
           setCurrentSummary('');
         } else {
-        setCurrentSummary(summary);
-          console.log('currentSummary updated:', summary);
+          setCurrentSummary(summary);
           // انتقل مباشرة إلى صفحة الملخص مع تمرير النصوص المطلوبة
           router.push({
             pathname: '/(tabs)/summary-view',
@@ -630,30 +606,7 @@ export default function RecordScreen() {
             }
           });
         }
-        // Save to database with summary
-        try {
-          const recordingData: any = {
-            user_id: user?.id,
-            transcription: currentTranscription,
-            summary,
-            duration: recordingDuration,
-          };
-          
-          if (selectedLanguage && currentTranslation) {
-            recordingData.translation = currentTranslation;
-            recordingData.target_language = selectedLanguage.code;
-          }
-          if (currentTranslationSummary) {
-            recordingData.translation_summary = currentTranslationSummary;
-          }
-          
-          await supabase.from('recordings').insert(recordingData);
-          // حفظ في history (إذا كان لديك دالة أو context للـ history، أضف هنا)
-          // مثال:
-          // addToHistory({ transcription: currentTranscription, translation: currentTranslation, summary, translationSummary: currentTranslationSummary });
-        } catch (error) {
-          console.error('Error saving recording:', error);
-        }
+        // لا نحفظ هنا لتجنب التعدد - سيتم الحفظ في handleBackToHome
       }, selectedLanguage?.code);
     } catch (error) {
       console.error('Summary generation error:', error);
@@ -731,7 +684,11 @@ export default function RecordScreen() {
     created_at: string;
   }) => {
     try {
-      await supabase.from('recordings').insert([record]);
+      // استخدم upsert لتجنب التعدد
+      await supabase.from('recordings').upsert([record], { 
+        onConflict: 'user_id,created_at',
+        ignoreDuplicates: false 
+      });
     } catch (e) {
       console.warn('Failed to save to history', e);
     }
@@ -809,26 +766,54 @@ export default function RecordScreen() {
             onStopRecording={handleStopRecording}
             disabled={isProcessing || (!hasAccess && !subscriptionLoading) || apiStatus !== 'ready'}
           />
-          {/* Live Translate Button */}
+          {/* Hint above the button */}
+          <Text style={{ textAlign: 'center', color: '#F59E0B', fontSize: 13, marginBottom: 4 }}>
+            Tap to enable live translation
+          </Text>
           <TouchableOpacity
+            activeOpacity={0.8}
             style={{
-              backgroundColor: liveTranslateEnabled ? '#10B981' : '#E0F2FE',
-              borderRadius: 12,
+              backgroundColor: liveTranslateEnabled ? '#2563EB' : '#FEF3C7',
+              borderRadius: 24,
+              borderWidth: 1,
+              borderColor: liveTranslateEnabled ? '#2563EB' : '#F59E0B',
               paddingVertical: 12,
-              paddingHorizontal: 24,
+              paddingHorizontal: 28,
               alignItems: 'center',
               alignSelf: 'center',
-              marginTop: 12,
-              marginBottom: 8,
+              width: '90%',
+              marginTop: 4,
+              marginBottom: 18,
               flexDirection: 'row',
+              shadowColor: liveTranslateEnabled ? '#2563EB' : '#F59E0B',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.18,
+              shadowRadius: 6,
+              elevation: 4,
             }}
             onPress={() => setLiveTranslateEnabled(!liveTranslateEnabled)}
           >
-            <Languages size={20} color={liveTranslateEnabled ? 'white' : '#2563EB'} style={{ marginRight: 8 }} />
-            <Text style={{ color: liveTranslateEnabled ? 'white' : '#2563EB', fontWeight: 'bold', fontSize: 16 }}>
-              {liveTranslateEnabled ? 'تم تفعيل الترجمة الفورية من الإنجليزية إلى لغات العالم' : 'تفعيل الترجمة الفورية من الإنجليزية إلى لغات العالم'}
+            <Crown size={22} color={liveTranslateEnabled ? '#fff' : '#F59E0B'} style={{ marginRight: 10 }} />
+            <Text style={{ color: liveTranslateEnabled ? '#fff' : '#F59E0B', fontWeight: 'bold', fontSize: 16, textAlign: 'center', flex: 1 }}>
+              {liveTranslateEnabled ? 'Live Translation: English to World Languages Enabled' : 'Enable Live Translation: English to World Languages'}
             </Text>
           </TouchableOpacity>
+          {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
+          <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
+            <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15, marginBottom: 6 }}>
+              {liveTranslateEnabled ? 'Target Language for Live Translation' : 'Select Target Language'}
+            </Text>
+            <LanguageSelector
+              selectedLanguage={selectedLanguage}
+              onSelectLanguage={setSelectedLanguage}
+              disabled={isRecording || isProcessing}
+            />
+            {liveTranslateEnabled && (
+              <Text style={{ color: '#F59E0B', fontSize: 12, marginTop: 4, textAlign: 'center' }}>
+                Live translation will translate English speech to the selected language
+              </Text>
+            )}
+          </View>
           {!hasAccess && !subscriptionLoading && (
             <Text style={{ color: '#DC2626', textAlign: 'center', marginTop: 12 }}>
               Your free trial has expired. Please choose a subscription plan to enable recording.

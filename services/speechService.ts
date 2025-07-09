@@ -175,10 +175,9 @@ export class SpeechService {
     try {
       const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
       const formData = new FormData();
-      // تأكد من إرسال الملف بصيغة wav
-      const wavBlob = new Blob([audioBlob], { type: 'audio/wav' });
-      console.log('Sending audio to server with type:', wavBlob.type);
-      formData.append('audio', wavBlob, 'audio.wav');
+      // استخدم الصيغة الأصلية للصوت
+      console.log('Sending audio to server with type:', audioBlob.type);
+      formData.append('audio', audioBlob, 'audio.' + audioBlob.type.split('/')[1]);
       formData.append('targetLanguage', targetLanguage || '');
       formData.append('sourceLanguage', sourceLanguage || '');
 
