@@ -181,10 +181,18 @@ export class SpeechService {
       formData.append('targetLanguage', targetLanguage || '');
       formData.append('sourceLanguage', sourceLanguage || '');
 
+      // إضافة timeout وإعادة المحاولة
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 ثانية timeout
+
       const response = await fetch(serverUrl, {
         method: 'POST',
         body: formData,
+        signal: controller.signal,
       });
+      
+      clearTimeout(timeoutId);
+      
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Live translation server error:', response.status, errorText);
@@ -200,6 +208,12 @@ export class SpeechService {
     } catch (error: any) {
       // اطبع الخطأ الكامل
       console.error('Live translation server error (catch):', error, error?.message);
+      
+      // إذا كان الخطأ بسبب timeout أو network، أعد رسالة واضحة
+      if (error.name === 'AbortError') {
+        throw new Error('Request timeout. Please check your internet connection and try again.');
+      }
+      
       // أعد رسالة الخطأ الحقيقية للمستخدم
       throw new Error(error?.message || String(error) || 'Failed to transcribe audio via live translation server');
     }

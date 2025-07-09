@@ -364,8 +364,16 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
               if (uri) {
                 const response = await fetch(uri);
                 const audioBlob = await response.blob();
+                
+                // تحقق من حجم الصوت قبل الإرسال
+                if (audioBlob.size < 1000) {
+                  console.log('Audio too small, skipping...');
+                  return;
+                }
+                
                 const processedBlob = await AudioProcessor.processAudioForAssemblyAI(audioBlob);
                 const { SpeechService } = await import('@/services/speechService');
+                
                 // Use external server if enabled
                 const transcription = await SpeechService.transcribeAudioRealTime(processedBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
                 
@@ -393,6 +401,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
               }
             } catch (error) {
               console.error('Mobile real-time transcription error:', error);
+              // لا توقف التسجيل عند حدوث خطأ، فقط اطبع الخطأ
             }
           }
         }, 5000); // Process every 5 seconds on mobile

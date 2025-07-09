@@ -108,7 +108,7 @@ export default function LiveTranslationPage() {
         summary = await SpeechService.summarizeText(textToSummarize, targetLanguageCode);
       }
       router.push({
-        pathname: '/summary-view',
+        pathname: '/(tabs)/summary-view',
         params: {
           transcription,
           translation,
@@ -118,6 +118,44 @@ export default function LiveTranslationPage() {
       });
     } catch (err) {
       alert('Failed to summarize: ' + (err instanceof Error ? err.message : 'Unknown error'));
+    } finally {
+      setIsSummarizing(false);
+    }
+  };
+
+  // دالة جديدة لتلخيص النص الحالي أثناء الترجمة الفورية
+  const handleLiveSummarize = async () => {
+    setIsSummarizing(true);
+    try {
+      const textToSummarize = translation || transcription;
+      if (textToSummarize && textToSummarize.trim().length >= 50) {
+        const summary = await SpeechService.summarizeText(textToSummarize, targetLanguageCode);
+        Alert.alert(
+          'AI Summary', 
+          summary,
+          [
+            { text: 'OK', style: 'default' },
+            { 
+              text: 'Save to Summary View', 
+              onPress: () => {
+                router.push({
+                  pathname: '/(tabs)/summary-view',
+                  params: {
+                    transcription,
+                    translation,
+                    summary,
+                    targetLanguage: targetLanguageName,
+                  },
+                });
+              }
+            }
+          ]
+        );
+      } else {
+        Alert.alert('Summary', 'Need more text (at least 50 characters) to generate a meaningful summary.');
+      }
+    } catch (err) {
+      Alert.alert('Summary Error', 'Failed to generate summary: ' + (err instanceof Error ? err.message : 'Unknown error'));
     } finally {
       setIsSummarizing(false);
     }
@@ -184,6 +222,18 @@ export default function LiveTranslationPage() {
             disabled={isSummarizing}
           >
             <Text style={styles.stopButtonText}>{isSummarizing ? 'جاري التلخيص...' : 'AI Summarize'}</Text>
+          </TouchableOpacity>
+        )}
+        {/* زر AI Summary أثناء الترجمة الفورية */}
+        {audioRecorderIsRecording && (transcription || translation) && (
+          <TouchableOpacity
+            style={[styles.summaryButton, isSummarizing && { backgroundColor: '#9CA3AF' }]}
+            onPress={handleLiveSummarize}
+            disabled={isSummarizing}
+          >
+            <Text style={styles.summaryButtonText}>
+              {isSummarizing ? 'جاري التلخيص...' : 'AI Summary'}
+            </Text>
           </TouchableOpacity>
         )}
         <TouchableOpacity style={styles.backButton} onPress={handleBack}>
@@ -315,6 +365,18 @@ const styles = StyleSheet.create({
     flex: 1,
   },
   stopButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  summaryButton: {
+    backgroundColor: '#6B7280',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    flex: 1,
+  },
+  summaryButtonText: {
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
