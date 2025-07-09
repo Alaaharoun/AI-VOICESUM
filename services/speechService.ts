@@ -175,23 +175,94 @@ export class SpeechService {
     try {
       const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
       const formData = new FormData();
-      // استخدم الصيغة الأصلية للصوت
-      console.log('Sending audio to server with type:', audioBlob.type);
+      
+      // تحسين إرسال الملف للتوافق مع React Native
+      console.log('=== LIVE TRANSLATION DEBUG ===');
+      console.log('Audio blob type:', audioBlob.type);
       console.log('Audio blob size:', audioBlob.size);
-      formData.append('audio', audioBlob, 'audio.' + audioBlob.type.split('/')[1]);
+      console.log('Target language:', targetLanguage);
+      console.log('Source language:', sourceLanguage);
+      
+      // تأكد من أن الملف صالح
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error('Invalid audio blob: empty or null');
+      }
+      
+      // استخدم اسم ملف واضح
+      const fileExtension = audioBlob.type.split('/')[1] || 'wav';
+      const fileName = `audio.${fileExtension}`;
+      
+      // تحقق من أن FormData يعمل بشكل صحيح
+      console.log('Creating FormData with file:', fileName);
+      formData.append('audio', audioBlob, fileName);
       formData.append('targetLanguage', targetLanguage || '');
       formData.append('sourceLanguage', sourceLanguage || '');
+      
+      // تحقق من محتويات FormData (بدون entries() لأنها غير متوفرة في React Native)
+      console.log('FormData created with:', {
+        audioType: audioBlob.type,
+        audioSize: audioBlob.size,
+        fileName,
+        targetLanguage,
+        sourceLanguage
+      });
 
       // إضافة timeout وإعادة المحاولة
       const controller = new AbortController();
       const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 ثانية timeout
 
       console.log('Making request to server:', serverUrl);
-      const response = await fetch(serverUrl, {
-        method: 'POST',
-        body: formData,
-        signal: controller.signal,
-      });
+      
+      let response: Response | {
+        ok: boolean;
+        status: number;
+        statusText: string;
+        headers: Headers;
+        text: () => Promise<string>;
+        json: () => Promise<any>;
+      };
+      
+      try {
+        // المحاولة الأولى: استخدام fetch
+        response = await fetch(serverUrl, {
+          method: 'POST',
+          body: formData,
+          signal: controller.signal,
+          // لا تضيف Content-Type header - دع FormData يضيفه تلقائياً
+        });
+      } catch (fetchError) {
+        console.log('Fetch failed, trying XMLHttpRequest...', fetchError);
+        
+        // المحاولة الثانية: استخدام XMLHttpRequest
+        response = await new Promise<{
+          ok: boolean;
+          status: number;
+          statusText: string;
+          headers: Headers;
+          text: () => Promise<string>;
+          json: () => Promise<any>;
+        }>((resolve, reject) => {
+          const xhr = new XMLHttpRequest();
+          xhr.open('POST', serverUrl);
+          xhr.timeout = 30000;
+          
+          xhr.onload = () => {
+            resolve({
+              ok: xhr.status >= 200 && xhr.status < 300,
+              status: xhr.status,
+              statusText: xhr.statusText,
+              headers: new Headers(),
+              text: () => Promise.resolve(xhr.responseText),
+              json: () => Promise.resolve(JSON.parse(xhr.responseText))
+            });
+          };
+          
+          xhr.onerror = () => reject(new Error('XMLHttpRequest failed'));
+          xhr.ontimeout = () => reject(new Error('XMLHttpRequest timeout'));
+          
+          xhr.send(formData);
+        });
+      }
       
       clearTimeout(timeoutId);
       
