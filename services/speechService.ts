@@ -237,7 +237,7 @@ export class SpeechService {
       };
       
       try {
-        // المحاولة الأولى: استخدام fetch
+        // المحاولة الأولى: استخدام fetch مع FormData
         response = await fetch(serverUrl, {
           method: 'POST',
           body: formData,
@@ -245,37 +245,63 @@ export class SpeechService {
           // لا تضيف Content-Type header - دع FormData يضيفه تلقائياً
         });
       } catch (fetchError) {
-        console.log('Fetch failed, trying XMLHttpRequest...', fetchError);
+        console.log('Fetch with FormData failed, trying base64...', fetchError);
         
-        // المحاولة الثانية: استخدام XMLHttpRequest
-        response = await new Promise<{
-          ok: boolean;
-          status: number;
-          statusText: string;
-          headers: Headers;
-          text: () => Promise<string>;
-          json: () => Promise<any>;
-        }>((resolve, reject) => {
-          const xhr = new XMLHttpRequest();
-          xhr.open('POST', serverUrl);
-          xhr.timeout = 30000;
+        // المحاولة الثانية: استخدام base64
+        try {
+          const arrayBuffer = await processedBlob.arrayBuffer();
+          const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
           
-          xhr.onload = () => {
-            resolve({
-              ok: xhr.status >= 200 && xhr.status < 300,
-              status: xhr.status,
-              statusText: xhr.statusText,
-              headers: new Headers(),
-              text: () => Promise.resolve(xhr.responseText),
-              json: () => Promise.resolve(JSON.parse(xhr.responseText))
-            });
+          const jsonData = {
+            audio: base64,
+            audioType: processedBlob.type,
+            targetLanguage: targetLanguage || '',
+            sourceLanguage: sourceLanguage || ''
           };
           
-          xhr.onerror = () => reject(new Error('XMLHttpRequest failed'));
-          xhr.ontimeout = () => reject(new Error('XMLHttpRequest timeout'));
+          console.log('Sending base64 data, size:', base64.length);
           
-          xhr.send(formData);
-        });
+          response = await fetch(serverUrl, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+            },
+            body: JSON.stringify(jsonData),
+            signal: controller.signal,
+          });
+        } catch (base64Error) {
+          console.log('Base64 failed, trying XMLHttpRequest...', base64Error);
+          
+          // المحاولة الثالثة: استخدام XMLHttpRequest
+          response = await new Promise<{
+            ok: boolean;
+            status: number;
+            statusText: string;
+            headers: Headers;
+            text: () => Promise<string>;
+            json: () => Promise<any>;
+          }>((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', serverUrl);
+            xhr.timeout = 30000;
+            
+            xhr.onload = () => {
+              resolve({
+                ok: xhr.status >= 200 && xhr.status < 300,
+                status: xhr.status,
+                statusText: xhr.statusText,
+                headers: new Headers(),
+                text: () => Promise.resolve(xhr.responseText),
+                json: () => Promise.resolve(JSON.parse(xhr.responseText))
+              });
+            };
+            
+            xhr.onerror = () => reject(new Error('XMLHttpRequest failed'));
+            xhr.ontimeout = () => reject(new Error('XMLHttpRequest timeout'));
+            
+            xhr.send(formData);
+          });
+        }
       }
       
       clearTimeout(timeoutId);

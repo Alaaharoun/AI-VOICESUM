@@ -6,6 +6,7 @@ require('dotenv').config();
 
 const app = express();
 app.use(cors());
+app.use(express.json({ limit: '50mb' }));
 const upload = multer();
 
 const ASSEMBLYAI_API_KEY = process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_API_KEY;
@@ -31,27 +32,54 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
     console.log('Headers:', req.headers);
     console.log('Body keys:', Object.keys(req.body || {}));
     
-    if (!req.file) {
-      console.error('No file uploaded');
-      return res.status(400).json({ error: 'No audio file uploaded.' });
-    }
+    let audioBuffer, audioMimeType;
     
-    console.log('Received audio file:', {
-      originalname: req.file.originalname,
-      mimetype: req.file.mimetype,
-      size: req.file.size,
-      fieldname: req.file.fieldname
-    });
+    // تحقق من نوع الطلب
+    if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
+      // طلب JSON (base64)
+      console.log('Processing JSON request with base64 audio...');
+      const jsonData = req.body;
+      
+      if (!jsonData.audio) {
+        console.error('No audio data in JSON request');
+        return res.status(400).json({ error: 'No audio data provided.' });
+      }
+      
+      // تحويل base64 إلى buffer
+      audioBuffer = Buffer.from(jsonData.audio, 'base64');
+      audioMimeType = jsonData.audioType || 'audio/mpeg';
+      
+      console.log('Received base64 audio:', {
+        size: audioBuffer.length,
+        type: audioMimeType
+      });
+    } else {
+      // طلب FormData (الطريقة الأصلية)
+      if (!req.file) {
+        console.error('No file uploaded');
+        return res.status(400).json({ error: 'No audio file uploaded.' });
+      }
+      
+      audioBuffer = req.file.buffer;
+      audioMimeType = req.file.mimetype;
+      
+      console.log('Received FormData audio file:', {
+        originalname: req.file.originalname,
+        mimetype: req.file.mimetype,
+        size: req.file.size,
+        fieldname: req.file.fieldname
+      });
+    }
 
     // تحقق من أن الملف صوتي
-    if (!req.file.mimetype.startsWith('audio/')) {
-      console.error('Invalid file type:', req.file.mimetype);
+    if (!audioMimeType.startsWith('audio/')) {
+      console.error('Invalid file type:', audioMimeType);
       return res.status(400).json({ error: 'Invalid file type. Only audio files are allowed.' });
     }
 
     // تحقق من حجم الملف
-    if (req.file.size < 1000) {
-      console.error('File too small:', req.file.size);
+    if (audioBuffer.length < 1000) {
+      console.error('File too small:', audioBuffer.length);
       return res.status(400).json({ error: 'Audio file too small. Please record longer audio.' });
     }
 
@@ -66,9 +94,9 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       method: 'POST',
       headers: {
         'authorization': ASSEMBLYAI_API_KEY,
-        'content-type': req.file.mimetype,
+        'content-type': audioMimeType,
       },
-      body: req.file.buffer,
+      body: audioBuffer,
     });
     
     console.log('Upload response status:', uploadResponse.status);
