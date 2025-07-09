@@ -570,23 +570,8 @@ export default function RecordScreen() {
                 console.error('Translation error:', error);
               }
             }
-            
-            // توليد ملخص تلقائياً إذا كان النص طويلاً
-            if (transcription && transcription.length > 100) {
-              try {
-                const { SpeechService } = await import('@/services/speechService');
-                const summary = await SpeechService.summarizeText(transcription, selectedLanguage?.code);
-                setCurrentSummary(summary);
-                console.log('Summary completed:', summary);
-              } catch (error) {
-                console.error('Summary error:', error);
-              }
-            }
           },
-          (summary) => {
-            setCurrentSummary(summary);
-            console.log('Summary completed:', summary);
-          },
+          () => {}, // لا تلخيص تلقائي
           selectedLanguage?.code
         );
       }

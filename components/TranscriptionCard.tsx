@@ -369,7 +369,7 @@ export function TranscriptionCard({
               ]}>
                 {transcription}
               </Text>
-              {transcription && !summary && !isProcessing && onGenerateSummary && !isRealTime && (
+              {transcription && !isProcessing && onGenerateSummary && !isRealTime && (
                 <TouchableOpacity
                   style={styles.summaryButton}
                   onPress={onGenerateSummary}
