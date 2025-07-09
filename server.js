@@ -43,6 +43,18 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       fieldname: req.file.fieldname
     });
 
+    // تحقق من أن الملف صوتي
+    if (!req.file.mimetype.startsWith('audio/')) {
+      console.error('Invalid file type:', req.file.mimetype);
+      return res.status(400).json({ error: 'Invalid file type. Only audio files are allowed.' });
+    }
+
+    // تحقق من حجم الملف
+    if (req.file.size < 1000) {
+      console.error('File too small:', req.file.size);
+      return res.status(400).json({ error: 'Audio file too small. Please record longer audio.' });
+    }
+
     if (!ASSEMBLYAI_API_KEY) {
       console.error('AssemblyAI API key is missing');
       return res.status(500).json({ error: 'Server configuration error: API key missing.' });
@@ -54,7 +66,7 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       method: 'POST',
       headers: {
         'authorization': ASSEMBLYAI_API_KEY,
-        'content-type': req.file.mimetype || 'audio/wav',
+        'content-type': req.file.mimetype,
       },
       body: req.file.buffer,
     });
