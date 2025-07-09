@@ -249,7 +249,34 @@ export class SpeechService {
         
         // المحاولة الثانية: استخدام base64
         try {
-          const arrayBuffer = await processedBlob.arrayBuffer();
+          console.log('Converting to base64...');
+          console.log('ProcessedBlob type:', typeof processedBlob);
+          console.log('ProcessedBlob:', processedBlob);
+          
+          if (!processedBlob) {
+            throw new Error('ProcessedBlob is undefined');
+          }
+          
+          let arrayBuffer;
+          try {
+            arrayBuffer = await processedBlob.arrayBuffer();
+          } catch (arrayBufferError) {
+            console.log('arrayBuffer() failed, trying FileReader...', arrayBufferError);
+            // حل بديل باستخدام FileReader
+            arrayBuffer = await new Promise<ArrayBuffer>((resolve, reject) => {
+              const reader = new FileReader();
+              reader.onload = () => {
+                if (reader.result instanceof ArrayBuffer) {
+                  resolve(reader.result);
+                } else {
+                  reject(new Error('FileReader failed to read as ArrayBuffer'));
+                }
+              };
+              reader.onerror = () => reject(new Error('FileReader error'));
+              reader.readAsArrayBuffer(processedBlob);
+            });
+          }
+          
           const base64 = btoa(String.fromCharCode(...new Uint8Array(arrayBuffer)));
           
           const jsonData = {
@@ -301,6 +328,26 @@ export class SpeechService {
             
             xhr.send(formData);
           });
+        }
+      } catch (allMethodsError) {
+        console.log('All methods failed, trying text/plain...', allMethodsError);
+        
+        // المحاولة الرابعة: إرسال كـ text/plain
+        try {
+          const textBlob = new Blob([processedBlob], { type: 'text/plain' });
+          const textFormData = new FormData();
+          textFormData.append('audio', textBlob, 'audio.txt');
+          textFormData.append('targetLanguage', targetLanguage || '');
+          textFormData.append('sourceLanguage', sourceLanguage || '');
+          
+          response = await fetch(serverUrl, {
+            method: 'POST',
+            body: textFormData,
+            signal: controller.signal,
+          });
+        } catch (textError) {
+          console.log('Text/plain also failed:', textError);
+          throw allMethodsError; // أعد الخطأ الأصلي
         }
       }
       
@@ -535,7 +582,7 @@ export class SpeechService {
       { code: 'uk', name: 'Ukrainian', flag: '🇺🇦' },
       { code: 'ca', name: 'Catalan', flag: '🇪🇸' },
       { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
-      { code: 'az', name: 'Azerbaijani', flag: '🇦🇿' },
+      { code: 'az', name: 'Azerbaijani', flag: '🇿🇿' },
       { code: 'bg', name: 'Bulgarian', flag: '🇧🇬' },
       { code: 'bs', name: 'Bosnian', flag: '🇧🇦' },
       { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
