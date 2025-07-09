@@ -46,8 +46,8 @@ export default function SignUpScreen() {
         Alert.alert('Error', error.message);
       } else {
         Alert.alert(
-          'Success',
-          'Account created successfully! Please sign in.',
+          'Check your email',
+          'We have sent you a confirmation email. Please verify your email address before logging in.',
           [
             {
               text: 'OK',
@@ -93,6 +93,13 @@ export default function SignUpScreen() {
               spellCheck={false}
               textContentType="emailAddress"
               importantForAutofill="yes"
+              autoFocus={false}
+              blurOnSubmit={false}
+              returnKeyType="next"
+              enablesReturnKeyAutomatically={true}
+              clearButtonMode="while-editing"
+              accessibilityLabel="Email address"
+              accessibilityHint="Enter your email address for new account"
             />
           </View>
 
@@ -110,10 +117,19 @@ export default function SignUpScreen() {
               spellCheck={false}
               textContentType="newPassword"
               importantForAutofill="yes"
+              autoFocus={false}
+              blurOnSubmit={false}
+              returnKeyType="next"
+              enablesReturnKeyAutomatically={true}
+              clearButtonMode="while-editing"
+              accessibilityLabel="New password"
+              accessibilityHint="Enter your new password"
             />
             <TouchableOpacity
               style={styles.eyeIcon}
               onPress={() => setShowPassword(!showPassword)}
+              accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+              accessibilityRole="button"
             >
               {showPassword ? (
                 <EyeOff size={20} color="#6B7280" />
@@ -137,10 +153,20 @@ export default function SignUpScreen() {
               spellCheck={false}
               textContentType="newPassword"
               importantForAutofill="yes"
+              autoFocus={false}
+              blurOnSubmit={true}
+              returnKeyType="done"
+              enablesReturnKeyAutomatically={true}
+              clearButtonMode="while-editing"
+              accessibilityLabel="Confirm password"
+              accessibilityHint="Confirm your new password"
+              onSubmitEditing={handleSignUp}
             />
             <TouchableOpacity
               style={styles.eyeIcon}
               onPress={() => setShowConfirmPassword(!showConfirmPassword)}
+              accessibilityLabel={showConfirmPassword ? "Hide confirm password" : "Show confirm password"}
+              accessibilityRole="button"
             >
               {showConfirmPassword ? (
                 <EyeOff size={20} color="#6B7280" />
@@ -154,6 +180,9 @@ export default function SignUpScreen() {
             style={[styles.signUpButton, loading && styles.buttonDisabled]}
             onPress={handleSignUp}
             disabled={loading}
+            accessibilityLabel="Create account button"
+            accessibilityRole="button"
+            accessibilityHint="Tap to create your new account"
           >
             <Text style={styles.signUpButtonText}>
               {loading ? 'Creating Account...' : 'Create Account'}

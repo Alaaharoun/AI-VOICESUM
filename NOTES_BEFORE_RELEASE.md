@@ -1,0 +1,22 @@
+# Pre-Release Checklist for Translate App
+
+- [ ] Test all features on multiple devices (Android/iOS, different accounts)
+- [ ] Test negative scenarios (trial expired, not logged in, etc.)
+- [ ] Review all UI text for clarity and completeness
+- [ ] Check responsive design on small and large screens
+- [ ] Ensure all buttons and actions work as expected
+- [ ] Verify Privacy Policy link works
+- [ ] Add Terms of Service link if required
+- [ ] Remove unnecessary permissions
+- [ ] Make subscription/payment status clear to users
+- [ ] If payment is not ready, show 'Coming soon' or similar message
+- [ ] Check app icon and app name
+- [ ] Ensure all required files are present (app.json, icons, etc.)
+- [ ] Remove unused/test code and files
+- [ ] Prepare Google Play Console listing (screenshots, description, etc.)
+- [ ] Build and test release APK/AAB
+- [ ] Test app performance and battery usage
+- [ ] Test with slow/no internet and show proper messages
+- [ ] Fix all linter/build errors and warnings
+- [ ] Test subscription integration with Google Play
+- [ ] Double-check all privacy and policy requirements 

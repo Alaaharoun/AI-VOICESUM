@@ -9,10 +9,15 @@ import {
   KeyboardAvoidingView,
   Platform,
   ScrollView,
+  Image,
+  Modal,
+  Pressable,
+  FlatList,
 } from 'react-native';
 import { Link, router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
-import { Mail, Lock, Eye, EyeOff } from 'lucide-react-native';
+import { Mail, Lock, Eye, EyeOff, Languages, ChevronDown, Check } from 'lucide-react-native';
+import { SpeechService } from '@/services/speechService';
 
 export default function SignInScreen() {
   const [email, setEmail] = useState('');
@@ -43,6 +48,7 @@ export default function SignInScreen() {
   };
 
   return (
+    <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
     <KeyboardAvoidingView 
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
@@ -52,10 +58,17 @@ export default function SignInScreen() {
         keyboardShouldPersistTaps="handled"
       >
         <View style={styles.header}>
+          <Image
+            source={require('../../assets/logo.png')}
+            style={styles.logo}
+            resizeMode="contain"
+            accessible={true}
+            accessibilityLabel="App logo"
+          />
+          <Text style={styles.appName}>AI VoiceSum</Text>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.subtitle}>Sign in to continue your voice journey</Text>
         </View>
-
         <View style={styles.form}>
           <View style={styles.inputContainer}>
             <Mail size={20} color="#6B7280" style={styles.inputIcon} />
@@ -72,9 +85,15 @@ export default function SignInScreen() {
               spellCheck={false}
               textContentType="emailAddress"
               importantForAutofill="yes"
+              autoFocus={false}
+              blurOnSubmit={false}
+              returnKeyType="next"
+              enablesReturnKeyAutomatically={true}
+              clearButtonMode="while-editing"
+              accessibilityLabel="Email address"
+              accessibilityHint="Enter your email address for login"
             />
           </View>
-
           <View style={styles.inputContainer}>
             <Lock size={20} color="#6B7280" style={styles.inputIcon} />
             <TextInput
@@ -89,10 +108,20 @@ export default function SignInScreen() {
               spellCheck={false}
               textContentType="password"
               importantForAutofill="yes"
+              autoFocus={false}
+              blurOnSubmit={true}
+              returnKeyType="done"
+              enablesReturnKeyAutomatically={true}
+              clearButtonMode="while-editing"
+              accessibilityLabel="Password"
+              accessibilityHint="Enter your password for login"
+              onSubmitEditing={handleSignIn}
             />
             <TouchableOpacity
               style={styles.eyeIcon}
               onPress={() => setShowPassword(!showPassword)}
+              accessibilityLabel={showPassword ? "Hide password" : "Show password"}
+              accessibilityRole="button"
             >
               {showPassword ? (
                 <EyeOff size={20} color="#6B7280" />
@@ -101,17 +130,18 @@ export default function SignInScreen() {
               )}
             </TouchableOpacity>
           </View>
-
           <TouchableOpacity
             style={[styles.signInButton, loading && styles.buttonDisabled]}
             onPress={handleSignIn}
             disabled={loading}
+            accessibilityLabel="Sign in button"
+            accessibilityRole="button"
+            accessibilityHint="Tap to sign in with your credentials"
           >
             <Text style={styles.signInButtonText}>
               {loading ? 'Signing In...' : 'Sign In'}
             </Text>
           </TouchableOpacity>
-
           <View style={styles.footer}>
             <Text style={styles.footerText}>
               Don't have an account?{' '}
@@ -123,6 +153,7 @@ export default function SignInScreen() {
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
+    </View>
   );
 }
 
@@ -139,6 +170,19 @@ const styles = StyleSheet.create({
   header: {
     alignItems: 'center',
     marginBottom: 48,
+  },
+  logo: {
+    width: 96,
+    height: 96,
+    marginBottom: 16,
+  },
+  appName: {
+    fontSize: 24,
+    fontFamily: 'Inter-Bold',
+    color: '#2563EB',
+    marginBottom: 16,
+    textAlign: 'center',
+    letterSpacing: 1,
   },
   title: {
     fontSize: 32,

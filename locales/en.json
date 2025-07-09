@@ -1,0 +1,16 @@
+{
+  "appName": "AI VoiceSum",
+  "welcomeBack": "Welcome Back",
+  "signInSubtitle": "Sign in to continue your voice journey",
+  "email": "Email",
+  "password": "Password",
+  "signIn": "Sign In",
+  "signingIn": "Signing In...",
+  "noAccount": "Don't have an account?",
+  "signUp": "Sign up",
+  "createAccount": "Create Account",
+  "joinThousands": "Join thousands using AI voice transcription",
+  "confirmPassword": "Confirm Password",
+  "creatingAccount": "Creating Account...",
+  "alreadyHaveAccount": "Already have an account?"
+} 

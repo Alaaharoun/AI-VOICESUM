@@ -136,4 +136,6 @@ async function checkAndApply() {
 }
 
 // Run the migration
-checkAndApply(); 
+checkAndApply();
+
+// تم حذف كود إضافة usage_seconds. إذا أردت تنفيذ الإضافة استخدم السكريبت المستقل الجديد فقط. 

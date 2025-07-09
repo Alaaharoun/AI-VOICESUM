@@ -20,17 +20,21 @@ interface UseAudioRecorderReturn {
   processAudio: (
     audioBlob: Blob,
     onTranscription: (transcription: string) => void,
-    onSummary: (summary: string) => void
+    onSummary: (summary: string) => void,
+    targetLanguage?: string
   ) => Promise<void>;
   generateSummary: (
     transcription: string,
-    onSummary: (summary: string) => void
+    onSummary: (summary: string) => void,
+    targetLanguage?: string
   ) => Promise<void>;
   // New real-time methods
   startRealTimeTranscription: (
     onTranscriptionUpdate: (transcription: string) => void,
     onTranslationUpdate: (translation: string) => void,
-    targetLanguage?: string
+    targetLanguage?: string,
+    sourceLanguage?: string,
+    useLiveTranslationServer?: boolean
   ) => Promise<void>;
   stopRealTimeTranscription: () => Promise<void>;
 }
@@ -122,7 +126,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
     } catch (error) {
       console.error('Error starting recording:', error);
       if (Platform.OS === 'web') {
-        throw new Error('Failed to start recording. Please check microphone permissions.');
+      throw new Error('Failed to start recording. Please check microphone permissions.');
       } else {
         throw new Error('Failed to start mobile recording. Please check microphone permissions.');
       }
@@ -185,7 +189,8 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
   const processAudio = async (
     audioBlob: Blob,
     onTranscription: (transcription: string) => void,
-    onSummary: (summary: string) => void
+    onSummary: (summary: string) => void,
+    targetLanguage?: string
   ): Promise<void> => {
     setIsProcessing(true);
     
@@ -194,7 +199,7 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
       const { SpeechService } = await import('@/services/speechService');
       
       // Transcribe the audio
-      const transcription = await SpeechService.transcribeAudio(audioBlob);
+      const transcription = await SpeechService.transcribeAudio(audioBlob, targetLanguage);
       onTranscription(transcription);
       
     } catch (error) {
@@ -207,16 +212,13 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
 
   const generateSummary = async (
     transcription: string,
-    onSummary: (summary: string) => void
+    onSummary: (summary: string) => void,
+    targetLanguage?: string
   ): Promise<void> => {
     try {
-      // Import the speech service dynamically
       const { SpeechService } = await import('@/services/speechService');
-      
-      // Generate summary
-      const summary = await SpeechService.summarizeText(transcription);
+      const summary = await SpeechService.summarizeText(transcription, targetLanguage);
       onSummary(summary);
-      
     } catch (error) {
       console.error('Error generating summary:', error);
       throw new Error('Failed to generate summary. Please try again.');
@@ -227,7 +229,9 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
   const startRealTimeTranscription = async (
     onTranscriptionUpdate: (transcription: string) => void,
     onTranslationUpdate: (translation: string) => void,
-    targetLanguage?: string
+    targetLanguage?: string,
+    sourceLanguage?: string,
+    useLiveTranslationServer?: boolean
   ): Promise<void> => {
     try {
       if (Platform.OS === 'web') {
@@ -266,15 +270,10 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
           if (audioChunksRef.current.length > 0) {
             try {
               const { SpeechService } = await import('@/services/speechService');
-              
-              // Create a blob from accumulated chunks
               const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-              
-              // Process audio for AssemblyAI compatibility
               const processedBlob = await AudioProcessor.processAudioForAssemblyAI(audioBlob);
-              
-              // Transcribe the current chunk using real-time method
-              const transcription = await SpeechService.transcribeAudioRealTime(processedBlob);
+              // Use external server if enabled
+              const transcription = await SpeechService.transcribeAudioRealTime(processedBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
               
               if (transcription && transcription !== lastTranscriptionRef.current) {
                 lastTranscriptionRef.current = transcription;
@@ -351,19 +350,14 @@ export function useAudioRecorder(): UseAudioRecorderReturn {
         transcriptionIntervalRef.current = setInterval(async () => {
           if (recordingRef.current) {
             try {
-              // Get the current recording URI
               const uri = recordingRef.current.getURI();
               if (uri) {
-                // Convert URI to blob for processing
                 const response = await fetch(uri);
                 const audioBlob = await response.blob();
-                
-                // Process audio for AssemblyAI compatibility
                 const processedBlob = await AudioProcessor.processAudioForAssemblyAI(audioBlob);
-                
-                // Transcribe the current audio
                 const { SpeechService } = await import('@/services/speechService');
-                const transcription = await SpeechService.transcribeAudioRealTime(processedBlob);
+                // Use external server if enabled
+                const transcription = await SpeechService.transcribeAudioRealTime(processedBlob, targetLanguage, sourceLanguage, useLiveTranslationServer);
                 
                 if (transcription && transcription !== lastTranscriptionRef.current) {
                   lastTranscriptionRef.current = transcription;

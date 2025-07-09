@@ -5,9 +5,9 @@ This checklist will help you migrate your Expo app to support real-time live tra
 ---
 
 ## 1. Eject from Expo Managed Workflow
-- [ ] Run `npx expo eject` to convert to Bare Workflow
-- [ ] Commit all changes before ejecting
-- [ ] Verify iOS and Android native folders are created
+- [x] Run `npx expo eject` to convert to Bare Workflow (command run, but native folders not found)
+- [x] Commit all changes before ejecting (initial commit done)
+- [ ] Verify iOS and Android native folders are created (**not found, manual intervention may be needed**)
 
 ## 2. Install Native Audio Recorder
 - [ ] Install `react-native-audio-recorder-player` (`npm install react-native-audio-recorder-player`)
@@ -46,6 +46,7 @@ This checklist will help you migrate your Expo app to support real-time live tra
 - After ejecting, Expo Go will no longer work. Use a custom dev build or Xcode/Android Studio.
 - Real-time streaming may require WebSockets or chunked HTTP uploads to AssemblyAI.
 - Test on real devices for accurate results.
+- **Native folders (ios/android) were not created by `expo eject`. Please check for errors or run the eject process again.**
 
 ---
 

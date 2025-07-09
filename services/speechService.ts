@@ -11,7 +11,7 @@ export class SpeechService {
     }
   }
 
-  private static async transcribeWithAssemblyAI(audioBlob: Blob): Promise<string> {
+  private static async transcribeWithAssemblyAI(audioBlob: Blob, targetLanguage?: string): Promise<string> {
     this.validateApiKey();
     const apiKey = process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY!;
     
@@ -54,22 +54,25 @@ export class SpeechService {
       const audioUrl = uploadData.upload_url;
       console.log('Audio uploaded successfully, starting transcription...');
 
-      // Step 2: Request transcription with optimized settings
+      // Step 2: Request transcription with auto language detection only
+      const transcriptRequestBody: any = {
+        audio_url: audioUrl,
+        language_detection: true, // Enable auto language detection
+        punctuate: true,
+        format_text: true,
+        filter_profanity: false,
+        dual_channel: false,
+        speaker_labels: false
+      };
+      // لا ترسل أي خاصية ترجمة هنا
+
       const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
         method: 'POST',
         headers: {
           'authorization': apiKey,
           'content-type': 'application/json',
         },
-        body: JSON.stringify({
-          audio_url: audioUrl,
-          language_code: 'en_us',
-          punctuate: true,
-          format_text: true,
-          filter_profanity: false,
-          dual_channel: false,
-          speaker_labels: false
-        }),
+        body: JSON.stringify(transcriptRequestBody),
       });
 
       if (!transcriptResponse.ok) {
@@ -153,9 +156,9 @@ export class SpeechService {
     throw new Error('Transcription timeout - the recording may be too long. Please try with a shorter recording.');
   }
 
-  static async transcribeAudio(audioBlob: Blob): Promise<string> {
+  static async transcribeAudio(audioBlob: Blob, targetLanguage?: string): Promise<string> {
     try {
-      return await this.transcribeWithAssemblyAI(audioBlob);
+      return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
     } catch (error) {
       console.error('Transcription error:', error);
       
@@ -167,22 +170,52 @@ export class SpeechService {
     }
   }
 
-  // New method for real-time transcription with faster processing
-  static async transcribeAudioRealTime(audioBlob: Blob): Promise<string> {
+  // New: Real-time transcription for live translation via external server
+  static async transcribeAudioLiveTranslation(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string): Promise<string> {
     try {
-      return await this.transcribeWithAssemblyAI(audioBlob);
+      // Replace with your external server URL
+      const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
+      const formData = new FormData();
+      formData.append('audio', audioBlob, 'audio.webm');
+      formData.append('targetLanguage', targetLanguage ?? '');
+      formData.append('sourceLanguage', sourceLanguage ?? '');
+
+      const response = await fetch(serverUrl, {
+        method: 'POST',
+        body: formData,
+      });
+      if (!response.ok) {
+        const errorText = await response.text();
+        throw new Error(`Live translation server error: ${response.status} ${errorText}`);
+      }
+      const data = await response.json();
+      if (!data.translatedText) {
+        throw new Error('No translated text returned from live translation server');
+      }
+      return data.translatedText;
+    } catch (error) {
+      console.error('Live translation server error:', error);
+      throw new Error('Failed to transcribe audio via live translation server');
+    }
+  }
+
+  // Update: Real-time transcription uses external server for live translation
+  static async transcribeAudioRealTime(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string, useLiveTranslationServer?: boolean): Promise<string> {
+    try {
+      if (useLiveTranslationServer) {
+        // Use the new external server for live translation
+        return await this.transcribeAudioLiveTranslation(audioBlob, targetLanguage, sourceLanguage);
+      } else {
+        // Default: use AssemblyAI
+        return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+      }
     } catch (error) {
       console.error('Real-time transcription error:', error);
-      
-      if (error instanceof Error) {
-        throw error;
-      }
-      
       throw new Error('Failed to transcribe audio in real-time');
     }
   }
 
-  static async summarizeText(text: string): Promise<string> {
+  static async summarizeText(text: string, targetLanguage?: string): Promise<string> {
     const qwenApiKey = process.env.EXPO_PUBLIC_QWEN_API_KEY;
     
     if (!qwenApiKey) {
@@ -195,6 +228,13 @@ export class SpeechService {
 
     if (text.length < 50) {
       throw new Error('Text is too short to summarize meaningfully');
+    }
+
+    const langCode = typeof targetLanguage === 'string' ? targetLanguage : '';
+    let languageName = '';
+    if (langCode.length > 0) {
+      const langObj = SpeechService.getAvailableLanguages().find(l => l.code === langCode);
+      languageName = langObj ? langObj.name : langCode;
     }
 
     try {
@@ -213,7 +253,8 @@ export class SpeechService {
             },
             {
               role: 'user',
-              content: `Please summarize the following text concisely:\n\n${text}`,
+              content: `Summarize this text in a bullet-point list${languageName ? ` in ${languageName}` : ''}.
+\n\n${text}`,
             },
           ],
           max_tokens: 200,
@@ -248,35 +289,38 @@ export class SpeechService {
     }
   }
 
-  static async translateText(text: string, targetLanguage: string): Promise<string> {
+  static async translateText(text: string, targetLanguage: string, sourceLanguage?: string): Promise<string> {
     if (!text || text.trim().length === 0) {
       throw new Error('No text provided for translation');
     }
 
     try {
       // Use Google Translate API (free alternative)
-      const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=${targetLanguage}&dt=t&q=${encodeURIComponent(text)}`, {
+      // إذا لم تحدد لغة مصدر، استخدم 'auto' ليكتشفها Google
+      const sl = sourceLanguage || 'auto';
+      const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${targetLanguage}&dt=t&q=${encodeURIComponent(text)}`, {
         method: 'GET',
-        headers: {
-          'Content-Type': 'application/json',
-        },
       });
 
       if (!response.ok) {
         const errorText = await response.text();
         console.error('Google Translate API error:', response.status, errorText);
-        throw new Error(`Translation failed: ${response.status} ${response.statusText}`);
+        throw new Error('Failed to translate text');
       }
 
       const data = await response.json();
       
-      // Google Translate returns a complex array structure
-      if (data && data[0] && data[0][0] && data[0][0][0]) {
-        const translatedText = String(data[0][0][0]);
-        return translatedText || text; // Return original text if translation is empty
+      // Concatenate all translated sentences
+      let translatedText = '';
+      if (Array.isArray(data) && Array.isArray(data[0])) {
+        translatedText = data[0]
+          .map((item: any) => (typeof item[0] === 'string' ? item[0] : (item[0] ? String(item[0]) : '')))
+          .filter((s: string) => !!s)
+          .join('');
       } else {
-        throw new Error('No translation returned from Google Translate');
+        translatedText = String(data[0][0][0]);
       }
+      return translatedText || text; // Return original text if translation is empty
     } catch (error) {
       console.error('Translation error:', error);
       
@@ -300,7 +344,7 @@ export class SpeechService {
     }
 
     // Create cache key
-    const cacheKey = `${text.toLowerCase().trim()}_${targetLanguage}`;
+    const cacheKey = `${text.toLowerCase().trim()}_${targetLanguage || 'en'}`;
     
     // Check cache first
     if (this.translationCache.has(cacheKey)) {
@@ -308,7 +352,7 @@ export class SpeechService {
     }
 
     try {
-      const translation = await this.translateText(text, targetLanguage);
+      const translation = await this.translateText(text, targetLanguage || 'en');
       
       // Cache the result
       this.translationCache.set(cacheKey, translation);
@@ -328,20 +372,46 @@ export class SpeechService {
 
   static getAvailableLanguages() {
     return [
+      { code: 'en', name: 'English', flag: '🇺🇸' },
       { code: 'es', name: 'Spanish', flag: '🇪🇸' },
       { code: 'fr', name: 'French', flag: '🇫🇷' },
       { code: 'de', name: 'German', flag: '🇩🇪' },
+      { code: 'id', name: 'Indonesian', flag: '🇮🇩' },
       { code: 'it', name: 'Italian', flag: '🇮🇹' },
-      { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
-      { code: 'zh', name: 'Chinese (Simplified)', flag: '🇨🇳' },
       { code: 'ja', name: 'Japanese', flag: '🇯🇵' },
-      { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
-      { code: 'ru', name: 'Russian', flag: '🇷🇺' },
-      { code: 'hi', name: 'Hindi', flag: '🇮🇳' },
-      { code: 'pl', name: 'Polish', flag: '🇵🇱' },
       { code: 'nl', name: 'Dutch', flag: '🇳🇱' },
+      { code: 'pl', name: 'Polish', flag: '🇵🇱' },
+      { code: 'pt', name: 'Portuguese', flag: '🇵🇹' },
+      { code: 'ru', name: 'Russian', flag: '🇷🇺' },
       { code: 'tr', name: 'Turkish', flag: '🇹🇷' },
       { code: 'uk', name: 'Ukrainian', flag: '🇺🇦' },
+      { code: 'ca', name: 'Catalan', flag: '🇪🇸' },
+      { code: 'ar', name: 'Arabic', flag: '🇸🇦' },
+      { code: 'az', name: 'Azerbaijani', flag: '🇦🇿' },
+      { code: 'bg', name: 'Bulgarian', flag: '🇧🇬' },
+      { code: 'bs', name: 'Bosnian', flag: '🇧🇦' },
+      { code: 'zh', name: 'Chinese', flag: '🇨🇳' },
+      { code: 'cs', name: 'Czech', flag: '🇨🇿' },
+      { code: 'da', name: 'Danish', flag: '🇩🇰' },
+      { code: 'el', name: 'Greek', flag: '🇬🇷' },
+      { code: 'et', name: 'Estonian', flag: '🇪🇪' },
+      { code: 'fi', name: 'Finnish', flag: '🇫🇮' },
+      { code: 'fil', name: 'Filipino', flag: '🇵🇭' },
+      { code: 'gl', name: 'Galician', flag: '🇪🇸' },
+      { code: 'hi', name: 'Hindi', flag: '🇮🇳' },
+      { code: 'hr', name: 'Croatian', flag: '🇭🇷' },
+      { code: 'hu', name: 'Hungarian', flag: '🇭🇺' },
+      { code: 'ko', name: 'Korean', flag: '🇰🇷' },
+      { code: 'mk', name: 'Macedonian', flag: '🇲🇰' },
+      { code: 'ms', name: 'Malay', flag: '🇲🇾' },
+      { code: 'no', name: 'Norwegian', flag: '🇳🇴' },
+      { code: 'ro', name: 'Romanian', flag: '🇷🇴' },
+      { code: 'sk', name: 'Slovak', flag: '🇸🇰' },
+      { code: 'sv', name: 'Swedish', flag: '🇸🇪' },
+      { code: 'th', name: 'Thai', flag: '🇹🇭' },
+      { code: 'ur', name: 'Urdu', flag: '🇵🇰' },
+      { code: 'vi', name: 'Vietnamese', flag: '🇻🇳' },
+      { code: 'yue', name: 'Cantonese', flag: '🇭🇰' },
     ];
   }
 }

@@ -3,7 +3,9 @@ import { Mic, FileText, User, Crown, Settings } from 'lucide-react-native';
 import { useUserPermissions } from '@/hooks/useAuth';
 
 export default function TabLayout() {
-  const { isSuperadmin } = useUserPermissions();
+  const { isSuperadmin, loading: permissionsLoading } = useUserPermissions();
+
+  console.log('TabLayout: isSuperadmin', isSuperadmin, 'permissionsLoading', permissionsLoading);
 
   return (
     <Tabs
@@ -53,17 +55,6 @@ export default function TabLayout() {
           ),
         }}
       />
-      {isSuperadmin && (
-        <Tabs.Screen
-          name="admin"
-          options={{
-            title: 'Admin',
-            tabBarIcon: ({ size, color }) => (
-              <Settings size={size} color={color} />
-            ),
-          }}
-        />
-      )}
       <Tabs.Screen
         name="live-translation"
         options={{

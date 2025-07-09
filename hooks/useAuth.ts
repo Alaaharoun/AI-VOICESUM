@@ -58,7 +58,7 @@ export function useUserPermissions() {
             .select('name');
           
           if (!permissionsError && allPermissions) {
-            permissionsList = allPermissions.map(p => p.name);
+            permissionsList = (allPermissions as { name: string }[]).map(p => p.name);
           }
         } else {
           // Regular users - get their specific permissions via joins
@@ -73,7 +73,7 @@ export function useUserPermissions() {
             .eq('roles.user_roles.user_id', user.id);
 
           if (!permissionsError && userPermissions) {
-            permissionsList = userPermissions
+            permissionsList = (userPermissions as any[])
               .filter(rp => rp.permissions && rp.permissions.name)
               .map(rp => rp.permissions.name);
           }
@@ -86,6 +86,7 @@ export function useUserPermissions() {
           permissions: [...new Set(permissionsList)], // Remove duplicates
           roles
         });
+        console.log('useUserPermissions: setPermissions', { isSuperadmin: isSuperadmin || false, roles });
 
       } catch (error) {
         console.error('Error checking user permissions:', error);
