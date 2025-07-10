@@ -555,22 +555,22 @@ export default function RecordScreen() {
         console.log('Processing recorded audio...');
         await processAudio(
           audioBlob,
-          async (transcription) => {
-            setCurrentTranscription(transcription);
+            async (transcription) => {
+              setCurrentTranscription(transcription);
             console.log('Transcription completed:', transcription);
-            
+              
             // ترجمة النص تلقائياً إذا تم اختيار لغة هدف
-            if (selectedLanguage && transcription) {
-              try {
-                const { SpeechService } = await import('@/services/speechService');
-                const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
-                setCurrentTranslation(translation);
+              if (selectedLanguage && transcription) {
+                try {
+                  const { SpeechService } = await import('@/services/speechService');
+                  const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
+                  setCurrentTranslation(translation);
                 console.log('Translation completed:', translation);
-              } catch (error) {
-                console.error('Translation error:', error);
+                } catch (error) {
+                  console.error('Translation error:', error);
+                }
               }
-            }
-          },
+            },
           () => {}, // لا تلخيص تلقائي
           selectedLanguage?.code
         );
@@ -590,7 +590,7 @@ export default function RecordScreen() {
           Alert.alert('Summary Error', 'AI did not return a summary. Try again with a longer or clearer recording.');
           setCurrentSummary('');
         } else {
-          setCurrentSummary(summary);
+        setCurrentSummary(summary);
           // انتقل إلى صفحة الملخص مع تمرير النصوص المطلوبة
           router.navigate({
             pathname: '/(tabs)/summary-view',

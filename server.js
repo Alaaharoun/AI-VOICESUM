@@ -2,8 +2,13 @@ const express = require('express');
 const cors = require('cors');
 const multer = require('multer');
 const fetch = require('node-fetch');
+const fs = require('fs');
+const { exec } = require('child_process');
+const { promisify } = require('util');
+const ffmpegPath = require('ffmpeg-static');
 require('dotenv').config();
 
+const execAsync = promisify(exec);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -16,6 +21,76 @@ console.log('Environment variables:', {
   EXPO_PUBLIC_ASSEMBLYAI_API_KEY: process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
   ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY ? 'Present' : 'Missing'
 });
+
+// Helper function to convert audio format using ffmpeg
+async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav') {
+  try {
+    // First try ffmpeg conversion
+    try {
+      // Create temporary files
+      const inputFile = `/tmp/input_${Date.now()}.${inputFormat.split('/')[1] || 'mp3'}`;
+      const outputFile = `/tmp/output_${Date.now()}.${outputFormat}`;
+      
+      // Write input buffer to file
+      fs.writeFileSync(inputFile, audioBuffer);
+      
+      // Convert using ffmpeg
+      const ffmpegCommand = `${ffmpegPath} -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
+      await execAsync(ffmpegCommand);
+      
+      // Read converted file
+      const convertedBuffer = fs.readFileSync(outputFile);
+      
+      // Clean up temporary files
+      fs.unlinkSync(inputFile);
+      fs.unlinkSync(outputFile);
+      
+      return convertedBuffer;
+    } catch (ffmpegError) {
+      console.log('FFmpeg conversion failed, trying fallback method:', ffmpegError.message);
+      
+      // Fallback: Create a simple WAV file from the original data
+      // This is a basic approach that might work for some cases
+      const sampleRate = 16000;
+      const channels = 1;
+      const bitsPerSample = 16;
+      
+      // Create WAV header
+      const headerSize = 44;
+      const dataSize = audioBuffer.length;
+      const fileSize = headerSize + dataSize - 8;
+      
+      const header = Buffer.alloc(headerSize);
+      
+      // RIFF header
+      header.write('RIFF', 0);
+      header.writeUInt32LE(fileSize, 4);
+      header.write('WAVE', 8);
+      
+      // fmt chunk
+      header.write('fmt ', 12);
+      header.writeUInt32LE(16, 16); // fmt chunk size
+      header.writeUInt16LE(1, 20); // audio format (PCM)
+      header.writeUInt16LE(channels, 22);
+      header.writeUInt32LE(sampleRate, 24);
+      header.writeUInt32LE(sampleRate * channels * bitsPerSample / 8, 28); // byte rate
+      header.writeUInt16LE(channels * bitsPerSample / 8, 32); // block align
+      header.writeUInt16LE(bitsPerSample, 34);
+      
+      // data chunk
+      header.write('data', 36);
+      header.writeUInt32LE(dataSize, 40);
+      
+      // Combine header with original data
+      const wavBuffer = Buffer.concat([header, audioBuffer]);
+      return wavBuffer;
+    }
+  } catch (error) {
+    console.error('Audio conversion failed:', error);
+    // Return original buffer if conversion fails
+    return audioBuffer;
+  }
+}
 
 // Health check endpoint
 app.get('/health', (req, res) => {
@@ -71,16 +146,29 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       });
     }
 
-    // تحقق من أن الملف صوتي
-    if (!audioMimeType.startsWith('audio/')) {
+    // تحقق من أن الملف صوتي أو فيديو (لأن React Native يرسل video/3gpp)
+    if (!audioMimeType.startsWith('audio/') && !audioMimeType.startsWith('video/')) {
       console.error('Invalid file type:', audioMimeType);
-      return res.status(400).json({ error: 'Invalid file type. Only audio files are allowed.' });
+      return res.status(400).json({ error: 'Invalid file type. Only audio/video files are allowed.' });
     }
 
     // تحقق من حجم الملف
     if (audioBuffer.length < 1000) {
       console.error('File too small:', audioBuffer.length);
       return res.status(400).json({ error: 'Audio file too small. Please record longer audio.' });
+    }
+
+    // Convert audio format if needed (especially for 3GPP format)
+    if (audioMimeType.includes('3gpp') || audioMimeType.includes('video/')) {
+      console.log('Converting 3GPP/video format to WAV...');
+      try {
+        audioBuffer = await convertAudioFormat(audioBuffer, audioMimeType, 'wav');
+        audioMimeType = 'audio/wav';
+        console.log('Audio converted successfully, new size:', audioBuffer.length);
+      } catch (error) {
+        console.error('Audio conversion failed:', error);
+        // Continue with original buffer
+      }
     }
 
     if (!ASSEMBLYAI_API_KEY) {
