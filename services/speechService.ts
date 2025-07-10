@@ -190,6 +190,34 @@ export class SpeechService {
         console.log('Converted to audio/mpeg, new size:', processedBlob.size);
       }
       
+      // تحويل إضافي لضمان أن الملف صوتي حقيقي
+      if (processedBlob.type === 'audio/mpeg' && processedBlob.size > 0) {
+        console.log('Creating true audio blob...');
+        try {
+          // إنشاء ملف صوتي حقيقي باستخدام Web Audio API إذا كان متاحاً
+          if (typeof window !== 'undefined' && window.AudioContext) {
+            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            const arrayBuffer = await processedBlob.arrayBuffer();
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            // إنشاء ملف WAV حقيقي
+            const wavBlob = this.audioBufferToWav(audioBuffer);
+            processedBlob = wavBlob;
+            console.log('Created true WAV audio, size:', processedBlob.size);
+          } else {
+            // حل بديل للـ mobile
+            const arrayBuffer = await processedBlob.arrayBuffer();
+            // إنشاء ملف WAV بسيط
+            const wavHeader = this.createWavHeader(arrayBuffer.byteLength);
+            const wavBlob = new Blob([wavHeader, arrayBuffer], { type: 'audio/wav' });
+            processedBlob = wavBlob;
+            console.log('Created simple WAV audio, size:', processedBlob.size);
+          }
+        } catch (error) {
+          console.log('Audio conversion failed, using original:', error);
+        }
+      }
+      
       console.log('Final audio blob type:', processedBlob.type);
       console.log('Final audio blob size:', processedBlob.size);
       console.log('Target language:', targetLanguage);
@@ -565,6 +593,78 @@ export class SpeechService {
       console.error('Real-time translation error:', error);
       return text; // Return original text if translation fails
     }
+  }
+
+  // Helper method to convert AudioBuffer to WAV
+  private static audioBufferToWav(audioBuffer: AudioBuffer): Blob {
+    const numChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const length = audioBuffer.length;
+    
+    // Create WAV header
+    const buffer = new ArrayBuffer(44 + length * numChannels * 2);
+    const view = new DataView(buffer);
+    
+    // WAV header
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + length * numChannels * 2, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, sampleRate * numChannels * 2, true);
+    view.setUint16(32, numChannels * 2, true);
+    view.setUint16(34, 16, true);
+    writeString(36, 'data');
+    view.setUint32(40, length * numChannels * 2, true);
+    
+    // Write audio data
+    let offset = 44;
+    for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numChannels; channel++) {
+        const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(channel)[i]));
+        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
+        offset += 2;
+      }
+    }
+    
+    return new Blob([buffer], { type: 'audio/wav' });
+  }
+
+  // Helper method to create WAV header
+  private static createWavHeader(dataLength: number): ArrayBuffer {
+    const buffer = new ArrayBuffer(44);
+    const view = new DataView(buffer);
+    
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeString(8, 'WAVE');
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, 22050, true); // sample rate
+    view.setUint32(28, 44100, true); // byte rate
+    view.setUint16(32, 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    writeString(36, 'data');
+    view.setUint32(40, dataLength, true);
+    
+    return buffer;
   }
 
   static getAvailableLanguages() {
