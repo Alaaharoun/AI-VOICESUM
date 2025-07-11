@@ -30,6 +30,7 @@ export default function LiveTranslationPage() {
   const [isSummarizing, setIsSummarizing] = useState(false);
 
   const recordTimerRef = useRef<any>(null);
+  const wsRef = useRef<WebSocket | null>(null);
   const sendChunkTimerRef = useRef<any>(null);
   const lastSentUriRef = useRef<string | null>(null);
 
@@ -49,40 +50,87 @@ export default function LiveTranslationPage() {
       setRecordTime('00:00:00');
       setRecordSecs(0);
       setAudioUri(null);
-      // Request permissions
-      const { status } = await Audio.requestPermissionsAsync();
-      if (status !== 'granted') {
-        setError('Permission to access microphone is required!');
-        setIsRecording(false);
-        return;
-      }
-      await Audio.setAudioModeAsync({
-        allowsRecordingIOS: true,
-        playsInSilentModeIOS: true,
-      });
-      const rec = new Audio.Recording();
-      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-      await rec.startAsync();
-      setRecording(rec);
-      // Timer for UI
-      let seconds = 0;
-      recordTimerRef.current = setInterval(() => {
-        if (!isRecording) {
-          if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-          return;
+      setTranscription('');
+      setTranslation('');
+      // افتح WebSocket
+      const ws = new WebSocket('wss://ai-voicesum.onrender.com'); // عنوان السيرفر على Render
+      wsRef.current = ws;
+      ws.onopen = () => {
+        // ابدأ التسجيل بعد فتح WebSocket
+        (async () => {
+          const { status } = await Audio.requestPermissionsAsync();
+          if (status !== 'granted') {
+            setError('Permission to access microphone is required!');
+            setIsRecording(false);
+            ws.close();
+            return;
+          }
+          await Audio.setAudioModeAsync({
+            allowsRecordingIOS: true,
+            playsInSilentModeIOS: true,
+          });
+          const rec = new Audio.Recording();
+          await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+          await rec.startAsync();
+          setRecording(rec);
+          // Timer for UI
+          let seconds = 0;
+          recordTimerRef.current = setInterval(() => {
+            if (!isRecording) {
+              if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+              return;
+            }
+            seconds++;
+            setRecordSecs(seconds * 1000);
+            const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+            const secs = (seconds % 60).toString().padStart(2, '0');
+            setRecordTime(`${mins}:${secs}:00`);
+          }, 1000);
+          // Timer for sending chunk every 500ms
+          sendChunkTimerRef.current = setInterval(async () => {
+            if (rec && isRecording && ws.readyState === 1) {
+              const uri = rec.getURI();
+              if (!uri || uri === lastSentUriRef.current) return;
+              lastSentUriRef.current = uri;
+              const response = await fetch('file://' + uri);
+              const blob = await response.blob();
+              const arrayBuffer = await blob.arrayBuffer();
+              ws.send(arrayBuffer);
+            }
+          }, 500);
+        })();
+      };
+      ws.onmessage = async (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          if (data.type === 'partial' || data.type === 'final') {
+            setTranscription(data.text || '');
+            // ترجم النص باستخدام Google Translate من الكلاينت
+            if (data.text) {
+              try {
+                const translated = await SpeechService.translateText(data.text, targetLanguageCode);
+                setTranslation(translated);
+              } catch (translationError) {
+                setTranslation('');
+                console.error('Translation error:', translationError);
+              }
+            } else {
+              setTranslation('');
+            }
+          }
+        } catch (err) {
+          // تجاهل الأخطاء في الرسائل غير النصية
         }
-        seconds++;
-        setRecordSecs(seconds * 1000);
-        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
-        const secs = (seconds % 60).toString().padStart(2, '0');
-        setRecordTime(`${mins}:${secs}:00`);
-      }, 1000);
-      // Timer for sending chunk every 2 seconds
-      sendChunkTimerRef.current = setInterval(() => {
-        if (rec && isRecording) {
-          sendCurrentChunk(rec);
+      };
+      ws.onerror = (e) => {
+        setError('WebSocket error');
+      };
+      ws.onclose = () => {
+        if (sendChunkTimerRef.current) {
+          clearInterval(sendChunkTimerRef.current);
+          sendChunkTimerRef.current = null;
         }
-      }, 2000);
+      };
     } catch (err: any) {
       setError('Failed to start recording: ' + (err?.message || err));
       setIsRecording(false);
@@ -103,64 +151,14 @@ export default function LiveTranslationPage() {
       }
       if (recording) {
         await recording.stopAndUnloadAsync();
-        const uri = recording.getURI();
-        setAudioUri(uri);
         setRecording(null);
-        if (uri) {
-          await sendCurrentChunk({ getURI: () => uri }); // أرسل chunk أخير
-        }
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
       }
     } catch (err: any) {
       setError('Failed to stop recording: ' + (err?.message || err));
-    }
-  };
-
-  // دالة إرسال chunk صوتي حالي
-  const sendCurrentChunk = async (recObj: { getURI: () => string | null }) => {
-    try {
-      const uri = recObj.getURI();
-      if (!uri || uri === lastSentUriRef.current) return; // لا تكرر الإرسال لنفس الملف
-      lastSentUriRef.current = uri;
-      // Read file as base64
-      const response = await fetch('file://' + uri);
-      const blob = await response.blob();
-      const reader = new FileReader();
-      reader.onloadend = async () => {
-        const base64Audio = reader.result?.toString().split(',')[1];
-        if (!base64Audio) {
-          setError('Failed to read audio file');
-          return;
-        }
-        // Send to server
-        const serverUrl = 'https://ai-voicesum.onrender.com/live-translate';
-        const res = await fetch(serverUrl, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            audio: base64Audio,
-            audioType: 'audio/mp3',
-            targetLanguage: targetLanguageCode,
-            sourceLanguage: undefined,
-          }),
-        });
-        const data = await res.json();
-        setTranscription(data.transcription || '');
-        // ترجم النص باستخدام Google Translate من الكلاينت
-        if (data.transcription) {
-          try {
-            const translated = await SpeechService.translateText(data.transcription, targetLanguageCode);
-            setTranslation(translated);
-          } catch (translationError) {
-            setTranslation('');
-            console.error('Translation error:', translationError);
-          }
-        } else {
-          setTranslation('');
-        }
-      };
-      reader.readAsDataURL(blob);
-    } catch (err: any) {
-      setError('Failed to send audio: ' + (err?.message || err));
     }
   };
 

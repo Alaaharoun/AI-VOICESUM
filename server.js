@@ -6,6 +6,9 @@ const fs = require('fs');
 const { exec } = require('child_process');
 const { promisify } = require('util');
 const ffmpegPath = require('ffmpeg-static');
+const WebSocket = require('ws');
+const speechsdk = require('microsoft-cognitiveservices-speech-sdk');
+const http = require('http');
 require('dotenv').config();
 
 const execAsync = promisify(exec);
@@ -137,5 +140,62 @@ app.post('/live-translate', async (req, res) => {
   }
 });
 
-const PORT = process.env.PORT || 8080;
-app.listen(PORT, () => console.log('Server running on port', PORT));
+// === WebSocket Real-Time Streaming with Azure Speech SDK ===
+let wsServer;
+
+function startWebSocketServer(server) {
+  wsServer = new WebSocket.Server({ server });
+  console.log('WebSocket server attached to main HTTP server');
+
+  wsServer.on('connection', (ws) => {
+    console.log('New WS client connected');
+    const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
+    const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
+    if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+      ws.send(JSON.stringify({ type: 'error', error: 'Azure Speech credentials missing!' }));
+      ws.close();
+      return;
+    }
+    // إعداد جلسة Azure Speech لكل عميل
+    const pushStream = speechsdk.AudioInputStream.createPushStream();
+    const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+    const speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
+    speechConfig.speechRecognitionLanguage = 'ar-SA'; // يمكنك جعلها ديناميكية
+    const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+    recognizer.recognizing = (s, e) => {
+      ws.send(JSON.stringify({ type: 'partial', text: e.result.text }));
+    };
+    recognizer.recognized = (s, e) => {
+      if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+        ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+      }
+    };
+    recognizer.canceled = (s, e) => {
+      ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
+      recognizer.close();
+    };
+    recognizer.sessionStopped = (s, e) => {
+      ws.send(JSON.stringify({ type: 'done' }));
+      recognizer.close();
+    };
+    recognizer.startContinuousRecognitionAsync();
+    ws.on('message', (data) => {
+      pushStream.write(data);
+    });
+    ws.on('close', () => {
+      console.log('WS client disconnected');
+      pushStream.close();
+      recognizer.stopContinuousRecognitionAsync();
+    });
+  });
+}
+
+const server = http.createServer(app);
+
+// شغل WebSocket على نفس السيرفر
+startWebSocketServer(server);
+
+const PORT = process.env.PORT || 10000;
+server.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+});

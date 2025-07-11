@@ -71,6 +71,6 @@ export default ({ config }) => ({
       eas: {
         projectId: "c41aa9d8-ee2d-4758-9ed5-06c87a3170fd"
       }
-    },
-  },
+    }
+  }
 }); 
