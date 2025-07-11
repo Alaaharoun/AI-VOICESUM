@@ -3,8 +3,8 @@ import 'dotenv/config';
 export default ({ config }) => ({
   ...config,
   expo: {
-    name: "bolt-expo-nativewind",
-    slug: "bolt-expo-nativewind",
+    name: "Live Translate",
+    slug: "live-translate",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/logo.png",

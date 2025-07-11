@@ -105,113 +105,35 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.post('/live-translate', upload.single('audio'), async (req, res) => {
+app.post('/live-translate', async (req, res) => {
   try {
-    console.log('=== Live Translation Request ===');
-    console.log('Headers:', req.headers);
-    console.log('Body keys:', Object.keys(req.body || {}));
-    
-    let audioBuffer, audioMimeType;
-    
-    // تحقق من نوع الطلب
-    if (req.headers['content-type'] && req.headers['content-type'].includes('application/json')) {
-      // طلب JSON (base64)
-      console.log('Processing JSON request with base64 audio...');
-      const jsonData = req.body;
-      
-      if (!jsonData.audio) {
-        console.error('No audio data in JSON request');
-        return res.status(400).json({ error: 'No audio data provided.' });
-      }
-      
-      // تحويل base64 إلى buffer
-      audioBuffer = Buffer.from(jsonData.audio, 'base64');
-      audioMimeType = jsonData.audioType || 'audio/mpeg';
-      
-      console.log('Received base64 audio:', {
-        size: audioBuffer.length,
-        type: audioMimeType
-      });
-    } else {
-      // طلب FormData (الطريقة الأصلية)
-      if (!req.file) {
-        console.error('No file uploaded');
-        return res.status(400).json({ error: 'No audio file uploaded.' });
-      }
-      
-      audioBuffer = req.file.buffer;
-      audioMimeType = req.file.mimetype;
-      
-      console.log('Received FormData audio file:', {
-        originalname: req.file.originalname,
-        mimetype: req.file.mimetype,
-        size: req.file.size,
-        fieldname: req.file.fieldname
-      });
+    const { audio, audioType } = req.body;
+    if (!audio || !audioType) {
+      return res.status(400).json({ error: 'Missing audio or audioType in request.' });
     }
-
-    // تحقق من أن الملف صوتي أو فيديو (لأن React Native يرسل video/3gpp)
-    if (!audioMimeType.startsWith('audio/') && !audioMimeType.startsWith('video/')) {
-      console.error('Invalid file type:', audioMimeType);
-      return res.status(400).json({ error: 'Invalid file type. Only audio/video files are allowed.' });
-    }
-
-    // تحقق من حجم الملف
-    if (audioBuffer.length < 1000) {
-      console.error('File too small:', audioBuffer.length);
-      return res.status(400).json({ error: 'Audio file too small. Please record longer audio.' });
-    }
-
-    // Convert audio format if needed (especially for 3GPP format)
-    if (audioMimeType.includes('3gpp') || audioMimeType.includes('video/')) {
-      console.log('Converting 3GPP/video format to WAV...');
-      try {
-        audioBuffer = await convertAudioFormat(audioBuffer, audioMimeType, 'wav');
-        audioMimeType = 'audio/wav';
-        console.log('Audio converted successfully, new size:', audioBuffer.length);
-      } catch (error) {
-        console.error('Audio conversion failed:', error);
-        // Continue with original buffer
-      }
-    }
-
-    if (!ASSEMBLYAI_API_KEY) {
-      console.error('AssemblyAI API key is missing');
-      return res.status(500).json({ error: 'Server configuration error: API key missing.' });
-    }
-
     if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
       return res.status(500).json({ error: 'Azure Speech API key or region missing.' });
     }
-
-    // 1. Send audio to Azure Speech-to-Text
-    // Convert audioBuffer to base64
-    const audioBase64 = audioBuffer.toString('base64');
-    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=ar-SA`;
+    // Decode base64 audio
+    const audioBuffer = Buffer.from(audio, 'base64');
+    // Send to Azure Speech-to-Text
+    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=auto`;
     const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
-        'Content-Type': audioMimeType,
+        'Content-Type': audioType,
         'Accept': 'application/json',
         'Transfer-Encoding': 'chunked',
       },
       body: audioBuffer,
     });
-    if (!azureRes.ok) {
-      const errorText = await azureRes.text();
-      console.error('Azure Speech error:', errorText);
-      return res.status(500).json({ error: 'Azure Speech API error: ' + errorText });
-    }
     const azureData = await azureRes.json();
     const transcriptText = azureData.DisplayText || '';
-    if (!transcriptText) {
-      return res.status(500).json({ error: 'No transcription returned from Azure Speech.' });
-    }
     res.json({ transcription: transcriptText });
   } catch (err) {
-    console.error('Server error:', err);
-    res.status(500).json({ error: err.message });
+    console.error('Live-translate error:', err);
+    res.status(500).json({ error: 'Live-translate failed.' });
   }
 });
 

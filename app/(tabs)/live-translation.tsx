@@ -30,6 +30,8 @@ export default function LiveTranslationPage() {
   const [isSummarizing, setIsSummarizing] = useState(false);
 
   const recordTimerRef = useRef<any>(null);
+  const sendChunkTimerRef = useRef<any>(null);
+  const lastSentUriRef = useRef<string | null>(null);
 
   // Start recording automatically on mount
   useEffect(() => {
@@ -75,6 +77,12 @@ export default function LiveTranslationPage() {
         const secs = (seconds % 60).toString().padStart(2, '0');
         setRecordTime(`${mins}:${secs}:00`);
       }, 1000);
+      // Timer for sending chunk every 2 seconds
+      sendChunkTimerRef.current = setInterval(() => {
+        if (rec && isRecording) {
+          sendCurrentChunk(rec);
+        }
+      }, 2000);
     } catch (err: any) {
       setError('Failed to start recording: ' + (err?.message || err));
       setIsRecording(false);
@@ -89,13 +97,17 @@ export default function LiveTranslationPage() {
         clearInterval(recordTimerRef.current);
         recordTimerRef.current = null;
       }
+      if (sendChunkTimerRef.current) {
+        clearInterval(sendChunkTimerRef.current);
+        sendChunkTimerRef.current = null;
+      }
       if (recording) {
         await recording.stopAndUnloadAsync();
         const uri = recording.getURI();
         setAudioUri(uri);
         setRecording(null);
         if (uri) {
-          await sendAudioForLiveTranslation(uri);
+          await sendCurrentChunk({ getURI: () => uri }); // أرسل chunk أخير
         }
       }
     } catch (err: any) {
@@ -103,19 +115,20 @@ export default function LiveTranslationPage() {
     }
   };
 
-  // Send audio to server for live translation
-  const sendAudioForLiveTranslation = async (filePath: string) => {
-    setIsProcessing(true);
+  // دالة إرسال chunk صوتي حالي
+  const sendCurrentChunk = async (recObj: { getURI: () => string | null }) => {
     try {
+      const uri = recObj.getURI();
+      if (!uri || uri === lastSentUriRef.current) return; // لا تكرر الإرسال لنفس الملف
+      lastSentUriRef.current = uri;
       // Read file as base64
-      const response = await fetch('file://' + filePath);
+      const response = await fetch('file://' + uri);
       const blob = await response.blob();
       const reader = new FileReader();
       reader.onloadend = async () => {
         const base64Audio = reader.result?.toString().split(',')[1];
         if (!base64Audio) {
           setError('Failed to read audio file');
-          setIsProcessing(false);
           return;
         }
         // Send to server
@@ -148,8 +161,6 @@ export default function LiveTranslationPage() {
       reader.readAsDataURL(blob);
     } catch (err: any) {
       setError('Failed to send audio: ' + (err?.message || err));
-    } finally {
-      setIsProcessing(false);
     }
   };
 
