@@ -53,7 +53,7 @@ export default function LiveTranslationPage() {
       setTranscription('');
       setTranslation('');
       // افتح WebSocket
-      const ws = new WebSocket('wss://ai-voicesum.onrender.com'); // عنوان السيرفر على Render
+      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws'); // Use /ws path for WebSocket compatibility
       wsRef.current = ws;
       ws.onopen = () => {
         // ابدأ التسجيل بعد فتح WebSocket
@@ -123,7 +123,10 @@ export default function LiveTranslationPage() {
         }
       };
       ws.onerror = (e) => {
-        setError('WebSocket error');
+        let errorMessage = 'WebSocket error occurred.';
+        errorMessage += '\nPossible causes: network issues, server unavailable, or invalid API keys.';
+        setError(errorMessage);
+        console.error('WebSocket error event:', e);
       };
       ws.onclose = () => {
         if (sendChunkTimerRef.current) {

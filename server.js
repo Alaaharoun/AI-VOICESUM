@@ -144,7 +144,7 @@ app.post('/live-translate', async (req, res) => {
 let wsServer;
 
 function startWebSocketServer(server) {
-  wsServer = new WebSocket.Server({ server });
+  wsServer = new WebSocket.Server({ server, path: '/ws' });
   console.log('WebSocket server attached to main HTTP server');
 
   wsServer.on('connection', (ws) => {
