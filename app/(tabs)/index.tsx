@@ -707,6 +707,19 @@ export default function RecordScreen() {
     router.replace('/');
   };
 
+  // وظيفة جديدة لفتح صفحة التلخيص
+  const handleOpenSummaryView = () => {
+    router.push({
+      pathname: '/(tabs)/summary-view',
+      params: {
+        transcription: currentTranscription,
+        translation: currentTranslation,
+        summary: currentSummary,
+        targetLanguage: selectedLanguage?.name || '',
+      },
+    });
+  };
+
   useFocusEffect(
     React.useCallback(() => {
       // Re-fetch subscription data when the page is focused
@@ -850,7 +863,7 @@ export default function RecordScreen() {
             translationSummary={currentTranslationSummary}
             targetLanguage={selectedLanguage}
             isProcessing={isProcessing || isGeneratingSummary || isGeneratingTranslationSummary}
-            onGenerateSummary={handleBackToHome}
+            onGenerateSummary={handleOpenSummaryView}
             onGenerateTranslationSummary={!currentTranslationSummary ? handleGenerateTranslationSummary : undefined}
             isRealTime={isRealTimeMode}
           />

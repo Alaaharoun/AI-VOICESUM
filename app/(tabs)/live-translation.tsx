@@ -1,6 +1,9 @@
+// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-recorder-player يجب أن يبقى محصوراً في هذه الصفحة فقط.
+// لا تقم بتصدير أو مشاركة أي دوال أو كائنات من هذه المكتبة إلى صفحات أو مكونات أخرى لتفادي الكراش في باقي التطبيق.
+
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
-import AudioRecorderPlayer, { AudioEncoderAndroidType, OutputFormatAndroidType, AudioSourceAndroidType } from 'react-native-audio-recorder-player';
+import { Audio } from 'expo-av';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SpeechService } from '@/services/speechService';
 
@@ -11,11 +14,11 @@ export default function LiveTranslationPage() {
   const targetLanguageName = (params.languageName as string) || 'العربية';
   
   // Recorder state
-  const audioRecorderPlayer = useRef(new AudioRecorderPlayer());
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState('00:00:00');
   const [recordSecs, setRecordSecs] = useState(0);
-  const [audioPath, setAudioPath] = useState<string | null>(null);
+  const [audioUri, setAudioUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Transcription/translation state
@@ -25,6 +28,8 @@ export default function LiveTranslationPage() {
   const [showStop, setShowStop] = useState(true);
   const [showSummarize, setShowSummarize] = useState(false);
   const [isSummarizing, setIsSummarizing] = useState(false);
+
+  const recordTimerRef = useRef<any>(null);
 
   // Start recording automatically on mount
   useEffect(() => {
@@ -41,21 +46,35 @@ export default function LiveTranslationPage() {
       setIsRecording(true);
       setRecordTime('00:00:00');
       setRecordSecs(0);
-      setAudioPath(null);
-      const path = Platform.select({
-        ios: 'live_translation.m4a',
-        android: 'sdcard/live_translation.mp3', // MP3 is supported on Android
-      });
-      await audioRecorderPlayer.current.startRecorder(path, {
-        AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
-        OutputFormatAndroid: OutputFormatAndroidType.MPEG_4,
-        AudioSourceAndroid: AudioSourceAndroidType.VOICE_RECOGNITION,
-      });
-      audioRecorderPlayer.current.addRecordBackListener((e) => {
-        setRecordSecs(e.currentPosition);
-        setRecordTime(audioRecorderPlayer.current.mmssss(Math.floor(e.currentPosition)));
+      setAudioUri(null);
+      // Request permissions
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        setError('Permission to access microphone is required!');
+        setIsRecording(false);
         return;
+      }
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
       });
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      setRecording(rec);
+      // Timer for UI
+      let seconds = 0;
+      recordTimerRef.current = setInterval(() => {
+        if (!isRecording) {
+          if (recordTimerRef.current) clearInterval(recordTimerRef.current);
+          return;
+        }
+        seconds++;
+        setRecordSecs(seconds * 1000);
+        const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+        const secs = (seconds % 60).toString().padStart(2, '0');
+        setRecordTime(`${mins}:${secs}:00`);
+      }, 1000);
     } catch (err: any) {
       setError('Failed to start recording: ' + (err?.message || err));
       setIsRecording(false);
@@ -66,12 +85,18 @@ export default function LiveTranslationPage() {
   const stopRecording = async () => {
     try {
       setIsRecording(false);
-      audioRecorderPlayer.current.removeRecordBackListener();
-      const result = await audioRecorderPlayer.current.stopRecorder();
-      setAudioPath(result);
-      if (result) {
-        // Send audio for live translation
-        await sendAudioForLiveTranslation(result);
+      if (recordTimerRef.current) {
+        clearInterval(recordTimerRef.current);
+        recordTimerRef.current = null;
+      }
+      if (recording) {
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        setAudioUri(uri);
+        setRecording(null);
+        if (uri) {
+          await sendAudioForLiveTranslation(uri);
+        }
       }
     } catch (err: any) {
       setError('Failed to stop recording: ' + (err?.message || err));
@@ -107,7 +132,18 @@ export default function LiveTranslationPage() {
         });
         const data = await res.json();
         setTranscription(data.transcription || '');
-        setTranslation(data.translation || '');
+        // ترجم النص باستخدام Google Translate من الكلاينت
+        if (data.transcription) {
+          try {
+            const translated = await SpeechService.translateText(data.transcription, targetLanguageCode);
+            setTranslation(translated);
+          } catch (translationError) {
+            setTranslation('');
+            console.error('Translation error:', translationError);
+          }
+        } else {
+          setTranslation('');
+        }
       };
       reader.readAsDataURL(blob);
     } catch (err: any) {

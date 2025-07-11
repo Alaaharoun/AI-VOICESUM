@@ -15,6 +15,7 @@ interface TranscriptionCardProps {
   isProcessing?: boolean;
   onGenerateSummary?: () => void;
   onGenerateTranslationSummary?: () => void;
+  onBackToHome?: () => void;
   isRealTime?: boolean;
 }
 
@@ -199,6 +200,7 @@ export function TranscriptionCard({
   isProcessing = false,
   onGenerateSummary,
   onGenerateTranslationSummary,
+  onBackToHome,
   isRealTime = false
 }: TranscriptionCardProps) {
   const [isSpeaking, setIsSpeaking] = useState(false);
@@ -375,7 +377,28 @@ export function TranscriptionCard({
                   onPress={onGenerateSummary}
                 >
                   <Bot size={16} color="#10B981" />
-                  <Text style={styles.summaryButtonText}>Generate AI Summary</Text>
+                  <Text style={styles.summaryButtonText}>Open Summary View</Text>
+                </TouchableOpacity>
+              )}
+              {transcription && !isProcessing && !onGenerateSummary && !isRealTime && (
+                <TouchableOpacity
+                  style={styles.summaryButton}
+                  onPress={() => {
+                    // فتح صفحة التلخيص مباشرة مع البيانات الحالية
+                    const router = require('expo-router').useRouter();
+                    router.push({
+                      pathname: '/(tabs)/summary-view',
+                      params: {
+                        transcription,
+                        translation: translation || '',
+                        summary: summary || '',
+                        targetLanguage: targetLanguage?.name || '',
+                      },
+                    });
+                  }}
+                >
+                  <Bot size={16} color="#10B981" />
+                  <Text style={styles.summaryButtonText}>Open Summary View</Text>
                 </TouchableOpacity>
               )}
             </View>
@@ -562,9 +585,9 @@ export function TranscriptionCard({
           </View>
         )}
         {/* Back to Home button if needed */}
-        {onGenerateSummary && (
+        {onBackToHome && (
           <View style={styles.bottomActionsRow}>
-            <TouchableOpacity style={styles.smallActionButton} onPress={onGenerateSummary}>
+            <TouchableOpacity style={styles.smallActionButton} onPress={onBackToHome}>
               <Text style={styles.smallActionButtonText}>Back to Home</Text>
             </TouchableOpacity>
           </View>

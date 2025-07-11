@@ -265,8 +265,9 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       return res.status(500).json({ error: 'Transcription timeout.' });
     }
     
-    console.log('Sending response:', { translatedText: transcriptText });
-    res.json({ translatedText: transcriptText });
+    // أعد فقط النص الأصلي بدون ترجمة
+    console.log('Sending response:', { transcription: transcriptText });
+    res.json({ transcription: transcriptText });
   } catch (err) {
     console.error('Server error:', err);
     res.status(500).json({ error: err.message });
