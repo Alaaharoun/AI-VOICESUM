@@ -15,11 +15,15 @@ app.use(express.json({ limit: '50mb' }));
 const upload = multer();
 
 const ASSEMBLYAI_API_KEY = process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_API_KEY;
+const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
+const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
 
 console.log('Server starting with API key:', ASSEMBLYAI_API_KEY ? 'Present' : 'Missing');
 console.log('Environment variables:', {
   EXPO_PUBLIC_ASSEMBLYAI_API_KEY: process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
-  ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY ? 'Present' : 'Missing'
+  ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
+  AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY ? 'Present' : 'Missing',
+  AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION ? 'Present' : 'Missing'
 });
 
 // Helper function to convert audio format using ffmpeg
@@ -176,97 +180,34 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
       return res.status(500).json({ error: 'Server configuration error: API key missing.' });
     }
 
-    // 1. Upload audio to AssemblyAI
-    console.log('Uploading to AssemblyAI...');
-    const uploadResponse = await fetch('https://api.assemblyai.com/v2/upload', {
+    if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+      return res.status(500).json({ error: 'Azure Speech API key or region missing.' });
+    }
+
+    // 1. Send audio to Azure Speech-to-Text
+    // Convert audioBuffer to base64
+    const audioBase64 = audioBuffer.toString('base64');
+    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=ar-SA`;
+    const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
       headers: {
-        'authorization': ASSEMBLYAI_API_KEY,
-        'content-type': audioMimeType,
+        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
+        'Content-Type': audioMimeType,
+        'Accept': 'application/json',
+        'Transfer-Encoding': 'chunked',
       },
       body: audioBuffer,
     });
-    
-    console.log('Upload response status:', uploadResponse.status);
-    console.log('Upload response headers:', uploadResponse.headers);
-    
-    if (!uploadResponse.ok) {
-      const errorText = await uploadResponse.text();
-      console.error('Upload to AssemblyAI failed:', errorText);
-      return res.status(500).json({ error: 'Failed to upload audio to AssemblyAI.' });
+    if (!azureRes.ok) {
+      const errorText = await azureRes.text();
+      console.error('Azure Speech error:', errorText);
+      return res.status(500).json({ error: 'Azure Speech API error: ' + errorText });
     }
-    
-    const uploadData = await uploadResponse.json();
-    const audioUrl = uploadData.upload_url;
-    console.log('Audio uploaded to AssemblyAI:', audioUrl);
-
-    // 2. Request transcription with language_detection: true
-    console.log('Requesting transcription...');
-    const transcriptResponse = await fetch('https://api.assemblyai.com/v2/transcript', {
-      method: 'POST',
-      headers: {
-        'authorization': ASSEMBLYAI_API_KEY,
-        'content-type': 'application/json',
-      },
-      body: JSON.stringify({
-        audio_url: audioUrl,
-        language_detection: true,
-        punctuate: true,
-        format_text: true,
-        filter_profanity: false,
-        dual_channel: false,
-        speaker_labels: false
-      }),
-    });
-    
-    console.log('Transcription request status:', transcriptResponse.status);
-    if (!transcriptResponse.ok) {
-      const errorText = await transcriptResponse.text();
-      console.error('Transcription request failed:', errorText);
-      return res.status(500).json({ error: 'Failed to request transcription from AssemblyAI.' });
-    }
-    
-    const transcriptData = await transcriptResponse.json();
-    const transcriptId = transcriptData.id;
-    console.log('Transcription requested, id:', transcriptId);
-
-    // 3. Poll for results
-    let attempts = 0;
-    let transcriptText = '';
-    while (attempts < 60) { // 3 دقائق كحد أقصى
-      await new Promise(r => setTimeout(r, 3000));
-      console.log(`Polling attempt ${attempts + 1}, status: processing`);
-      
-      const pollRes = await fetch(`https://api.assemblyai.com/v2/transcript/${transcriptId}`, {
-        headers: { 'authorization': ASSEMBLYAI_API_KEY },
-      });
-      
-      if (!pollRes.ok) {
-        console.error('Poll request failed:', pollRes.status);
-        break;
-      }
-      
-      const pollData = await pollRes.json();
-      console.log('Poll response status:', pollData.status);
-      
-      if (pollData.status === 'completed') {
-        transcriptText = pollData.text;
-        console.log('Transcription completed:', transcriptText);
-        break;
-      } else if (pollData.status === 'error') {
-        console.error('Transcription error:', pollData.error);
-        return res.status(500).json({ error: pollData.error || 'Transcription failed.' });
-      }
-      attempts++;
-    }
-    
+    const azureData = await azureRes.json();
+    const transcriptText = azureData.DisplayText || '';
     if (!transcriptText) {
-      console.error('Transcription timeout');
-      return res.status(500).json({ error: 'Transcription timeout.' });
+      return res.status(500).json({ error: 'No transcription returned from Azure Speech.' });
     }
-    
-    // أعد فقط النص الأصلي بدون ترجمة
-    console.log('Sending response:', { transcription: transcriptText });
     res.json({ transcription: transcriptText });
   } catch (err) {
     console.error('Server error:', err);
