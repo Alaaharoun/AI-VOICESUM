@@ -1,10 +1,17 @@
-import 'dotenv/config';
+// import 'dotenv/config';
+
+console.log("SUPABASE_URL", process.env.EXPO_PUBLIC_SUPABASE_URL);
+console.log("SUPABASE_ANON_KEY", process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
+console.log("ASSEMBLYAI_API_KEY", process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY);
+console.log("QWEN_API_KEY", process.env.EXPO_PUBLIC_QWEN_API_KEY);
 
 export default ({ config }) => ({
   ...config,
   expo: {
     name: "Live Translate",
+    displayName: "Live Translate",
     slug: "live-translate",
+    description: "Live Translate: Real-time and offline voice translation app.",
     version: "1.0.0",
     orientation: "portrait",
     icon: "./assets/images/logo.png",
@@ -44,33 +51,29 @@ export default ({ config }) => ({
     android: {
       permissions: [
         "android.permission.RECORD_AUDIO",
-        "android.permission.MODIFY_AUDIO_SETTINGS",
-        "android.permission.WRITE_EXTERNAL_STORAGE",
-        "android.permission.READ_EXTERNAL_STORAGE"
+        "android.permission.MODIFY_AUDIO_SETTINGS"
       ],
       package: "com.anonymous.boltexponativewind",
       allowBackup: true,
-      usesCleartextTraffic: false,
-      compileSdkVersion: 34,
-      targetSdkVersion: 34,
-      buildToolsVersion: "34.0.0",
-      minSdkVersion: 21,
-      kotlinVersion: "1.8.0",
-      enableProguardInReleaseBuilds: false,
-      enableSeparateBuildPerCPUArchitecture: false,
-      bundleInDebug: false,
-      bundleInRelease: true
+      usesCleartextTraffic: false
     },
     extra: {
-      ...(config.extra || {}),
       EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
       EXPO_PUBLIC_SUPABASE_ANON_KEY: process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY,
       EXPO_PUBLIC_ASSEMBLYAI_API_KEY: process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY,
       EXPO_PUBLIC_QWEN_API_KEY: process.env.EXPO_PUBLIC_QWEN_API_KEY,
       SUPABASE_SERVICE_ROLE_KEY: process.env.SUPABASE_SERVICE_ROLE_KEY,
+      AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY,
+      AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION,
+      router: {},
       eas: {
-        projectId: "c41aa9d8-ee2d-4758-9ed5-06c87a3170fd"
+        projectId: "f68d0e9d-f7b0-4932-a814-fd446ed5eb45"
       }
+    },
+    splash: {
+      image: "./assets/images/splash.png",
+      resizeMode: "contain",
+      backgroundColor: "#ffffff"
     }
   }
 }); 

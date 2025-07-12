@@ -56,14 +56,17 @@ export default function SignInScreen() {
 
   return (
     <View style={{ flex: 1, backgroundColor: '#F8FAFC' }}>
-    <KeyboardAvoidingView 
-      style={styles.container}
-      behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-    >
-      <ScrollView 
-        contentContainerStyle={styles.scrollContainer}
-        keyboardShouldPersistTaps="handled"
+      <KeyboardAvoidingView 
+        style={styles.container}
+        behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
       >
+        <ScrollView 
+          contentContainerStyle={styles.scrollContainer}
+          keyboardShouldPersistTaps="handled"
+          showsVerticalScrollIndicator={false}
+          bounces={false}
+        >
         <View style={styles.header}>
           <Image
             source={require('../../assets/images/logo.png')}
@@ -72,7 +75,7 @@ export default function SignInScreen() {
             accessible={true}
             accessibilityLabel="App logo"
           />
-          <Text style={styles.appName}>AI VoiceSum</Text>
+          <Text style={styles.appName}>Live translate with AI</Text>
           <Text style={styles.title}>Welcome Back</Text>
           <Text style={styles.subtitle}>Sign in to continue your voice journey</Text>
         </View>
@@ -137,6 +140,13 @@ export default function SignInScreen() {
               )}
             </TouchableOpacity>
           </View>
+          {/* Forgot Password Button */}
+          <TouchableOpacity
+            onPress={() => router.push('/(auth)/forgot-password')}
+            style={{ alignSelf: 'flex-end', marginBottom: 12 }}
+          >
+            <Text style={{ color: '#2563EB', fontSize: 14 }}>Forgot Password?</Text>
+          </TouchableOpacity>
           <TouchableOpacity
             style={[styles.signInButton, loading && styles.buttonDisabled]}
             onPress={handleSignIn}

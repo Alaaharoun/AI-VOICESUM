@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useEffect, useState, useRef } from 'react';
-import { supabase } from '@/lib/supabase';
+import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
+import Constants from 'expo-constants';
 
 interface AuthContextType {
   user: User | null;
@@ -21,6 +22,17 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     console.log('[AuthContext] Initializing auth context...');
+    
+    // Check if Supabase is properly configured
+    if (!isSupabaseConfigured) {
+      console.warn('[AuthContext] Supabase not properly configured, skipping auth initialization');
+      if (mountedRef.current) {
+        setUser(null);
+        setSession(null);
+        setLoading(false);
+      }
+      return;
+    }
     
     // Get initial session
     supabase.auth.getSession().then(({ data: { session } }) => {

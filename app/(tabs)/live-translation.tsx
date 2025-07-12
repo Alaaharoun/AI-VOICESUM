@@ -1,11 +1,13 @@
-// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-recorder-player يجب أن يبقى محصوراً في هذه الصفحة فقط.
+// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-record يجب أن يبقى محصوراً في هذه الصفحة فقط.
 // لا تقم بتصدير أو مشاركة أي دوال أو كائنات من هذه المكتبة إلى صفحات أو مكونات أخرى لتفادي الكراش في باقي التطبيق.
 
 import React, { useEffect, useState, useRef } from 'react';
-import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform } from 'react-native';
-import { Audio } from 'expo-av';
+import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, PermissionsAndroid } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SpeechService } from '@/services/speechService';
+import AudioRecord from 'react-native-audio-record';
+import RNFS from 'react-native-fs';
+import { Buffer } from 'buffer';
 
 export default function LiveTranslationPage() {
   const router = useRouter();
@@ -14,11 +16,9 @@ export default function LiveTranslationPage() {
   const targetLanguageName = (params.languageName as string) || 'العربية';
   
   // Recorder state
-  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState('00:00:00');
   const [recordSecs, setRecordSecs] = useState(0);
-  const [audioUri, setAudioUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Transcription/translation state
@@ -31,11 +31,12 @@ export default function LiveTranslationPage() {
 
   const recordTimerRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const sendChunkTimerRef = useRef<any>(null);
-  const lastSentUriRef = useRef<string | null>(null);
+  const audioRecordRef = useRef<any>(null);
 
   // Start recording automatically on mount
   useEffect(() => {
+    setShowStop(true);
+    setShowSummarize(false);
     startRecording();
     return () => {
       stopRecording();
@@ -44,62 +45,88 @@ export default function LiveTranslationPage() {
 
   // Start recording
   const startRecording = async () => {
+    setShowStop(true);
+    setShowSummarize(false);
     try {
       setError(null);
       setIsRecording(true);
       setRecordTime('00:00:00');
       setRecordSecs(0);
-      setAudioUri(null);
       setTranscription('');
       setTranslation('');
-      // افتح WebSocket
-      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws'); // Use /ws path for WebSocket compatibility
+      
+      // Request microphone permission
+      if (Platform.OS === 'android') {
+        const granted = await PermissionsAndroid.request(
+          PermissionsAndroid.PERMISSIONS.RECORD_AUDIO,
+          {
+            title: 'Microphone Permission',
+            message: 'This app needs access to your microphone to record audio.',
+            buttonNeutral: 'Ask Me Later',
+            buttonNegative: 'Cancel',
+            buttonPositive: 'OK',
+          }
+        );
+        if (granted !== PermissionsAndroid.RESULTS.GRANTED) {
+          setError('Permission to access microphone is required!');
+          setIsRecording(false);
+          return;
+        }
+      }
+      
+      // Configure audio settings for streaming
+      const options = {
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        audioSource: 6, // MIC
+        wavFile: 'test.wav'
+      };
+      
+      // Initialize audio recorder
+      await AudioRecord.init(options);
+      audioRecordRef.current = AudioRecord;
+      
+      // افتح WebSocket أولاً
+      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
       wsRef.current = ws;
+      
       ws.onopen = () => {
-        // ابدأ التسجيل بعد فتح WebSocket
-        (async () => {
-          const { status } = await Audio.requestPermissionsAsync();
-          if (status !== 'granted') {
-            setError('Permission to access microphone is required!');
-            setIsRecording(false);
-            ws.close();
+        console.log('WebSocket connected, starting recording...');
+        
+        // Start recording with streaming
+        AudioRecord.start();
+        
+        // Timer for UI
+        let seconds = 0;
+        recordTimerRef.current = setInterval(() => {
+          if (!isRecording) {
+            if (recordTimerRef.current) clearInterval(recordTimerRef.current);
             return;
           }
-          await Audio.setAudioModeAsync({
-            allowsRecordingIOS: true,
-            playsInSilentModeIOS: true,
-          });
-          const rec = new Audio.Recording();
-          await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
-          await rec.startAsync();
-          setRecording(rec);
-          // Timer for UI
-          let seconds = 0;
-          recordTimerRef.current = setInterval(() => {
-            if (!isRecording) {
-              if (recordTimerRef.current) clearInterval(recordTimerRef.current);
-              return;
+          seconds++;
+          setRecordSecs(seconds * 1000);
+          const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
+          const secs = (seconds % 60).toString().padStart(2, '0');
+          setRecordTime(`${mins}:${secs}:00`);
+        }, 1000);
+        
+        // Listen for audio data chunks
+        AudioRecord.on('data', (data) => {
+          if (ws.readyState === 1 && isRecording) {
+            try {
+              // data is base64 encoded PCM chunk
+              const audioBuffer = Buffer.from(data, 'base64');
+              console.log('Sending audio chunk size:', audioBuffer.length);
+              // Send as ArrayBuffer for WebSocket
+              ws.send(audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength));
+            } catch (err) {
+              console.error('Error sending audio chunk:', err);
             }
-            seconds++;
-            setRecordSecs(seconds * 1000);
-            const mins = Math.floor(seconds / 60).toString().padStart(2, '0');
-            const secs = (seconds % 60).toString().padStart(2, '0');
-            setRecordTime(`${mins}:${secs}:00`);
-          }, 1000);
-          // Timer for sending chunk every 500ms
-          sendChunkTimerRef.current = setInterval(async () => {
-            if (rec && isRecording && ws.readyState === 1) {
-              const uri = rec.getURI();
-              if (!uri || uri === lastSentUriRef.current) return;
-              lastSentUriRef.current = uri;
-              const response = await fetch('file://' + uri);
-              const blob = await response.blob();
-              const arrayBuffer = await blob.arrayBuffer();
-              ws.send(arrayBuffer);
-            }
-          }, 500);
-        })();
+          }
+        });
       };
+      
       ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
@@ -122,18 +149,18 @@ export default function LiveTranslationPage() {
           // تجاهل الأخطاء في الرسائل غير النصية
         }
       };
+      
       ws.onerror = (e) => {
         let errorMessage = 'WebSocket error occurred.';
         errorMessage += '\nPossible causes: network issues, server unavailable, or invalid API keys.';
         setError(errorMessage);
         console.error('WebSocket error event:', e);
       };
+      
       ws.onclose = () => {
-        if (sendChunkTimerRef.current) {
-          clearInterval(sendChunkTimerRef.current);
-          sendChunkTimerRef.current = null;
-        }
+        console.log('WebSocket connection closed');
       };
+      
     } catch (err: any) {
       setError('Failed to start recording: ' + (err?.message || err));
       setIsRecording(false);
@@ -148,14 +175,12 @@ export default function LiveTranslationPage() {
         clearInterval(recordTimerRef.current);
         recordTimerRef.current = null;
       }
-      if (sendChunkTimerRef.current) {
-        clearInterval(sendChunkTimerRef.current);
-        sendChunkTimerRef.current = null;
+      
+      if (audioRecordRef.current) {
+        AudioRecord.stop();
+        audioRecordRef.current = null;
       }
-      if (recording) {
-        await recording.stopAndUnloadAsync();
-        setRecording(null);
-      }
+      
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
@@ -227,6 +252,13 @@ export default function LiveTranslationPage() {
           {translation || 'Translation will appear here...'}
         </Text>
       </ScrollView>
+
+      {isRecording && (
+        <View style={styles.streamingIndicator}>
+          <View style={styles.streamingDot} />
+          <Text style={styles.streamingText}>Streaming audio to server...</Text>
+        </View>
+      )}
 
       {error && (
         <Text style={styles.errorText}>{error}</Text>
@@ -345,5 +377,26 @@ const styles = StyleSheet.create({
     color: 'white',
     fontWeight: 'bold',
     fontSize: 16,
+  },
+  streamingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#EFF6FF',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 16,
+  },
+  streamingDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    backgroundColor: '#3B82F6',
+    marginRight: 8,
+  },
+  streamingText: {
+    fontSize: 14,
+    color: '#1E40AF',
+    fontWeight: '500',
   },
 }); 

@@ -379,11 +379,16 @@ export default function ProfileScreen() {
   };
 
   if (!user) {
-    return null;
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <Text style={{ fontSize: 16, color: '#6B7280' }}>Loading profile...</Text>
+      </View>
+    );
   }
 
-  return (
-    <ScrollView style={styles.container}>
+  try {
+    return (
+      <ScrollView style={styles.container}>
       <View style={styles.header}>
         <View style={styles.avatarContainer}>
           <View style={styles.avatar}>
@@ -547,7 +552,7 @@ export default function ProfileScreen() {
           onPress={handleRateUsSecret}
         >
           <Info size={20} color="#6B7280" />
-          <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: {require('../../app.json').expo.version || '1'}</Text>
+          <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: 1.0.0</Text>
         </TouchableOpacity>
       </View>
 
@@ -739,4 +744,13 @@ For questions or support, contact: alaa.zekroum@gmail.com
       </Modal>
     </ScrollView>
   );
+  } catch (error) {
+    console.error('Profile screen error:', error);
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <Text style={{ fontSize: 16, color: '#DC2626', textAlign: 'center', marginBottom: 16 }}>⚠️ Error loading profile</Text>
+        <Text style={{ fontSize: 14, color: '#6B7280', textAlign: 'center' }}>Please try again later</Text>
+      </View>
+    );
+  }
 }

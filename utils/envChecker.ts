@@ -14,7 +14,7 @@ export function checkEnvironmentVariables() {
   requiredVars.forEach(varName => {
     const value = Constants.expoConfig?.extra?.[varName] || process.env[varName];
     
-    if (!value) {
+    if (!value || value === '' || value === 'placeholder_key' || value === 'https://placeholder.supabase.co') {
       missingVars.push(varName);
     } else if (value === 'your_api_key_here' || value === 'your_supabase_url_here') {
       emptyVars.push(varName);

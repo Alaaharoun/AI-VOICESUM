@@ -163,10 +163,12 @@ function startWebSocketServer(server) {
     speechConfig.speechRecognitionLanguage = 'ar-SA'; // يمكنك جعلها ديناميكية
     const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
     recognizer.recognizing = (s, e) => {
+      console.log('Partial result:', e.result.text);
       ws.send(JSON.stringify({ type: 'partial', text: e.result.text }));
     };
     recognizer.recognized = (s, e) => {
       if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+        console.log('Final result:', e.result.text);
         ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
       }
     };
@@ -180,7 +182,16 @@ function startWebSocketServer(server) {
     };
     recognizer.startContinuousRecognitionAsync();
     ws.on('message', (data) => {
-      pushStream.write(data);
+      console.log('Received audio chunk from client. Size:', data.length || data.byteLength);
+      // Handle both Buffer and ArrayBuffer
+      if (data instanceof Buffer) {
+        pushStream.write(data);
+      } else if (data instanceof ArrayBuffer) {
+        pushStream.write(Buffer.from(data));
+      } else {
+        // Convert to Buffer if needed
+        pushStream.write(Buffer.from(data));
+      }
     });
     ws.on('close', () => {
       console.log('WS client disconnected');
