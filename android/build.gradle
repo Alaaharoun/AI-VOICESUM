@@ -1,5 +1,13 @@
 // Top-level build file where you can add configuration options common to all sub-projects/modules.
 
+ext {
+    ndkVersion = "26.2.11394342"
+    buildToolsVersion = "34.0.0"
+    compileSdkVersion = 34
+    minSdkVersion = 23
+    targetSdkVersion = 34
+}
+
 buildscript {
   repositories {
     google()
@@ -33,5 +41,4 @@ allprojects {
   }
 }
 
-apply plugin: "expo-root-project"
 apply plugin: "com.facebook.react.rootproject"

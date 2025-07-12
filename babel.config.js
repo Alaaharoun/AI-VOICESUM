@@ -5,8 +5,6 @@ module.exports = function (api) {
     plugins: [
       // دعم React Native Reanimated
       'react-native-reanimated/plugin',
-      // دعم Expo Router
-      'expo-router/babel',
       // تحسين الأداء
       ['@babel/plugin-proposal-decorators', { legacy: true }],
       ['@babel/plugin-transform-class-properties', { loose: true }],

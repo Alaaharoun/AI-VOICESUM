@@ -7,6 +7,8 @@ import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SpeechService } from '@/services/speechService';
 import { Audio } from 'expo-av';
 import { Buffer } from 'buffer';
+import * as FileSystem from 'expo-file-system';
+import Constants from 'expo-constants';
 
 export default function LiveTranslationPage() {
   const router = useRouter();
@@ -25,6 +27,11 @@ export default function LiveTranslationPage() {
   // Transcription/translation state
   const [transcription, setTranscription] = useState('');
   const [translation, setTranslation] = useState('');
+  const [isTranslating, setIsTranslating] = useState(false);
+  const [partialTranscription, setPartialTranscription] = useState('');
+  const [partialTranslation, setPartialTranslation] = useState('');
+  const [lastPartialText, setLastPartialText] = useState('');
+  const [lastFinalText, setLastFinalText] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
   const [showStop, setShowStop] = useState(true);
   const [showSummarize, setShowSummarize] = useState(false);
@@ -34,6 +41,7 @@ export default function LiveTranslationPage() {
   const wsRef = useRef<WebSocket | null>(null);
   const sendChunkTimerRef = useRef<any>(null);
   const lastSentUriRef = useRef<string | null>(null);
+  const audioChunksRef = useRef<Buffer[]>([]);
 
   // Start recording automatically on mount
   useEffect(() => {
@@ -45,11 +53,51 @@ export default function LiveTranslationPage() {
     };
   }, []);
 
+  // Function to read audio file and send chunks
+  const sendAudioChunks = async (recording: Audio.Recording, ws: WebSocket) => {
+    try {
+      // Get the current recording URI
+      const uri = recording.getURI();
+      if (!uri || uri === lastSentUriRef.current) {
+        return; // No new audio data
+      }
+      
+      console.log('Reading audio file from:', uri);
+      
+      // Read the audio file
+      const audioData = await FileSystem.readAsStringAsync(uri, {
+        encoding: FileSystem.EncodingType.Base64
+      });
+      
+      // Convert base64 to buffer
+      const audioBuffer = Buffer.from(audioData, 'base64');
+      
+      // Send the audio buffer directly to WebSocket
+      if (ws.readyState === 1) {
+        ws.send(audioBuffer);
+        console.log('Sent audio chunk, size:', audioBuffer.length);
+        lastSentUriRef.current = uri;
+      }
+      
+    } catch (err) {
+      console.error('Error sending audio chunks:', err);
+    }
+  };
+
   // Start recording
   const startRecording = async () => {
-    setShowStop(true);
-    setShowSummarize(false);
     try {
+      // إذا كان هناك تسجيل نشط، أوقفه وحرره
+      if (recording) {
+        try {
+          await recording.stopAndUnloadAsync();
+        } catch (e) {
+          // تجاهل الخطأ إذا لم يكن هناك تسجيل نشط فعلاً
+        }
+        setRecording(null);
+      }
+      setShowStop(true);
+      setShowSummarize(false);
       setError(null);
       setIsRecording(true);
       setRecordTime('00:00:00');
@@ -57,6 +105,12 @@ export default function LiveTranslationPage() {
       setAudioUri(null);
       setTranscription('');
       setTranslation('');
+      setPartialTranscription('');
+      setPartialTranslation('');
+      setLastPartialText('');
+      setLastFinalText('');
+      audioChunksRef.current = [];
+      lastSentUriRef.current = null;
       
       console.log('Starting recording process...');
       
@@ -88,16 +142,17 @@ export default function LiveTranslationPage() {
         playsInSilentModeIOS: true,
       });
       
-      const { recording } = await Audio.Recording.createAsync(
+      const { recording: newRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
       
-      console.log('Recording instance created:', recording);
-      setRecording(recording);
+      console.log('Recording instance created:', newRecording);
+      setRecording(newRecording);
       
       // افتح WebSocket
       console.log('Opening WebSocket connection...');
-      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+      const wsUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_WS_URL || process.env.EXPO_PUBLIC_WS_URL || 'wss://ai-voicesum.onrender.com/ws';
+      const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
       
       ws.onopen = () => {
@@ -116,21 +171,20 @@ export default function LiveTranslationPage() {
           setRecordTime(`${mins}:${secs}:00`);
         }, 1000);
         
-        // Timer for sending status every 3 seconds
+        // Timer for sending audio data every 3 seconds
         sendChunkTimerRef.current = setInterval(async () => {
           if (recording && isRecording && ws.readyState === 1) {
             try {
-              // Send a simple heartbeat/status message
-              const statusMessage = {
-                type: 'status',
-                timestamp: Date.now(),
-                recording: true,
-                duration: recordSecs
-              };
-              ws.send(JSON.stringify(statusMessage));
-              console.log('Status message sent:', statusMessage);
+              // Get recording status to check if we have audio data
+              const status = await recording.getStatusAsync();
+              console.log('Recording status:', status);
+              
+              if (status.isRecording && status.durationMillis > 0) {
+                // Send actual audio data chunks
+                await sendAudioChunks(recording, ws);
+              }
             } catch (err) {
-              console.error('Error sending status message:', err);
+              console.error('Error sending audio chunks:', err);
             }
           }
         }, 3000); // Send every 3 seconds
@@ -139,23 +193,52 @@ export default function LiveTranslationPage() {
       ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
-          if (data.type === 'partial' || data.type === 'final') {
+          
+          if (data.type === 'partial') {
+            // عرض النص الجزئي أثناء الكلام
+            setPartialTranscription(data.text || '');
+            setLastPartialText(data.text || '');
+            
+            // ترجمة فورية للنص الجزئي
+            if (data.text && data.text !== lastPartialText) {
+              setIsTranslating(true);
+              try {
+                const translated = await SpeechService.translateText(data.text, targetLanguageCode);
+                setPartialTranslation(translated);
+                console.log('Partial translation:', translated);
+              } catch (translationError) {
+                setPartialTranslation('');
+                console.error('Partial translation error:', translationError);
+              } finally {
+                setIsTranslating(false);
+              }
+            }
+          } else if (data.type === 'final') {
+            // عرض النص النهائي
             setTranscription(data.text || '');
-            // ترجم النص باستخدام Google Translate من الكلاينت
-            if (data.text) {
+            setLastFinalText(data.text || '');
+            
+            // ترجمة النص النهائي
+            if (data.text && data.text !== lastFinalText) {
+              setIsTranslating(true);
               try {
                 const translated = await SpeechService.translateText(data.text, targetLanguageCode);
                 setTranslation(translated);
+                console.log('Final translation:', translated);
               } catch (translationError) {
                 setTranslation('');
-                console.error('Translation error:', translationError);
+                console.error('Final translation error:', translationError);
+              } finally {
+                setIsTranslating(false);
               }
-            } else {
-              setTranslation('');
             }
+            
+            // مسح النصوص الجزئية بعد النص النهائي
+            setPartialTranscription('');
+            setPartialTranslation('');
           }
         } catch (err) {
-          // تجاهل الأخطاء في الرسائل غير النصية
+          console.error('WebSocket message error:', err);
         }
       };
       
@@ -199,20 +282,13 @@ export default function LiveTranslationPage() {
         console.log('Recording stopped, file saved at:', uri);
         setAudioUri(uri);
         
-        // Send the final audio file to server for processing
+        // Send final audio chunk if WebSocket is still open
         if (wsRef.current && wsRef.current.readyState === 1) {
           try {
-            // Send completion message
-            const completionMessage = {
-              type: 'recording_complete',
-              timestamp: Date.now(),
-              duration: recordSecs,
-              filePath: uri
-            };
-            wsRef.current.send(JSON.stringify(completionMessage));
-            console.log('Recording completion message sent');
+            await sendAudioChunks(recording, wsRef.current);
+            console.log('Final audio chunk sent');
           } catch (err) {
-            console.error('Error sending completion message:', err);
+            console.error('Error sending final audio chunk:', err);
           }
         }
         
@@ -281,6 +357,12 @@ export default function LiveTranslationPage() {
         <Text style={styles.transcriptionText}>
           {transcription || 'Speak to see live transcription...'}
         </Text>
+        {partialTranscription && (
+          <View style={styles.partialContainer}>
+            <Text style={styles.partialLabel}>Live (Partial):</Text>
+            <Text style={styles.partialText}>{partialTranscription}</Text>
+          </View>
+        )}
       </ScrollView>
 
       <Text style={styles.sectionHeader}>Live Translation ({targetLanguageName})</Text>
@@ -288,6 +370,18 @@ export default function LiveTranslationPage() {
         <Text style={styles.translationText}>
           {translation || 'Translation will appear here...'}
         </Text>
+        {partialTranslation && (
+          <View style={styles.partialContainer}>
+            <Text style={styles.partialLabel}>Live (Partial):</Text>
+            <Text style={styles.partialText}>{partialTranslation}</Text>
+          </View>
+        )}
+        {isTranslating && (
+          <View style={styles.translatingIndicator}>
+            <View style={styles.translatingDot} />
+            <Text style={styles.translatingText}>Translating...</Text>
+          </View>
+        )}
       </ScrollView>
 
       {isRecording && (
@@ -433,6 +527,46 @@ const styles = StyleSheet.create({
   },
   streamingText: {
     fontSize: 14,
+    color: '#1E40AF',
+    fontWeight: '500',
+  },
+  partialContainer: {
+    marginTop: 12,
+    padding: 12,
+    backgroundColor: '#FEF3C7',
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#F59E0B',
+  },
+  partialLabel: {
+    fontSize: 12,
+    color: '#92400E',
+    fontWeight: 'bold',
+    marginBottom: 4,
+  },
+  partialText: {
+    fontSize: 14,
+    color: '#78350F',
+    fontStyle: 'italic',
+  },
+  translatingIndicator: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#DBEAFE',
+    padding: 8,
+    borderRadius: 6,
+    marginTop: 8,
+  },
+  translatingDot: {
+    width: 6,
+    height: 6,
+    borderRadius: 3,
+    backgroundColor: '#2563EB',
+    marginRight: 6,
+  },
+  translatingText: {
+    fontSize: 12,
     color: '#1E40AF',
     fontWeight: '500',
   },

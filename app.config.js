@@ -1,4 +1,4 @@
-// import 'dotenv/config';
+import 'dotenv/config';
 
 console.log("SUPABASE_URL", process.env.EXPO_PUBLIC_SUPABASE_URL);
 console.log("SUPABASE_ANON_KEY", process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
@@ -32,7 +32,6 @@ export default ({ config }) => ({
     plugins: [
       "expo-router",
       "expo-font",
-      "expo-web-browser",
       [
         "expo-av",
         {
