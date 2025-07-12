@@ -64,6 +64,8 @@ export default function LiveTranslationPage() {
       setTranscription('');
       setTranslation('');
       
+      console.log('Starting recording process...');
+      
       // Request microphone permission
       if (Platform.OS === 'android') {
         const granted = await PermissionsAndroid.request(
@@ -81,10 +83,13 @@ export default function LiveTranslationPage() {
           setIsRecording(false);
           return;
         }
+        console.log('Microphone permission granted');
       }
       
       // Initialize audio recorder
+      console.log('Creating AudioRecorderPlayer instance...');
       const audioRecorder = new AudioRecorderPlayer();
+      console.log('AudioRecorderPlayer instance created:', audioRecorder);
       setRecording(audioRecorder);
       
       // Configure audio settings
@@ -98,20 +103,24 @@ export default function LiveTranslationPage() {
         AudioEncodingBitRateAndroid: 128000,
       };
       
+      console.log('Audio settings configured:', audioSet);
+      
       // Start recording
       const path = Platform.OS === 'android'
         ? 'audio_recording.wav'
         : 'audio_recording.m4a';
+      console.log('Starting recorder with path:', path);
       const uri = await audioRecorder.startRecorder(path, audioSet);
       console.log('Recording started at:', uri);
       setAudioUri(uri);
       
       // افتح WebSocket
+      console.log('Opening WebSocket connection...');
       const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
       wsRef.current = ws;
       
       ws.onopen = () => {
-        console.log('WebSocket connected');
+        console.log('WebSocket connected successfully');
         // Timer for UI
         let seconds = 0;
         recordTimerRef.current = setInterval(() => {
@@ -178,6 +187,7 @@ export default function LiveTranslationPage() {
       };
       
       ws.onclose = () => {
+        console.log('WebSocket connection closed');
         if (sendChunkTimerRef.current) {
           clearInterval(sendChunkTimerRef.current);
           sendChunkTimerRef.current = null;
