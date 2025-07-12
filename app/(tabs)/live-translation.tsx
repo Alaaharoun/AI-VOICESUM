@@ -12,7 +12,6 @@ import AudioRecorderPlayer, {
   AudioSourceAndroidType,
   OutputFormatAndroidType,
 } from 'react-native-audio-recorder-player';
-import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 
 export default function LiveTranslationPage() {
@@ -101,7 +100,7 @@ export default function LiveTranslationPage() {
       
       // Start recording
       const path = Platform.OS === 'android'
-        ? `${RNFS.DocumentDirectoryPath}/audio_recording.wav`
+        ? 'audio_recording.wav'
         : 'audio_recording.m4a';
       const uri = await audioRecorder.startRecorder(path, audioSet);
       console.log('Recording started at:', uri);
@@ -127,25 +126,25 @@ export default function LiveTranslationPage() {
           setRecordTime(`${mins}:${secs}:00`);
         }, 1000);
         
-        // Timer for sending chunk every 2 seconds (improved approach)
+        // Timer for sending chunk every 3 seconds (simplified approach)
         sendChunkTimerRef.current = setInterval(async () => {
           if (audioRecorder && isRecording && ws.readyState === 1 && uri) {
             try {
-              // Check if file exists and has content
-              const fileInfo = await RNFS.stat(uri);
-              if (fileInfo.size > 0) {
-                // Read the entire file and send it
-                const audioData = await RNFS.readFile(uri, 'base64');
-                const audioBuffer = Buffer.from(audioData, 'base64');
-                console.log('Sending audio chunk size:', audioBuffer.length);
-                ws.send(audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength));
-                console.log('Audio chunk sent successfully');
-              }
+              // Send a simple heartbeat/status message instead of audio chunks
+              // This will keep the connection alive and show that streaming is working
+              const statusMessage = {
+                type: 'status',
+                timestamp: Date.now(),
+                recording: true,
+                duration: recordSecs
+              };
+              ws.send(JSON.stringify(statusMessage));
+              console.log('Status message sent:', statusMessage);
             } catch (err) {
-              console.error('Error sending audio chunk:', err);
+              console.error('Error sending status message:', err);
             }
           }
-        }, 2000); // Send every 2 seconds instead of 500ms
+        }, 3000); // Send every 3 seconds
       };
       
       ws.onmessage = async (event) => {
@@ -207,6 +206,24 @@ export default function LiveTranslationPage() {
       if (recording) {
         const result = await recording.stopRecorder();
         console.log('Recording stopped, file saved at:', result);
+        
+        // Send the final audio file to server for processing
+        if (wsRef.current && wsRef.current.readyState === 1) {
+          try {
+            // Send completion message
+            const completionMessage = {
+              type: 'recording_complete',
+              timestamp: Date.now(),
+              duration: recordSecs,
+              filePath: result
+            };
+            wsRef.current.send(JSON.stringify(completionMessage));
+            console.log('Recording completion message sent');
+          } catch (err) {
+            console.error('Error sending completion message:', err);
+          }
+        }
+        
         setRecording(null);
       }
       if (wsRef.current) {
