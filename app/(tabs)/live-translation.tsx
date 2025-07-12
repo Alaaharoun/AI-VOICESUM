@@ -1,17 +1,11 @@
-// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-recorder-player يجب أن يبقى محصوراً في هذه الصفحة فقط.
+// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل expo-av يجب أن يبقى محصوراً في هذه الصفحة فقط.
 // لا تقم بتصدير أو مشاركة أي دوال أو كائنات من هذه المكتبة إلى صفحات أو مكونات أخرى لتفادي الكراش في باقي التطبيق.
 
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, PermissionsAndroid } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SpeechService } from '@/services/speechService';
-import AudioRecorderPlayer, {
-  AVEncoderAudioQualityIOSType,
-  AVEncodingOption,
-  AudioEncoderAndroidType,
-  AudioSourceAndroidType,
-  OutputFormatAndroidType,
-} from 'react-native-audio-recorder-player';
+import { Audio } from 'expo-av';
 import { Buffer } from 'buffer';
 
 export default function LiveTranslationPage() {
@@ -21,7 +15,7 @@ export default function LiveTranslationPage() {
   const targetLanguageName = (params.languageName as string) || 'العربية';
   
   // Recorder state
-  const [recording, setRecording] = useState<AudioRecorderPlayer | null>(null);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState('00:00:00');
   const [recordSecs, setRecordSecs] = useState(0);
@@ -87,32 +81,19 @@ export default function LiveTranslationPage() {
       }
       
       // Initialize audio recorder
-      console.log('Creating AudioRecorderPlayer instance...');
-      const audioRecorder = new AudioRecorderPlayer();
-      console.log('AudioRecorderPlayer instance created:', audioRecorder);
-      setRecording(audioRecorder);
+      console.log('Creating expo-av Recording instance...');
+      await Audio.requestPermissionsAsync();
+      await Audio.setAudioModeAsync({
+        allowsRecordingIOS: true,
+        playsInSilentModeIOS: true,
+      });
       
-      // Configure audio settings
-      const audioSet = {
-        AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
-        AudioSourceAndroid: AudioSourceAndroidType.MIC,
-        AVEncoderAudioQualityKeyIOS: AVEncoderAudioQualityIOSType.high,
-        OutputFormatAndroid: OutputFormatAndroidType.MPEG_4,
-        AudioSamplingRateAndroid: 16000,
-        AudioChannelsAndroid: 1,
-        AudioEncodingBitRateAndroid: 128000,
-      };
+      const { recording } = await Audio.Recording.createAsync(
+        Audio.RecordingOptionsPresets.HIGH_QUALITY
+      );
       
-      console.log('Audio settings configured:', audioSet);
-      
-      // Start recording
-      const path = Platform.OS === 'android'
-        ? 'audio_recording.wav'
-        : 'audio_recording.m4a';
-      console.log('Starting recorder with path:', path);
-      const uri = await audioRecorder.startRecorder(path, audioSet);
-      console.log('Recording started at:', uri);
-      setAudioUri(uri);
+      console.log('Recording instance created:', recording);
+      setRecording(recording);
       
       // افتح WebSocket
       console.log('Opening WebSocket connection...');
@@ -135,12 +116,11 @@ export default function LiveTranslationPage() {
           setRecordTime(`${mins}:${secs}:00`);
         }, 1000);
         
-        // Timer for sending chunk every 3 seconds (simplified approach)
+        // Timer for sending status every 3 seconds
         sendChunkTimerRef.current = setInterval(async () => {
-          if (audioRecorder && isRecording && ws.readyState === 1 && uri) {
+          if (recording && isRecording && ws.readyState === 1) {
             try {
-              // Send a simple heartbeat/status message instead of audio chunks
-              // This will keep the connection alive and show that streaming is working
+              // Send a simple heartbeat/status message
               const statusMessage = {
                 type: 'status',
                 timestamp: Date.now(),
@@ -214,8 +194,10 @@ export default function LiveTranslationPage() {
         sendChunkTimerRef.current = null;
       }
       if (recording) {
-        const result = await recording.stopRecorder();
-        console.log('Recording stopped, file saved at:', result);
+        await recording.stopAndUnloadAsync();
+        const uri = recording.getURI();
+        console.log('Recording stopped, file saved at:', uri);
+        setAudioUri(uri);
         
         // Send the final audio file to server for processing
         if (wsRef.current && wsRef.current.readyState === 1) {
@@ -225,7 +207,7 @@ export default function LiveTranslationPage() {
               type: 'recording_complete',
               timestamp: Date.now(),
               duration: recordSecs,
-              filePath: result
+              filePath: uri
             };
             wsRef.current.send(JSON.stringify(completionMessage));
             console.log('Recording completion message sent');
