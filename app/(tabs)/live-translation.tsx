@@ -1,11 +1,17 @@
-// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-record يجب أن يبقى محصوراً في هذه الصفحة فقط.
+// ملاحظة هامة: أي كود متعلق بمكتبات الصوت Native مثل react-native-audio-recorder-player يجب أن يبقى محصوراً في هذه الصفحة فقط.
 // لا تقم بتصدير أو مشاركة أي دوال أو كائنات من هذه المكتبة إلى صفحات أو مكونات أخرى لتفادي الكراش في باقي التطبيق.
 
 import React, { useEffect, useState, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, PermissionsAndroid } from 'react-native';
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { SpeechService } from '@/services/speechService';
-import AudioRecord from 'react-native-audio-record';
+import AudioRecorderPlayer, {
+  AVEncoderAudioQualityIOSType,
+  AVEncodingOption,
+  AudioEncoderAndroidType,
+  AudioSourceAndroidType,
+  OutputFormatAndroidType,
+} from 'react-native-audio-recorder-player';
 import RNFS from 'react-native-fs';
 import { Buffer } from 'buffer';
 
@@ -16,9 +22,11 @@ export default function LiveTranslationPage() {
   const targetLanguageName = (params.languageName as string) || 'العربية';
   
   // Recorder state
+  const [recording, setRecording] = useState<AudioRecorderPlayer | null>(null);
   const [isRecording, setIsRecording] = useState(false);
   const [recordTime, setRecordTime] = useState('00:00:00');
   const [recordSecs, setRecordSecs] = useState(0);
+  const [audioUri, setAudioUri] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   // Transcription/translation state
@@ -31,7 +39,8 @@ export default function LiveTranslationPage() {
 
   const recordTimerRef = useRef<any>(null);
   const wsRef = useRef<WebSocket | null>(null);
-  const audioRecordRef = useRef<any>(null);
+  const sendChunkTimerRef = useRef<any>(null);
+  const lastSentUriRef = useRef<string | null>(null);
 
   // Start recording automatically on mount
   useEffect(() => {
@@ -52,6 +61,7 @@ export default function LiveTranslationPage() {
       setIsRecording(true);
       setRecordTime('00:00:00');
       setRecordSecs(0);
+      setAudioUri(null);
       setTranscription('');
       setTranslation('');
       
@@ -74,29 +84,35 @@ export default function LiveTranslationPage() {
         }
       }
       
-      // Configure audio settings for streaming
-      const options = {
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        audioSource: 6, // MIC
-        wavFile: 'test.wav'
+      // Initialize audio recorder
+      const audioRecorder = new AudioRecorderPlayer();
+      setRecording(audioRecorder);
+      
+      // Configure audio settings
+      const audioSet = {
+        AudioEncoderAndroid: AudioEncoderAndroidType.AAC,
+        AudioSourceAndroid: AudioSourceAndroidType.MIC,
+        AVEncoderAudioQualityKeyIOS: AVEncoderAudioQualityIOSType.high,
+        OutputFormatAndroid: OutputFormatAndroidType.MPEG_4,
+        AudioSamplingRateAndroid: 16000,
+        AudioChannelsAndroid: 1,
+        AudioEncodingBitRateAndroid: 128000,
       };
       
-      // Initialize audio recorder
-      await AudioRecord.init(options);
-      audioRecordRef.current = AudioRecord;
+      // Start recording
+      const path = Platform.OS === 'android'
+        ? `${RNFS.DocumentDirectoryPath}/audio_recording.wav`
+        : 'audio_recording.m4a';
+      const uri = await audioRecorder.startRecorder(path, audioSet);
+      console.log('Recording started at:', uri);
+      setAudioUri(uri);
       
-      // افتح WebSocket أولاً
+      // افتح WebSocket
       const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
       wsRef.current = ws;
       
       ws.onopen = () => {
-        console.log('WebSocket connected, starting recording...');
-        
-        // Start recording with streaming
-        AudioRecord.start();
-        
+        console.log('WebSocket connected');
         // Timer for UI
         let seconds = 0;
         recordTimerRef.current = setInterval(() => {
@@ -111,20 +127,25 @@ export default function LiveTranslationPage() {
           setRecordTime(`${mins}:${secs}:00`);
         }, 1000);
         
-        // Listen for audio data chunks
-        AudioRecord.on('data', (data) => {
-          if (ws.readyState === 1 && isRecording) {
+        // Timer for sending chunk every 2 seconds (improved approach)
+        sendChunkTimerRef.current = setInterval(async () => {
+          if (audioRecorder && isRecording && ws.readyState === 1 && uri) {
             try {
-              // data is base64 encoded PCM chunk
-              const audioBuffer = Buffer.from(data, 'base64');
-              console.log('Sending audio chunk size:', audioBuffer.length);
-              // Send as ArrayBuffer for WebSocket
-              ws.send(audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength));
+              // Check if file exists and has content
+              const fileInfo = await RNFS.stat(uri);
+              if (fileInfo.size > 0) {
+                // Read the entire file and send it
+                const audioData = await RNFS.readFile(uri, 'base64');
+                const audioBuffer = Buffer.from(audioData, 'base64');
+                console.log('Sending audio chunk size:', audioBuffer.length);
+                ws.send(audioBuffer.buffer.slice(audioBuffer.byteOffset, audioBuffer.byteOffset + audioBuffer.byteLength));
+                console.log('Audio chunk sent successfully');
+              }
             } catch (err) {
               console.error('Error sending audio chunk:', err);
             }
           }
-        });
+        }, 2000); // Send every 2 seconds instead of 500ms
       };
       
       ws.onmessage = async (event) => {
@@ -158,10 +179,14 @@ export default function LiveTranslationPage() {
       };
       
       ws.onclose = () => {
-        console.log('WebSocket connection closed');
+        if (sendChunkTimerRef.current) {
+          clearInterval(sendChunkTimerRef.current);
+          sendChunkTimerRef.current = null;
+        }
       };
       
     } catch (err: any) {
+      console.error('Start recording error:', err);
       setError('Failed to start recording: ' + (err?.message || err));
       setIsRecording(false);
     }
@@ -175,12 +200,15 @@ export default function LiveTranslationPage() {
         clearInterval(recordTimerRef.current);
         recordTimerRef.current = null;
       }
-      
-      if (audioRecordRef.current) {
-        AudioRecord.stop();
-        audioRecordRef.current = null;
+      if (sendChunkTimerRef.current) {
+        clearInterval(sendChunkTimerRef.current);
+        sendChunkTimerRef.current = null;
       }
-      
+      if (recording) {
+        const result = await recording.stopRecorder();
+        console.log('Recording stopped, file saved at:', result);
+        setRecording(null);
+      }
       if (wsRef.current) {
         wsRef.current.close();
         wsRef.current = null;
