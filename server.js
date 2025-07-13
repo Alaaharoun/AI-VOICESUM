@@ -118,14 +118,12 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
     if (req.file) {
       audioBuffer = req.file.buffer;
       audioType = req.file.mimetype;
-    } else {
+    } else if (req.body && req.body.audio && req.body.audioType) {
       // إذا كان JSON
-      const { audio, audioType: at } = req.body;
-      if (!audio || !at) {
-        return res.status(400).json({ error: 'Missing audio or audioType in request.' });
-      }
-      audioBuffer = Buffer.from(audio, 'base64');
-      audioType = at;
+      audioBuffer = Buffer.from(req.body.audio, 'base64');
+      audioType = req.body.audioType;
+    } else {
+      return res.status(400).json({ error: 'Missing audio or audioType in request.' });
     }
     if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
       return res.status(500).json({ error: 'Azure Speech API key or region missing.' });
