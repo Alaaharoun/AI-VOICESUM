@@ -138,6 +138,7 @@ export default function AdminRoute() {
       await rec.startAsync();
       setRecording(rec);
       setIsRecording(true);
+      setMicLoading(false);
     } catch (err) {
       setMicResult('❌ خطأ في بدء التسجيل');
       setMicLoading(false);
@@ -241,9 +242,18 @@ export default function AdminRoute() {
         // هنا سنرسل الملف كاملاً دفعة واحدة (للتبسيط)، ويمكنك لاحقًا تقطيعه
         if (ws && ws.readyState === 1) {
           const arrayBuffer = await blob.arrayBuffer();
-          ws.send(arrayBuffer);
+          try {
+            ws.send(arrayBuffer);
+            // انتظر قليلاً لإعطاء فرصة للإرسال
+            await new Promise(res => setTimeout(res, 300));
+            ws.close();
+            setWsResult('✅ تم إرسال الصوت بنجاح');
+          } catch (err) {
+            setWsResult('❌ حدث خطأ أثناء إرسال الصوت عبر WebSocket');
+          }
+        } else {
+          setWsResult('❌ الاتصال مغلق، لم يتم إرسال الصوت');
         }
-        ws && ws.close();
       }
     } catch (err) {
       setWsResult('❌ خطأ في إرسال الصوت');

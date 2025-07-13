@@ -183,4 +183,6 @@ dependencies {
     } else {
         implementation jscFlavor
     }
+
+    implementation project(':react-native-audio-record')
 }
