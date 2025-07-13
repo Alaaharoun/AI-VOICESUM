@@ -133,17 +133,19 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
     }
     // طباعة نوع الملف في السجلات
     console.log('Received audio type:', audioType);
+    // تحويل الملف إلى wav دائماً قبل الإرسال إلى Azure
+    const wavBuffer = await convertAudioFormat(audioBuffer, audioType, 'wav');
     // إرسال إلى Azure مع تحديد اللغة الإنجليزية
     const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US`;
     const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
       headers: {
         'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
-        'Content-Type': audioType,
+        'Content-Type': 'audio/wav',
         'Accept': 'application/json',
         'Transfer-Encoding': 'chunked',
       },
-      body: audioBuffer,
+      body: wavBuffer,
     });
     const azureData = await azureRes.json();
     const transcriptText = azureData.DisplayText || '';
