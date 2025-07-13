@@ -17,14 +17,11 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 const upload = multer();
 
-const ASSEMBLYAI_API_KEY = process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_API_KEY;
 const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
 
-console.log('Server starting with API key:', ASSEMBLYAI_API_KEY ? 'Present' : 'Missing');
+console.log('Server starting with Azure Speech API key:', AZURE_SPEECH_KEY ? 'Present' : 'Missing');
 console.log('Environment variables:', {
-  EXPO_PUBLIC_ASSEMBLYAI_API_KEY: process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
-  ASSEMBLYAI_API_KEY: process.env.ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
   AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY ? 'Present' : 'Missing',
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION ? 'Present' : 'Missing'
 });
@@ -103,23 +100,40 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
 app.get('/health', (req, res) => {
   res.json({
     status: 'ok',
-    apiKey: ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
+    apiKey: AZURE_SPEECH_KEY ? 'Present' : 'Missing',
     timestamp: new Date().toISOString()
   });
 });
 
-app.post('/live-translate', async (req, res) => {
+// Helper: صيغة مدعومة من Azure
+const SUPPORTED_AUDIO_TYPES = [
+  'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/mpeg', 'audio/mp3', 'audio/m4a', 'audio/x-m4a', 'audio/ogg', 'audio/webm', 'audio/flac', 'audio/mp4'
+];
+
+// دعم استقبال الصوت عبر form-data أو JSON
+app.post('/live-translate', upload.single('audio'), async (req, res) => {
   try {
-    const { audio, audioType } = req.body;
-    if (!audio || !audioType) {
-      return res.status(400).json({ error: 'Missing audio or audioType in request.' });
+    let audioBuffer, audioType;
+    // إذا كان الطلب form-data
+    if (req.file) {
+      audioBuffer = req.file.buffer;
+      audioType = req.file.mimetype;
+    } else {
+      // إذا كان JSON
+      const { audio, audioType: at } = req.body;
+      if (!audio || !at) {
+        return res.status(400).json({ error: 'Missing audio or audioType in request.' });
+      }
+      audioBuffer = Buffer.from(audio, 'base64');
+      audioType = at;
     }
     if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
       return res.status(500).json({ error: 'Azure Speech API key or region missing.' });
     }
-    // Decode base64 audio
-    const audioBuffer = Buffer.from(audio, 'base64');
-    // Send to Azure Speech-to-Text
+    if (!SUPPORTED_AUDIO_TYPES.includes(audioType)) {
+      return res.status(400).json({ error: 'Unsupported audio format. Please use wav, mp3, m4a, ogg, or other Azure-supported formats.' });
+    }
+    // إرسال إلى Azure
     const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=auto`;
     const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
