@@ -131,8 +131,10 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
     if (!SUPPORTED_AUDIO_TYPES.includes(audioType)) {
       return res.status(400).json({ error: 'Unsupported audio format. Please use wav, mp3, m4a, ogg, or other Azure-supported formats.' });
     }
-    // إرسال إلى Azure
-    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=auto`;
+    // طباعة نوع الملف في السجلات
+    console.log('Received audio type:', audioType);
+    // إرسال إلى Azure مع تحديد اللغة الإنجليزية
+    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US`;
     const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
       headers: {
