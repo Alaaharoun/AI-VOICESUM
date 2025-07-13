@@ -4,6 +4,7 @@ import { useUserPermissions } from '@/hooks/useAuth';
 import { AdminPanel } from '@/components/AdminPanel';
 import * as DocumentPicker from 'expo-document-picker';
 import * as IntentLauncher from 'expo-intent-launcher';
+import { Audio } from 'expo-av';
 
 export default function AdminRoute() {
   const { isSuperadmin, hasRole, loading } = useUserPermissions();
@@ -12,6 +13,15 @@ export default function AdminRoute() {
   const [error, setError] = useState('');
   const [result, setResult] = useState('');
   const [loadingTest, setLoadingTest] = useState(false);
+  const [recording, setRecording] = useState<Audio.Recording | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
+  const [micResult, setMicResult] = useState('');
+  const [micLoading, setMicLoading] = useState(false);
+  const [wsResult, setWsResult] = useState('');
+  const [wsRecording, setWsRecording] = useState(false);
+  const [ws, setWs] = useState<WebSocket | null>(null);
+  const [wsAudio, setWsAudio] = useState<Array<any>>([]);
+  const [wsRecObj, setWsRecObj] = useState<Audio.Recording | null>(null);
 
   const isAdmin = isSuperadmin || hasRole('admin') || hasRole('superadmin');
 
@@ -112,6 +122,134 @@ export default function AdminRoute() {
     });
   };
 
+  const startRecordingOnce = async () => {
+    setMicResult('');
+    setMicLoading(true);
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        setMicResult('❌ لم يتم منح إذن المايكروفون');
+        setMicLoading(false);
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      setRecording(rec);
+      setIsRecording(true);
+    } catch (err) {
+      setMicResult('❌ خطأ في بدء التسجيل');
+      setMicLoading(false);
+    }
+  };
+
+  const stopRecordingOnce = async () => {
+    setMicLoading(true);
+    try {
+      if (!recording) {
+        setMicResult('❌ لم يتم العثور على تسجيل');
+        setMicLoading(false);
+        return;
+      }
+      await recording.stopAndUnloadAsync();
+      setIsRecording(false);
+      const uri = recording.getURI();
+      if (!uri) {
+        setMicResult('❌ لم يتم العثور على ملف الصوت');
+        setMicLoading(false);
+        return;
+      }
+      const file = await fetch(uri);
+      const blob = await file.blob();
+      const formData = new FormData();
+      formData.append('audio', blob, 'mic-test.wav');
+      const response = await fetch('https://ai-voicesum.onrender.com/live-translate', {
+        method: 'POST',
+        body: formData,
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+      const data = await response.json();
+      if (data.transcription) {
+        setMicResult('✅ النتيجة: ' + data.transcription);
+      } else if (data.error) {
+        setMicResult('❌ خطأ: ' + data.error);
+      } else {
+        setMicResult('❌ خطأ غير معروف');
+      }
+    } catch (err) {
+      setMicResult('❌ خطأ في إرسال الصوت');
+    }
+    setMicLoading(false);
+  };
+
+  const startWsRecording = async () => {
+    setWsResult('');
+    setWsAudio([]);
+    setWsRecording(true);
+    try {
+      const { status } = await Audio.requestPermissionsAsync();
+      if (status !== 'granted') {
+        setWsResult('❌ لم يتم منح إذن المايكروفون');
+        setWsRecording(false);
+        return;
+      }
+      await Audio.setAudioModeAsync({ allowsRecordingIOS: true, playsInSilentModeIOS: true });
+      const rec = new Audio.Recording();
+      await rec.prepareToRecordAsync(Audio.RecordingOptionsPresets.HIGH_QUALITY);
+      await rec.startAsync();
+      setWsRecObj(rec);
+      // افتح WebSocket
+      const socket = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+      socket.onopen = () => {
+        setWs(socket);
+        setWsResult('🔴 التسجيل جارٍ...');
+      };
+      socket.onmessage = (event) => {
+        try {
+          const msg = JSON.parse(event.data);
+          if (msg.type === 'partial') {
+            setWsResult('⏳ نص جزئي: ' + msg.text);
+          } else if (msg.type === 'final') {
+            setWsResult('✅ نص نهائي: ' + msg.text);
+          } else if (msg.type === 'error') {
+            setWsResult('❌ خطأ: ' + msg.error);
+          }
+        } catch {}
+      };
+      socket.onerror = () => setWsResult('❌ خطأ في الاتصال بالسيرفر');
+      socket.onclose = () => setWsRecording(false);
+    } catch (err) {
+      setWsResult('❌ خطأ في بدء التسجيل');
+      setWsRecording(false);
+    }
+  };
+
+  const stopWsRecording = async () => {
+    setWsRecording(false);
+    try {
+      if (wsRecObj) {
+        await wsRecObj.stopAndUnloadAsync();
+        const uri = wsRecObj.getURI();
+        if (!uri) {
+          setWsResult('❌ لم يتم العثور على ملف الصوت');
+          return;
+        }
+        const file = await fetch(uri);
+        const blob = await file.blob();
+        // تقسيم الصوت إلى أجزاء صغيرة (مثلاً كل 1 ثانية)
+        // هنا سنرسل الملف كاملاً دفعة واحدة (للتبسيط)، ويمكنك لاحقًا تقطيعه
+        if (ws && ws.readyState === 1) {
+          const arrayBuffer = await blob.arrayBuffer();
+          ws.send(arrayBuffer);
+        }
+        ws && ws.close();
+      }
+    } catch (err) {
+      setWsResult('❌ خطأ في إرسال الصوت');
+    }
+  };
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
@@ -149,6 +287,89 @@ export default function AdminRoute() {
           {result ? (
             <View style={styles.resultContainer}>
               <Text style={styles.resultText}>{result}</Text>
+            </View>
+          ) : null}
+        </View>
+
+        {/* زر تسجيل وإرسال دفعة واحدة */}
+        <View style={styles.settingItem}>
+          <Text style={styles.settingLabel}>🎙️ تسجيل وإرسال دفعة واحدة</Text>
+          <Text style={styles.settingDescription}>
+            سجل صوتك من المايك وأرسله دفعة واحدة إلى السيرفر لاختبار الترجمة
+          </Text>
+          {!isRecording && !micLoading ? (
+            <TouchableOpacity
+              style={styles.settingButton}
+              onPress={startRecordingOnce}
+            >
+              <Text style={styles.settingButtonText}>بدء التسجيل</Text>
+            </TouchableOpacity>
+          ) : null}
+          {isRecording && !micLoading ? (
+            <TouchableOpacity
+              style={styles.settingButton}
+              onPress={async () => {
+                await stopRecordingOnce();
+                setRecording(null); // إعادة تعيين كائن التسجيل
+              }}
+            >
+              <Text style={styles.settingButtonText}>إيقاف وإرسال</Text>
+            </TouchableOpacity>
+          ) : null}
+          {micLoading ? (
+            <ActivityIndicator color="#fff" size="small" />
+          ) : null}
+          {micResult ? (
+            <View style={styles.resultContainer}>
+              <Text style={styles.resultText}>{micResult}</Text>
+              {!isRecording && !micLoading ? (
+                <TouchableOpacity
+                  style={[styles.settingButton, {marginTop: 8}]}
+                  onPress={startRecordingOnce}
+                >
+                  <Text style={styles.settingButtonText}>بدء تسجيل جديد</Text>
+                </TouchableOpacity>
+              ) : null}
+            </View>
+          ) : null}
+        </View>
+
+        {/* زر تسجيل وإرسال فوري (WebSocket) */}
+        <View style={styles.settingItem}>
+          <Text style={styles.settingLabel}>🌐 تسجيل وإرسال فوري (WebSocket)</Text>
+          <Text style={styles.settingDescription}>
+            سجل صوتك من المايك وأرسله مباشرة إلى السيرفر عبر WebSocket لاختبار الترجمة الفورية
+          </Text>
+          {!wsRecording ? (
+            <TouchableOpacity
+              style={styles.settingButton}
+              onPress={startWsRecording}
+            >
+              <Text style={styles.settingButtonText}>بدء التسجيل الفوري</Text>
+            </TouchableOpacity>
+          ) : null}
+          {wsRecording ? (
+            <TouchableOpacity
+              style={styles.settingButton}
+              onPress={async () => {
+                await stopWsRecording();
+                setWsRecObj(null); // إعادة تعيين كائن التسجيل
+              }}
+            >
+              <Text style={styles.settingButtonText}>إيقاف التسجيل</Text>
+            </TouchableOpacity>
+          ) : null}
+          {wsResult ? (
+            <View style={styles.resultContainer}>
+              <Text style={styles.resultText}>{wsResult}</Text>
+              {!wsRecording ? (
+                <TouchableOpacity
+                  style={[styles.settingButton, {marginTop: 8}]}
+                  onPress={startWsRecording}
+                >
+                  <Text style={styles.settingButtonText}>بدء تسجيل جديد</Text>
+                </TouchableOpacity>
+              ) : null}
             </View>
           ) : null}
         </View>

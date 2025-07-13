@@ -311,10 +311,22 @@ export default function ProfileScreen() {
   };
   const checkStoragePermission = async () => {
     if (Platform.OS === 'android') {
-      const granted = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+      let granted = false;
+      if (Platform.Version >= 33) {
+        // Android 13+ (API 33)
+        const audio = await PermissionsAndroid.check('android.permission.READ_MEDIA_AUDIO');
+        const images = await PermissionsAndroid.check('android.permission.READ_MEDIA_IMAGES');
+        const video = await PermissionsAndroid.check('android.permission.READ_MEDIA_VIDEO');
+        granted = audio && images && video;
+      } else {
+        // Android 12 وأقل
+        const write = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
+        const read = await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.READ_EXTERNAL_STORAGE);
+        granted = write && read;
+      }
       setStorageStatus(granted ? 'granted' : 'denied');
     } else {
-      setStorageStatus('granted'); // iOS: assume granted for demo
+      setStorageStatus('granted');
     }
   };
   const checkAllPermissions = async () => {
@@ -336,7 +348,11 @@ export default function ProfileScreen() {
       if (Platform.Version >= 33) {
         // Android 13+ (API 33)
         const audio = await PermissionsAndroid.request('android.permission.READ_MEDIA_AUDIO');
-        granted = audio === PermissionsAndroid.RESULTS.GRANTED;
+        const images = await PermissionsAndroid.request('android.permission.READ_MEDIA_IMAGES');
+        const video = await PermissionsAndroid.request('android.permission.READ_MEDIA_VIDEO');
+        granted = [audio, images, video].every(
+          (res) => res === PermissionsAndroid.RESULTS.GRANTED
+        );
       } else {
         // Android 12 وأقل
         const write = await PermissionsAndroid.request(PermissionsAndroid.PERMISSIONS.WRITE_EXTERNAL_STORAGE);
@@ -344,6 +360,12 @@ export default function ProfileScreen() {
         granted = write === PermissionsAndroid.RESULTS.GRANTED && read === PermissionsAndroid.RESULTS.GRANTED;
       }
       setStorageStatus(granted ? 'granted' : 'denied');
+      if (!granted) {
+        Alert.alert(
+          'تنبيه التصاريح',
+          'لم يتم منح تصريح التخزين. إذا لم يظهر التصريح في الإعدادات، جرب حذف التطبيق وإعادة تثبيته أو احفظ ملفًا فعليًا من التطبيق.'
+        );
+      }
     } else {
       setStorageStatus('granted');
     }

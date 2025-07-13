@@ -13,6 +13,7 @@ import { useSubscription } from '@/contexts/SubscriptionContext';
 import { supabase } from '@/lib/supabase';
 import { FileText, Trash2, Clock, Crown, Languages, ArrowLeft, Download } from 'lucide-react-native';
 import { DownloadHelper } from '@/utils/downloadHelper';
+import { useUserPermissions } from '@/hooks/useAuth';
 
 interface Recording {
   id: string;
@@ -245,6 +246,8 @@ const styles = StyleSheet.create({
 export default function HistoryScreen() {
   const { user } = useAuth();
   const { isSubscribed, hasFreeTrial, freeTrialExpired, loading: subscriptionLoading } = useSubscription();
+  const { isSuperadmin, hasRole, loading: permissionsLoading } = useUserPermissions();
+  const isAdmin = isSuperadmin || hasRole('admin') || hasRole('superadmin');
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
 
@@ -253,13 +256,12 @@ export default function HistoryScreen() {
       router.replace('/(auth)/sign-in');
       return;
     }
-    
-    if (isSubscribed || hasFreeTrial) {
+    if (isAdmin || isSubscribed || hasFreeTrial) {
       fetchRecordings();
     } else {
       setLoading(false);
     }
-  }, [user, isSubscribed, hasFreeTrial]);
+  }, [user, isSubscribed, hasFreeTrial, isAdmin]);
 
   const fetchRecordings = async () => {
     try {
@@ -438,7 +440,7 @@ export default function HistoryScreen() {
     return null;
   }
 
-  if (!isSubscribed && !hasFreeTrial && !subscriptionLoading) {
+  if (!isAdmin && !isSubscribed && !hasFreeTrial && !subscriptionLoading) {
     return (
       <View style={styles.container}>
         <View style={styles.header}>

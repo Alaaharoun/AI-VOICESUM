@@ -87,19 +87,18 @@ export default function LiveTranslationPage() {
   // Start recording
   const startRecording = async () => {
     try {
-      // إذا كان هناك تسجيل نشط، أوقفه وحرره
+      // أوقف أي تسجيل نشط أو كائن تسجيل سابق
       if (recording) {
         try {
           await recording.stopAndUnloadAsync();
+          console.log('Previous recording stopped and unloaded.');
         } catch (e) {
-          // تجاهل الخطأ إذا لم يكن هناك تسجيل نشط فعلاً
+          console.log('No active recording to stop, or already stopped.');
         }
         setRecording(null);
       }
-      setShowStop(true);
-      setShowSummarize(false);
-      setError(null);
       setIsRecording(true);
+      setError(null);
       setRecordTime('00:00:00');
       setRecordSecs(0);
       setAudioUri(null);
@@ -111,9 +110,9 @@ export default function LiveTranslationPage() {
       setLastFinalText('');
       audioChunksRef.current = [];
       lastSentUriRef.current = null;
-      
+      setShowStop(true);
+      setShowSummarize(false);
       console.log('Starting recording process...');
-      
       // Request microphone permission
       if (Platform.OS === 'android') {
         const granted = await PermissionsAndroid.request(
@@ -133,28 +132,22 @@ export default function LiveTranslationPage() {
         }
         console.log('Microphone permission granted');
       }
-      
       // Initialize audio recorder
-      console.log('Creating expo-av Recording instance...');
       await Audio.requestPermissionsAsync();
       await Audio.setAudioModeAsync({
         allowsRecordingIOS: true,
         playsInSilentModeIOS: true,
       });
-      
       const { recording: newRecording } = await Audio.Recording.createAsync(
         Audio.RecordingOptionsPresets.HIGH_QUALITY
       );
-      
       console.log('Recording instance created:', newRecording);
       setRecording(newRecording);
-      
       // افتح WebSocket
       console.log('Opening WebSocket connection...');
       const wsUrl = Constants.expoConfig?.extra?.EXPO_PUBLIC_WS_URL || process.env.EXPO_PUBLIC_WS_URL || 'wss://ai-voicesum.onrender.com/ws';
       const ws = new WebSocket(wsUrl);
       wsRef.current = ws;
-      
       ws.onopen = () => {
         console.log('WebSocket connected successfully');
         // Timer for UI
@@ -170,18 +163,16 @@ export default function LiveTranslationPage() {
           const secs = (seconds % 60).toString().padStart(2, '0');
           setRecordTime(`${mins}:${secs}:00`);
         }, 1000);
-        
         // Timer for sending audio data every 3 seconds
         sendChunkTimerRef.current = setInterval(async () => {
-          if (recording && isRecording && ws.readyState === 1) {
+          if (newRecording && isRecording && ws.readyState === 1) {
             try {
               // Get recording status to check if we have audio data
-              const status = await recording.getStatusAsync();
+              const status = await newRecording.getStatusAsync();
               console.log('Recording status:', status);
-              
               if (status.isRecording && status.durationMillis > 0) {
                 // Send actual audio data chunks
-                await sendAudioChunks(recording, ws);
+                await sendAudioChunks(newRecording, ws);
               }
             } catch (err) {
               console.error('Error sending audio chunks:', err);
@@ -189,17 +180,12 @@ export default function LiveTranslationPage() {
           }
         }, 3000); // Send every 3 seconds
       };
-      
       ws.onmessage = async (event) => {
         try {
           const data = JSON.parse(event.data);
-          
           if (data.type === 'partial') {
-            // عرض النص الجزئي أثناء الكلام
             setPartialTranscription(data.text || '');
             setLastPartialText(data.text || '');
-            
-            // ترجمة فورية للنص الجزئي
             if (data.text && data.text !== lastPartialText) {
               setIsTranslating(true);
               try {
@@ -214,11 +200,8 @@ export default function LiveTranslationPage() {
               }
             }
           } else if (data.type === 'final') {
-            // عرض النص النهائي
             setTranscription(data.text || '');
             setLastFinalText(data.text || '');
-            
-            // ترجمة النص النهائي
             if (data.text && data.text !== lastFinalText) {
               setIsTranslating(true);
               try {
@@ -232,8 +215,6 @@ export default function LiveTranslationPage() {
                 setIsTranslating(false);
               }
             }
-            
-            // مسح النصوص الجزئية بعد النص النهائي
             setPartialTranscription('');
             setPartialTranslation('');
           }
@@ -241,14 +222,12 @@ export default function LiveTranslationPage() {
           console.error('WebSocket message error:', err);
         }
       };
-      
       ws.onerror = (e) => {
         let errorMessage = 'WebSocket error occurred.';
         errorMessage += '\nPossible causes: network issues, server unavailable, or invalid API keys.';
         setError(errorMessage);
         console.error('WebSocket error event:', e);
       };
-      
       ws.onclose = () => {
         console.log('WebSocket connection closed');
         if (sendChunkTimerRef.current) {
@@ -256,7 +235,6 @@ export default function LiveTranslationPage() {
           sendChunkTimerRef.current = null;
         }
       };
-      
     } catch (err: any) {
       console.error('Start recording error:', err);
       setError('Failed to start recording: ' + (err?.message || err));
@@ -395,16 +373,23 @@ export default function LiveTranslationPage() {
         <Text style={styles.errorText}>{error}</Text>
       )}
 
-      {showStop && (
+      {isRecording && (
         <TouchableOpacity style={styles.stopButton} onPress={handleStop}>
           <Text style={styles.stopButtonText}>Stop Recording</Text>
         </TouchableOpacity>
       )}
-      {showSummarize && (
-        <TouchableOpacity style={styles.summarizeButton} onPress={handleSummarizeAndNavigate} disabled={isSummarizing}>
-          <Text style={styles.summarizeButtonText}>{isSummarizing ? 'Summarizing...' : 'AI Summary'}</Text>
+      {!isRecording && !recording && (
+        <TouchableOpacity style={styles.startButton} onPress={startRecording}>
+          <Text style={styles.startButtonText}>بدء تسجيل جديد</Text>
         </TouchableOpacity>
       )}
+      <TouchableOpacity
+        style={[styles.summarizeButton, (!transcription && !translation) && { opacity: 0.5 }]}
+        onPress={handleSummarizeAndNavigate}
+        disabled={!(transcription && transcription.trim().length > 0 || translation && translation.trim().length > 0) || isSummarizing}
+      >
+        <Text style={styles.summarizeButtonText}>{isSummarizing ? 'Summarizing...' : 'AI Summary'}</Text>
+      </TouchableOpacity>
     </View>
   );
 }
@@ -569,5 +554,18 @@ const styles = StyleSheet.create({
     fontSize: 12,
     color: '#1E40AF',
     fontWeight: '500',
+  },
+  startButton: {
+    backgroundColor: '#10B981',
+    padding: 16,
+    borderRadius: 12,
+    alignItems: 'center',
+    flex: 1,
+    marginTop: 12,
+  },
+  startButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
   },
 }); 
