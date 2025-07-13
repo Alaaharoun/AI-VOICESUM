@@ -135,8 +135,10 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
     console.log('Received audio type:', audioType);
     // تحويل الملف إلى wav دائماً قبل الإرسال إلى Azure
     const wavBuffer = await convertAudioFormat(audioBuffer, audioType, 'wav');
-    // إرسال إلى Azure مع تحديد اللغة الإنجليزية
-    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=en-US`;
+    // === دعم اختيار اللغة ===
+    const language = req.body.language || req.query.language || 'en-US';
+    // إرسال إلى Azure مع تحديد اللغة المطلوبة
+    const azureEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=${language}`;
     const azureRes = await fetch(azureEndpoint, {
       method: 'POST',
       headers: {
@@ -172,61 +174,79 @@ function startWebSocketServer(server) {
       ws.close();
       return;
     }
-    // إعداد جلسة Azure Speech لكل عميل
-    const pushStream = speechsdk.AudioInputStream.createPushStream();
-    const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
-    const speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-    speechConfig.speechRecognitionLanguage = 'ar-SA'; // يمكنك جعلها ديناميكية
-    const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-    recognizer.recognizing = (s, e) => {
-      console.log('[WS] Partial result:', e.result.text);
-      ws.send(JSON.stringify({ type: 'partial', text: e.result.text }));
-    };
-    recognizer.recognized = (s, e) => {
-      if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-        console.log('[WS] Final result:', e.result.text);
-        ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
-      }
-    };
-    recognizer.canceled = (s, e) => {
-      console.log('[WS] Recognition canceled:', e.errorDetails);
-      ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
-      recognizer.close();
-      pushStream.close();
-      speechConfig.close && speechConfig.close();
-    };
-    recognizer.sessionStopped = (s, e) => {
-      console.log('[WS] Session stopped');
-      ws.send(JSON.stringify({ type: 'done' }));
-      recognizer.close();
-      pushStream.close();
-      speechConfig.close && speechConfig.close();
-    };
-    recognizer.startContinuousRecognitionAsync();
+    let recognizer, pushStream, speechConfig;
+    let language = 'ar-SA'; // الافتراضي
+    let initialized = false;
     ws.on('message', (data) => {
-      console.log('[WS] Received audio chunk. Size:', data.length || data.byteLength);
-      // Handle both Buffer and ArrayBuffer
-      if (data instanceof Buffer) {
-        pushStream.write(data);
-      } else if (data instanceof ArrayBuffer) {
-        pushStream.write(Buffer.from(data));
-      } else {
-        pushStream.write(Buffer.from(data));
+      // إذا لم يتم التهيئة بعد، نتوقع أول رسالة تكون JSON فيها اللغة
+      if (!initialized) {
+        try {
+          const msg = JSON.parse(data.toString());
+          if (msg.type === 'init' && msg.language) {
+            language = msg.language;
+            console.log('[WS] Using language:', language);
+          }
+        } catch (e) {
+          // إذا لم تكن JSON، تجاهل
+        }
+        // الآن نبدأ التهيئة
+        pushStream = speechsdk.AudioInputStream.createPushStream();
+        const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+        speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
+        speechConfig.speechRecognitionLanguage = language;
+        recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+        recognizer.recognizing = (s, e) => {
+          console.log('[WS] Partial result:', e.result.text);
+          ws.send(JSON.stringify({ type: 'partial', text: e.result.text }));
+        };
+        recognizer.recognized = (s, e) => {
+          if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+            console.log('[WS] Final result:', e.result.text);
+            ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+          }
+        };
+        recognizer.canceled = (s, e) => {
+          console.log('[WS] Recognition canceled:', e.errorDetails);
+          ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
+          recognizer.close();
+          pushStream.close();
+          speechConfig.close && speechConfig.close();
+        };
+        recognizer.sessionStopped = (s, e) => {
+          console.log('[WS] Session stopped');
+          ws.send(JSON.stringify({ type: 'done' }));
+          recognizer.close();
+          pushStream.close();
+          speechConfig.close && speechConfig.close();
+        };
+        recognizer.startContinuousRecognitionAsync();
+        initialized = true;
+        return;
+      }
+      // بعد التهيئة: كل رسالة هي بيانات صوتية
+      if (pushStream) {
+        if (data instanceof Buffer) {
+          pushStream.write(data);
+        } else if (data instanceof ArrayBuffer) {
+          pushStream.write(Buffer.from(data));
+        } else {
+          pushStream.write(Buffer.from(data));
+        }
       }
     });
     ws.on('close', () => {
       console.log('[WS] Client disconnected');
-      pushStream.close();
-      recognizer.stopContinuousRecognitionAsync();
-      recognizer.close();
-      speechConfig.close && speechConfig.close();
+      pushStream && pushStream.close();
+      recognizer && recognizer.stopContinuousRecognitionAsync();
+      recognizer && recognizer.close();
+      speechConfig && speechConfig.close && speechConfig.close();
     });
     ws.on('error', (err) => {
       console.log('[WS] WebSocket error:', err);
       ws.close();
-      pushStream.close();
-      recognizer.close();
-      speechConfig.close && speechConfig.close();
+      pushStream && pushStream.close();
+      recognizer && recognizer.close();
+      speechConfig && speechConfig.close && speechConfig.close();
     });
   });
 }

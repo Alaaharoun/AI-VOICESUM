@@ -140,7 +140,7 @@ export default function SummaryView() {
   return (
     <View style={styles.container}>
       <Text style={styles.header}>🤖 AI Summary</Text>
-      <ScrollView style={[styles.section, { paddingBottom: 120 }]}>
+      <ScrollView style={[styles.section, { paddingBottom: 120 }]} contentContainerStyle={{flexGrow:1}} showsVerticalScrollIndicator={true} automaticallyAdjustContentInsets={false} keyboardShouldPersistTaps="handled">
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Original Transcription:</Text>
@@ -211,9 +211,11 @@ export default function SummaryView() {
               </View>
             )}
           </View>
-          <Text style={styles.text}>
-            {isSummarizing ? 'Generating summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
-          </Text>
+          <ScrollView style={{ maxHeight: 250 }} showsVerticalScrollIndicator={true}>
+            <Text style={[styles.text, {paddingRight: 2, lineHeight: 26}]}>
+              {isSummarizing ? 'Generating summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
+            </Text>
+          </ScrollView>
         </View>
         
         {!transcription && !translation && (

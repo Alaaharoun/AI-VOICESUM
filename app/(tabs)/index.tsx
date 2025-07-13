@@ -803,7 +803,7 @@ export default function RecordScreen() {
           >
             <Crown size={22} color={liveTranslateEnabled ? '#fff' : '#F59E0B'} style={{ marginRight: 10 }} />
             <Text style={{ color: liveTranslateEnabled ? '#fff' : '#F59E0B', fontWeight: 'bold', fontSize: 16, textAlign: 'center', flex: 1 }}>
-              {liveTranslateEnabled ? 'Live Translation: English to World Languages Enabled' : 'Enable Live Translation: English to World Languages'}
+              {liveTranslateEnabled ? 'Live Translation to World Languages Enabled' : 'Enable Live Translation to World Languages'}
             </Text>
           </TouchableOpacity>
           {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}

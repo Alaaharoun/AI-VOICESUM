@@ -13,7 +13,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/contexts/SubscriptionContext';
 import { SubscriptionPlan } from '@/components/SubscriptionPlan';
 import { supabase } from '@/lib/supabase';
-import { Crown, ArrowLeft, CheckCircle, Info, HelpCircle, ExternalLink } from 'lucide-react-native';
+import { Crown, ArrowLeft, CheckCircle, Info, HelpCircle, ExternalLink, X, Check } from 'lucide-react-native';
 
 const styles = StyleSheet.create({
   container: {
@@ -275,30 +275,51 @@ const styles = StyleSheet.create({
   },
 });
 
-const plans = [
+const packageData = [
   {
-    id: 'transcription_2.5hr',
-    title: '2.5 Hours',
-    price: '$5',
-    description: 'Perfect for temporary use. Convert audio to text, translate, and summarize quickly.',
-    button: 'Buy Now',
-    color: '#2563EB',
+    id: 'basic',
+    title: 'بسيط',
+    oldPrice: '$10',
+    newPrice: '$6',
+    annualPrice: '$72',
+    minutes: 150,
+    minutesLabel: '150 دقيقة (2.5 ساعة)',
+    aiSummary: false,
+    instantTranslation: false,
+    notes: 'بدون تلخيص وبدون ترجمة فورية',
+    highlight: false,
+    badge: null,
+    fairUse: null,
   },
   {
-    id: 'transcription_5hr',
-    title: '5 Hours',
-    price: '$10',
-    description: 'Get more time for a better value! Ideal for big projects.',
-    button: 'Buy Now',
-    color: '#10B981',
+    id: 'pro',
+    title: 'برو',
+    oldPrice: '$20',
+    newPrice: '$12',
+    annualPrice: '$144',
+    minutes: 300,
+    minutesLabel: '300 دقيقة (5 ساعات)',
+    aiSummary: true,
+    instantTranslation: true,
+    notes: 'ترجمة فورية + تلخيص AI',
+    highlight: true,
+    badge: null,
+    fairUse: null,
   },
   {
-    id: 'transcription_annual',
-    title: 'Annual',
-    price: '$100/year',
-    description: 'Unlimited access for a full year. Best for power users.',
-    button: 'Buy Now',
-    color: '#F59E0B',
+    id: 'unlimited',
+    title: 'غير محدود',
+    oldPrice: '$39.99',
+    newPrice: '$29.99',
+    annualPrice: '$299',
+    minutes: 800,
+    minutesLabel: 'غير محدود (متوسط 800 دقيقة/شهر)',
+    aiSummary: true,
+    instantTranslation: true,
+    notes: 'غير محدود (مع حدود معقولة للحفاظ على الأداء)',
+    highlight: true,
+    badge: 'وفر $50 عند الاشتراك سنوياً',
+    fairUse: 'استخدام غير محدود مع حدود معقولة يومياً لضمان استقرار الخوادم',
   },
 ];
 
@@ -360,58 +381,66 @@ export default function SubscriptionScreen() {
           </TouchableOpacity>
           <View style={styles.headerContent}>
             <Crown size={48} color="#F59E0B" />
-            <Text style={styles.title}>Upgrade to Premium</Text>
-            {hasFreeTrial && !freeTrialExpired && (
-              <View style={styles.trialIndicator}>
-                <Text style={styles.trialText}>
-                  ✨ Free trial active - {(() => {
-                    const mins = Math.floor(getRemainingTrialTime() / 60);
-                    const secs = getRemainingTrialTime() % 60;
-                    return `${mins}m ${secs}s`;
-                  })()} remaining today
-                </Text>
-              </View>
-            )}
-            <Text style={styles.subtitle}>
-              {hasFreeTrial && !freeTrialExpired 
-                ? 'Upgrade to get unlimited daily usage without time limits'
-                : 'Unlock unlimited voice transcriptions and AI-powered summaries'
-              }
-            </Text>
+            <Text style={styles.title}>اختر الحزمة التي تناسب احتياجاتك — مع ترجمة فورية بدقة عالية وملخص ذكي لكل جلسة باستخدام الذكاء الاصطناعي.</Text>
           </View>
-        </View>
-
-        <View style={styles.footer}>
-          <Text style={styles.footerText}>
-            Free trial: 1 hour per day for 2 days, then upgrade for unlimited access.
-          </Text>
-          <Text style={styles.footerText}>
-            Plans auto-renew. Cancel anytime in your account settings.
-          </Text>
-          <Text style={styles.footerText}>
-            By subscribing, you agree to our Terms of Service and Privacy Policy.
-          </Text>
         </View>
 
         {/* Free Trial Section */}
         <View style={styles.trialCard}>
-          <Text style={styles.trialTitle}>Try All Features Free for 2 Days!</Text>
-          <Text style={styles.trialDesc}>No credit card required. Enjoy unlimited speech-to-text, translation, and smart summaries. If you like the service, you can subscribe to a paid plan anytime.</Text>
+          <Text style={styles.trialTitle}>تجربة مجانية لمدة يومين!</Text>
+          <Text style={styles.trialDesc}>لا تحتاج إلى بطاقة. جرب كل الميزات مجاناً لمدة يومين.</Text>
           <TouchableOpacity style={styles.trialButton} onPress={handleStartTrial}>
             <Text style={styles.trialButtonText}>Start Free Trial</Text>
           </TouchableOpacity>
-          <Text style={styles.trialNote}>No payment or card required. Trial ends automatically after 2 days.</Text>
+          <Text style={styles.trialNote}>التجربة المجانية تنتهي تلقائياً بعد يومين.</Text>
         </View>
 
-        {/* Plans Section */}
-        <View style={styles.plansRow}>
-          {plans.map(plan => (
-            <View key={plan.id} style={[styles.planCard, { borderColor: plan.color }]}> 
-              <Text style={[styles.planTitle, { color: plan.color }]}>{plan.title}</Text>
-              <Text style={styles.planPrice}>{plan.price}</Text>
-              <Text style={styles.planDesc}>{plan.description}</Text>
-              <TouchableOpacity style={[styles.planButton, { backgroundColor: plan.color }]} onPress={() => handleBuy(plan.id)}>
-                <Text style={styles.planButtonText}>{plan.button}</Text>
+        {/* Slider for minutes */}
+        <View style={{ width: '100%', alignItems: 'center', marginBottom: 24 }}>
+          <Text style={{ fontSize: 16, marginBottom: 8 }}>عدد الدقائق الشهرية لكل حزمة</Text>
+          <View style={{ flexDirection: 'row', width: '90%', height: 16, backgroundColor: '#E5E7EB', borderRadius: 8, overflow: 'hidden', marginBottom: 8 }}>
+            {packageData.map((pkg, idx) => (
+              <View key={pkg.id} style={{ flex: pkg.minutes, backgroundColor: idx === 0 ? '#F59E0B' : idx === 1 ? '#2563EB' : '#10B981' }} />
+            ))}
+          </View>
+          <View style={{ flexDirection: 'row', justifyContent: 'space-between', width: '90%' }}>
+            {packageData.map(pkg => (
+              <Text key={pkg.id} style={{ fontSize: 12 }}>{pkg.title}</Text>
+            ))}
+          </View>
+        </View>
+
+        {/* Packages Vertical Comparison */}
+        <View style={{ width: '100%', alignItems: 'center', marginBottom: 32 }}>
+          {packageData.map((pkg, idx) => (
+            <View key={pkg.id} style={[styles.planCard, pkg.highlight && { borderColor: '#2563EB', borderWidth: 2, shadowColor: '#2563EB', shadowOpacity: 0.12, elevation: 4 }]}> 
+              {pkg.badge && (
+                <View style={styles.trialBadge}>
+                  <Text style={{ color: '#B45309', fontSize: 12 }}>{pkg.badge}</Text>
+                </View>
+              )}
+              <Text style={[styles.planTitle, pkg.highlight && { color: '#2563EB' }]}>{pkg.title}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Text style={{ textDecorationLine: 'line-through', color: '#9CA3AF', fontSize: 16, marginHorizontal: 4 }}>{pkg.oldPrice}</Text>
+                <Text style={{ fontWeight: 'bold', color: '#10B981', fontSize: 22, marginHorizontal: 4 }}>{pkg.newPrice}</Text>
+                <Text style={{ color: '#6B7280', fontSize: 14, marginHorizontal: 4 }}>/شهر</Text>
+              </View>
+              <Text style={{ color: '#374151', fontSize: 14, marginBottom: 4 }}>أو {pkg.annualPrice} سنوياً</Text>
+              <Text style={{ color: '#374151', fontSize: 14, marginBottom: 8 }}>{pkg.minutesLabel}</Text>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                {pkg.aiSummary ? <Check size={18} color="#10B981" /> : <X size={18} color="#EF4444" />}
+                <Text style={{ marginLeft: 8, fontSize: 15 }}>تلخيص بالذكاء الاصطناعي</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 4 }}>
+                {pkg.instantTranslation ? <Check size={18} color="#10B981" /> : <X size={18} color="#EF4444" />}
+                <Text style={{ marginLeft: 8, fontSize: 15 }}>ترجمة فورية</Text>
+              </View>
+              <Text style={{ color: '#6B7280', fontSize: 13, marginBottom: 8 }}>{pkg.notes}</Text>
+              {pkg.fairUse && (
+                <Text style={{ color: '#F59E0B', fontSize: 12, marginBottom: 8 }}>{pkg.fairUse}</Text>
+              )}
+              <TouchableOpacity style={[styles.planButton, { backgroundColor: pkg.highlight ? '#2563EB' : '#10B981', marginTop: 8 }]} onPress={() => handleBuy(pkg.id)}>
+                <Text style={[styles.planButtonText, { color: 'white', fontSize: 16 }]}>Subscribe Now</Text>
               </TouchableOpacity>
             </View>
           ))}
@@ -419,7 +448,7 @@ export default function SubscriptionScreen() {
 
         {/* FAQ Section */}
         <View style={styles.faqSection}>
-          <Text style={styles.faqTitle}>Frequently Asked Questions</Text>
+          <Text style={styles.faqTitle}>الأسئلة الشائعة</Text>
           {FAQ.map((item, idx) => (
             <View key={idx} style={styles.faqItem}>
               <View style={styles.faqQRow}>
@@ -434,7 +463,7 @@ export default function SubscriptionScreen() {
         {/* Manage Subscription & Privacy */}
         <TouchableOpacity style={styles.manageButton} onPress={handleManageSubscription}>
           <ExternalLink size={18} color="#2563EB" />
-          <Text style={styles.manageText}>Manage your subscription via Google Play</Text>
+          <Text style={styles.manageText}>إدارة الاشتراك عبر Google Play</Text>
         </TouchableOpacity>
       </View>
     </ScrollView>
