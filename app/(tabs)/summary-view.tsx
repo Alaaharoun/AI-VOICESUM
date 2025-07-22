@@ -88,14 +88,28 @@ export default function SummaryView() {
       return;
     }
     if (isSummarizing) return; // تجنب التكرار
+    
     setIsSummarizing(true);
+    console.log('Starting summary generation for text:', textToSummarize.substring(0, 100) + '...');
+    
     try {
       const result = await SpeechService.summarizeText(textToSummarize, effectiveTargetLanguage);
-      setAiSummary(result);
-      setSummary(result);
-      await saveSummaryToHistory(result);
+      console.log('Summary generated successfully:', result.substring(0, 100) + '...');
+      
+      if (result && result.trim().length > 0) {
+        setAiSummary(result);
+        setSummary(result);
+        await saveSummaryToHistory(result);
+      } else {
+        throw new Error('Generated summary is empty');
+      }
     } catch (err) {
-      Alert.alert('Error', err instanceof Error ? err.message : 'Failed to generate summary.');
+      console.error('Summary generation error:', err);
+      const errorMessage = err instanceof Error ? err.message : 'Failed to generate summary.';
+      Alert.alert('Summary Error', errorMessage);
+      
+      // Set a fallback message
+      setAiSummary('❌ Failed to generate summary. Please try again or check your internet connection.');
     } finally {
       setIsSummarizing(false);
     }
@@ -252,7 +266,7 @@ export default function SummaryView() {
             )}
           </View>
           <Text style={[styles.text, {paddingRight: 2, lineHeight: 26}]}> 
-            {isSummarizing ? 'Generating summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
+            {isSummarizing ? '🤖 Generating AI summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
           </Text>
         </View>
         
@@ -283,7 +297,7 @@ export default function SummaryView() {
           disabled={isSummarizing || (!effectiveTranslation && !effectiveTranscription)}
         >
           <Text style={styles.extraSmallActionButtonText}>
-            {isSummarizing ? 'Summarizing...' : (aiSummary ? 'Regenerate Summary' : 'AI Summarize')}
+            {isSummarizing ? '🤖 Summarizing...' : (aiSummary ? '🔄 Regenerate Summary' : '🤖 AI Summarize')}
           </Text>
         </TouchableOpacity>
       </View>
