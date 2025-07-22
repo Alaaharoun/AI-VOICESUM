@@ -402,7 +402,7 @@ app.get('/simple-delete-account.html', (req, res) => {
 
         function showMessage(text, type) {
             const messageDiv = document.getElementById('message');
-            messageDiv.className = \`message \${type}\`;
+            messageDiv.className = 'message ' + type;
             messageDiv.textContent = text;
         }
     </script>
@@ -453,7 +453,7 @@ app.post('/api/delete-account', async (req, res) => {
         .eq('user_id', user.id);
 
       if (deleteError) {
-        console.error(\`Error deleting from \${table}:\`, deleteError);
+        console.error(`Error deleting from ${table}:`, deleteError);
       }
     }
 

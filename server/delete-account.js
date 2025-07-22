@@ -314,7 +314,7 @@ app.get('/simple-delete-account.html', (req, res) => {
 
         function showMessage(text, type) {
             const messageDiv = document.getElementById('message');
-            messageDiv.className = \`message \${type}\`;
+            messageDiv.className = 'message ' + type;
             messageDiv.textContent = text;
         }
     </script>
