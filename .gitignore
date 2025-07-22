@@ -37,3 +37,8 @@ yarn-error.*
 # android and ios
 /android
 /ios
+
+# credentials
+credentials.json
+
+android/app/my-release-key.keystore

@@ -1,6 +1,6 @@
 {
   "name": "live-translate-server",
-  "version": "1.0.0",
+  "version": "5.1.1",
   "description": "Live Translate Server with WebSocket and Azure Speech",
   "main": "server.js",
   "scripts": {

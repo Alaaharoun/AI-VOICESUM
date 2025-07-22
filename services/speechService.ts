@@ -504,15 +504,15 @@ export class SpeechService {
           messages: [
             {
               role: 'system',
-              content: 'You are a helpful assistant that creates concise, clear summaries of spoken text. Focus on key points and maintain the original meaning. Keep summaries under 150 words.',
+              content: 'You are a helpful assistant that creates clear, concise summaries of spoken text. Your job is to extract and list the main points and ideas only. Do NOT rewrite or paraphrase the text. Do NOT copy the text. Focus on summarizing the topics and key points as a bullet-point list. Summarize only the main points and ideas that are actually present in the text. Do NOT add extra points or details. If the text is short, keep the summary short and do not artificially lengthen it.' + (languageName ? ` Respond in ${languageName}.` : ''),
             },
             {
               role: 'user',
-              content: `Summarize this text in a bullet-point list${languageName ? ` in ${languageName}` : ''}.
+              content: `Summarize this text as a bullet-point list${languageName ? ` in ${languageName}` : ''}.
 \n\n${text}`,
             },
           ],
-          max_tokens: 200,
+          max_tokens: 1000,
           temperature: 0.3,
         }),
       });

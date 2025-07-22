@@ -11,11 +11,11 @@ import {
 import { ChevronDown, Languages, Check } from 'lucide-react-native';
 import { SpeechService } from '@/services/speechService';
 
-interface Language {
+export type Language = {
   code: string;
   name: string;
   flag: string;
-}
+};
 
 interface LanguageSelectorProps {
   selectedLanguage: Language | null;

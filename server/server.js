@@ -15,6 +15,10 @@ const execAsync = promisify(exec);
 const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
+
+// Serve static files from the public directory
+app.use(express.static('public'));
+
 const upload = multer();
 
 const ASSEMBLYAI_API_KEY = process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || process.env.ASSEMBLYAI_API_KEY;
@@ -106,6 +110,67 @@ app.get('/health', (req, res) => {
     apiKey: ASSEMBLYAI_API_KEY ? 'Present' : 'Missing',
     timestamp: new Date().toISOString()
   });
+});
+
+// Account deletion endpoint
+app.post('/api/delete-account', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    
+    if (!email || !password) {
+      return res.status(400).json({ error: 'Email and password are required' });
+    }
+
+    // Import Supabase client
+    const { createClient } = require('@supabase/supabase-js');
+    const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL || 'https://ai-voicesum.supabase.co';
+    const supabaseKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    
+    if (!supabaseKey) {
+      return res.status(500).json({ error: 'Server configuration error' });
+    }
+
+    const supabase = createClient(supabaseUrl, supabaseKey);
+
+    // Sign in to verify credentials
+    const { data: signInData, error: signInError } = await supabase.auth.signInWithPassword({
+      email: email,
+      password: password
+    });
+
+    if (signInError) {
+      return res.status(401).json({ error: 'Invalid email or password' });
+    }
+
+    const user = signInData.user;
+
+    // Delete user data from all tables
+    const tables = ['recordings', 'user_subscriptions', 'free_trials'];
+    
+    for (const table of tables) {
+      const { error: deleteError } = await supabase
+        .from(table)
+        .delete()
+        .eq('user_id', user.id);
+
+      if (deleteError) {
+        console.error(`Error deleting from ${table}:`, deleteError);
+      }
+    }
+
+    // Delete the user account
+    const { error: deleteUserError } = await supabase.auth.admin.deleteUser(user.id);
+
+    if (deleteUserError) {
+      return res.status(500).json({ error: 'Failed to delete user account' });
+    }
+
+    res.json({ success: true, message: 'Account deleted successfully' });
+
+  } catch (error) {
+    console.error('Delete account error:', error);
+    res.status(500).json({ error: 'Internal server error' });
+  }
 });
 
 app.post('/live-translate', async (req, res) => {

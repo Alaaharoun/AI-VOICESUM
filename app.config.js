@@ -8,11 +8,11 @@ console.log("QWEN_API_KEY", process.env.EXPO_PUBLIC_QWEN_API_KEY);
 export default ({ config }) => ({
   ...config,
   expo: {
-    name: "Live Translate",
-    displayName: "Live Translate",
+    name: "AI Live Translate",
+    displayName: "AI Live Translate",
     slug: "live-translate",
-    description: "Live Translate: Real-time and offline voice translation app.",
-    version: "1.0.0",
+    description: "AI Live Translate: Real-time and offline voice translation app powered by AI.",
+    version: '6.6.0',
     orientation: "portrait",
     icon: "./assets/images/logo.png",
     scheme: "myapp",
@@ -54,7 +54,9 @@ export default ({ config }) => ({
       ],
       package: "com.anonymous.boltexponativewind",
       allowBackup: true,
-      usesCleartextTraffic: false
+      usesCleartextTraffic: false,
+      versionCode: 66,
+      versionName: '6.6.0'
     },
     extra: {
       EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,

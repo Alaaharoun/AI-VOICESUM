@@ -1,0 +1,400 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Delete Account - AI VoiceSum</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background-color: #F8FAFC;
+            color: #1F2937;
+            line-height: 1.6;
+        }
+        
+        .container {
+            max-width: 600px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        
+        .logo {
+            font-size: 32px;
+            font-weight: bold;
+            color: #2563EB;
+            margin-bottom: 16px;
+        }
+        
+        .title {
+            font-size: 28px;
+            font-weight: bold;
+            color: #1F2937;
+            margin-bottom: 8px;
+        }
+        
+        .subtitle {
+            font-size: 16px;
+            color: #6B7280;
+        }
+        
+        .warning-card {
+            background-color: #FEF3C7;
+            border: 1px solid #F59E0B;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .warning-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #92400E;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .warning-icon {
+            margin-right: 8px;
+            font-size: 20px;
+        }
+        
+        .warning-text {
+            font-size: 14px;
+            color: #92400E;
+            line-height: 1.6;
+        }
+        
+        .info-card {
+            background-color: white;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+        }
+        
+        .info-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #1F2937;
+            margin-bottom: 16px;
+        }
+        
+        .info-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 16px;
+        }
+        
+        .info-label {
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 4px;
+        }
+        
+        .info-value {
+            font-size: 14px;
+            color: #6B7280;
+        }
+        
+        .form-group {
+            margin-bottom: 20px;
+        }
+        
+        .form-label {
+            display: block;
+            font-size: 14px;
+            font-weight: 600;
+            color: #374151;
+            margin-bottom: 8px;
+        }
+        
+        .form-input {
+            width: 100%;
+            padding: 12px 16px;
+            border: 1px solid #D1D5DB;
+            border-radius: 8px;
+            font-size: 14px;
+            background-color: white;
+        }
+        
+        .form-input:focus {
+            outline: none;
+            border-color: #2563EB;
+            box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+        }
+        
+        .delete-button {
+            width: 100%;
+            background-color: #DC2626;
+            color: white;
+            border: none;
+            border-radius: 12px;
+            padding: 16px 24px;
+            font-size: 16px;
+            font-weight: bold;
+            cursor: pointer;
+            margin-bottom: 16px;
+            transition: background-color 0.2s;
+        }
+        
+        .delete-button:hover {
+            background-color: #B91C1C;
+        }
+        
+        .delete-button:disabled {
+            background-color: #9CA3AF;
+            cursor: not-allowed;
+        }
+        
+        .cancel-button {
+            width: 100%;
+            background-color: #F3F4F6;
+            color: #374151;
+            border: none;
+            border-radius: 12px;
+            padding: 16px 24px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: background-color 0.2s;
+        }
+        
+        .cancel-button:hover {
+            background-color: #E5E7EB;
+        }
+        
+        .success-card {
+            background-color: #ECFDF5;
+            border: 1px solid #10B981;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+            text-align: center;
+        }
+        
+        .success-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #047857;
+            margin-bottom: 12px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .success-icon {
+            margin-right: 8px;
+            font-size: 20px;
+        }
+        
+        .success-text {
+            font-size: 14px;
+            color: #047857;
+            line-height: 1.6;
+        }
+        
+        .error-card {
+            background-color: #FEE2E2;
+            border: 1px solid #EF4444;
+            border-radius: 16px;
+            padding: 24px;
+            margin-bottom: 24px;
+        }
+        
+        .error-title {
+            font-size: 18px;
+            font-weight: bold;
+            color: #DC2626;
+            margin-bottom: 12px;
+        }
+        
+        .error-text {
+            font-size: 14px;
+            color: #DC2626;
+            line-height: 1.6;
+        }
+        
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        
+        .spinner {
+            border: 3px solid #F3F4F6;
+            border-top: 3px solid #2563EB;
+            border-radius: 50%;
+            width: 24px;
+            height: 24px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 12px;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <div class="logo">🎤 AI VoiceSum</div>
+            <h1 class="title">Delete Account</h1>
+            <p class="subtitle">Permanently remove your account and all associated data</p>
+        </div>
+
+        <div class="warning-card">
+            <div class="warning-title">
+                <span class="warning-icon">⚠️</span>
+                Warning
+            </div>
+            <div class="warning-text">
+                This action will permanently delete your account and all associated data including:
+                <br>• All your voice recordings and transcriptions
+                <br>• Translation history
+                <br>• AI summaries
+                <br>• Subscription information
+                <br>• Account settings
+                <br><br>
+                <strong>This action cannot be undone.</strong>
+            </div>
+        </div>
+
+        <div id="deleteForm">
+            <div class="info-card">
+                <div class="info-title">Account Information</div>
+                <div class="info-row">
+                    <div>
+                        <div class="info-label">Email</div>
+                        <div class="info-value" id="userEmail">Loading...</div>
+                    </div>
+                </div>
+                <div class="info-row">
+                    <div>
+                        <div class="info-label">Request Date</div>
+                        <div class="info-value" id="requestDate">Loading...</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="confirmEmail">Confirm your email address:</label>
+                <input type="email" id="confirmEmail" class="form-input" placeholder="Enter your email address" required>
+            </div>
+
+            <div class="form-group">
+                <label class="form-label" for="confirmText">Type "DELETE" to confirm:</label>
+                <input type="text" id="confirmText" class="form-input" placeholder="Type DELETE" required>
+            </div>
+
+            <button id="deleteBtn" class="delete-button" onclick="deleteAccount()">
+                Delete My Account
+            </button>
+
+            <button class="cancel-button" onclick="goBack()">
+                Cancel
+            </button>
+        </div>
+
+        <div id="loading" class="loading">
+            <div class="spinner"></div>
+            <p>Processing your request...</p>
+        </div>
+
+        <div id="successCard" class="success-card" style="display: none;">
+            <div class="success-title">
+                <span class="success-icon">✅</span>
+                Account Deletion Requested
+            </div>
+            <div class="success-text">
+                Your account deletion request has been processed. All your data has been removed from our servers.
+                <br><br>
+                You will receive a confirmation email shortly.
+            </div>
+        </div>
+
+        <div id="errorCard" class="error-card" style="display: none;">
+            <div class="error-title">Error</div>
+            <div class="error-text" id="errorText">
+                An error occurred while processing your request. Please try again.
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Parse URL parameters
+        const urlParams = new URLSearchParams(window.location.search);
+        const token = urlParams.get('token');
+        const email = urlParams.get('email');
+
+        // Display user information
+        document.getElementById('userEmail').textContent = email || 'Unknown';
+        document.getElementById('requestDate').textContent = new Date().toLocaleDateString();
+
+        // Validate token (simple validation)
+        if (!token || !email) {
+            showError('Invalid or missing token. Please use the link from your app.');
+        }
+
+        function deleteAccount() {
+            const confirmEmail = document.getElementById('confirmEmail').value;
+            const confirmText = document.getElementById('confirmText').value;
+
+            // Validate inputs
+            if (confirmEmail !== email) {
+                showError('Email address does not match.');
+                return;
+            }
+
+            if (confirmText !== 'DELETE') {
+                showError('Please type "DELETE" to confirm.');
+                return;
+            }
+
+            // Show loading
+            document.getElementById('deleteForm').style.display = 'none';
+            document.getElementById('loading').style.display = 'block';
+
+            // Simulate API call (replace with actual API call)
+            setTimeout(() => {
+                // Here you would make an actual API call to delete the account
+                // For now, we'll simulate success
+                showSuccess();
+            }, 2000);
+        }
+
+        function showSuccess() {
+            document.getElementById('loading').style.display = 'none';
+            document.getElementById('successCard').style.display = 'block';
+        }
+
+        function showError(message) {
+            document.getElementById('errorText').textContent = message;
+            document.getElementById('errorCard').style.display = 'block';
+        }
+
+        function goBack() {
+            window.history.back();
+        }
+
+        // Auto-fill email if provided
+        if (email) {
+            document.getElementById('confirmEmail').value = email;
+        }
+    </script>
+</body>
+</html> 

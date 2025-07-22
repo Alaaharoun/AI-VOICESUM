@@ -252,10 +252,6 @@ export default function HistoryScreen() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    if (!user) {
-      router.replace('/(auth)/sign-in');
-      return;
-    }
     if (isAdmin || isSubscribed || hasFreeTrial) {
       fetchRecordings();
     } else {
@@ -389,7 +385,7 @@ export default function HistoryScreen() {
         </View>
       </View>
       
-      <Text style={styles.transcription} numberOfLines={3}>
+      <Text style={styles.transcription}>
         {item.transcription}
       </Text>
       
@@ -404,7 +400,7 @@ export default function HistoryScreen() {
               <Download size={12} color="#10B981" />
             </TouchableOpacity>
           </View>
-          <Text style={styles.summary} numberOfLines={2}>
+          <Text style={styles.summary}>
             {item.summary}
           </Text>
         </View>
@@ -415,7 +411,7 @@ export default function HistoryScreen() {
           <Text style={styles.translationLabel}>
             <Languages size={12} color="#8B5CF6" /> Translation ({item.target_language}):
           </Text>
-          <Text style={styles.translation} numberOfLines={2}>
+          <Text style={styles.translation}>
             {item.translation}
           </Text>
         </View>
@@ -437,7 +433,11 @@ export default function HistoryScreen() {
   };
 
   if (!user) {
-    return null;
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <Text style={{ fontSize: 16, color: '#6B7280' }}>Please sign in to view your history.</Text>
+      </View>
+    );
   }
 
   if (!isAdmin && !isSubscribed && !hasFreeTrial && !subscriptionLoading) {

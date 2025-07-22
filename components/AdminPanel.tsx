@@ -9,11 +9,14 @@ import {
   TextInput,
   Modal,
   I18nManager,
+  ActivityIndicator,
+  Button,
 } from 'react-native';
 import { useUserPermissions } from '@/hooks/useAuth';
 import { supabase } from '@/lib/supabase';
-import { Crown, Users, Database, Settings, ChartBar as BarChart3, Search, Info } from 'lucide-react-native';
+import { Crown, Users, Database, Settings, ChartBar as BarChart3, Search, Info, Eye, EyeOff } from 'lucide-react-native';
 import Constants from 'expo-constants';
+import { Link, router } from 'expo-router';
 
 interface UserData {
   id: string;
@@ -33,6 +36,17 @@ interface SystemStats {
   totalRecordings: number;
   totalUsageHours: number;
 }
+
+type AdminSubscription = {
+  id: string;
+  user_id: string;
+  subscription_type: string;
+  created_at: string;
+  expires_at: string | null;
+  active: boolean;
+  usage_seconds: number;
+  profiles?: { email?: string } | null;
+};
 
 export function AdminPanel() {
   const { isSuperadmin, loading: permissionsLoading } = useUserPermissions();
@@ -54,6 +68,12 @@ export function AdminPanel() {
   const USERS_PER_PAGE = 30;
   const [currentPage, setCurrentPage] = useState(1);
   const [totalUsers, setTotalUsers] = useState(0);
+  const [showSubscriptions, setShowSubscriptions] = useState(false);
+  const [subs, setSubs] = useState<AdminSubscription[]>([]);
+  const [subsLoading, setSubsLoading] = useState(false);
+  const [assemblyKey, setAssemblyKey] = useState(Constants.expoConfig?.extra?.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || '');
+  const [saveLoading, setSaveLoading] = useState(false);
+  const [showKey, setShowKey] = useState(false);
 
   const isRTL = I18nManager.isRTL;
   const t = (ar: string, en: string) => isRTL ? ar : en;
@@ -66,6 +86,13 @@ export function AdminPanel() {
     { key: 'EXPO_PUBLIC_ASSEMBLYAI_API_KEY', value: Constants.expoConfig?.extra?.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY },
     { key: 'SUPABASE_SERVICE_ROLE_KEY', value: Constants.expoConfig?.extra?.SUPABASE_SERVICE_ROLE_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY },
   ];
+
+  const maskKey = (key: string | undefined | null) => {
+    if (!key) return '-';
+    const str = String(key);
+    if (str.length <= 10) return str;
+    return str.slice(0, 4) + '*'.repeat(str.length - 8) + str.slice(-4);
+  };
 
   useEffect(() => {
     if (isSuperadmin && !permissionsLoading) {
@@ -122,18 +149,38 @@ export function AdminPanel() {
   };
 
   const fetchLinks = async () => {
-    const { data: rateData } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'rate_us_url')
-      .single();
-    if (rateData && rateData.value) setRateUsUrl(rateData.value);
-    const { data: shareData } = await supabase
-      .from('app_settings')
-      .select('value')
-      .eq('key', 'share_app_url')
-      .single();
-    if (shareData && shareData.value) setShareAppUrl(shareData.value);
+    try {
+      const { data: rateData, error: rateError } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'rate_us_url')
+        .single();
+      
+      if (rateError) {
+        console.warn('Error fetching rate_us_url:', rateError);
+        setRateUsUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+      } else if (rateData && rateData.value) {
+        setRateUsUrl(rateData.value);
+      }
+      
+      const { data: shareData, error: shareError } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'share_app_url')
+        .single();
+      
+      if (shareError) {
+        console.warn('Error fetching share_app_url:', shareError);
+        setShareAppUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+      } else if (shareData && shareData.value) {
+        setShareAppUrl(shareData.value);
+      }
+    } catch (error) {
+      console.error('Error fetching app settings:', error);
+      // Set default values if there's an error
+      setRateUsUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+      setShareAppUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+    }
   };
 
   const saveLinks = async () => {
@@ -242,7 +289,10 @@ export function AdminPanel() {
         Alert.alert('نجاح', 'تم تعطيل الاشتراك');
       } else {
         // تفعيل الاشتراك (أو إضافة جديد)
-        const { error } = await supabase.from('user_subscriptions').upsert({ user_id: userId, subscription_type: 'monthly', active: true, expires_at: new Date(Date.now() + 30*24*60*60*1000) });
+        const expiresDate = new Date();
+        expiresDate.setMonth(expiresDate.getMonth() + 1);
+        const expiresAt = expiresDate;
+        const { error } = await supabase.from('user_subscriptions').upsert({ user_id: userId, subscription_type: 'monthly', active: true, expiresAt });
         if (error) throw error;
         Alert.alert('نجاح', 'تم تفعيل الاشتراك');
       }
@@ -250,6 +300,52 @@ export function AdminPanel() {
     } catch (err) {
       Alert.alert('خطأ', (err as Error).message || 'حدث خطأ أثناء تغيير حالة الاشتراك');
     }
+  };
+
+  // دالة لإعطاء يومين تجريبيين (تحديث created_at)
+  const handleGrantTrial = async (userId: string) => {
+    try {
+      const { error } = await supabase
+        .from('profiles')
+        .update({ created_at: new Date().toISOString() })
+        .eq('user_id', userId);
+      if (error) throw error;
+      Alert.alert('تم منح التجربة المجانية', 'تم تحديث تاريخ التجربة المجانية للمستخدم بنجاح.');
+      fetchUsersPage(currentPage); // تحديث القائمة
+    } catch (err) {
+      Alert.alert('خطأ', (err as Error).message || 'حدث خطأ أثناء منح التجربة المجانية');
+    }
+  };
+
+  // جلب الاشتراكات عند الحاجة
+  useEffect(() => {
+    if (showSubscriptions) {
+      setSubsLoading(true);
+      supabase
+        .from('user_subscriptions')
+        .select('id, user_id, subscription_type, created_at, expires_at, active, usage_seconds')
+        .order('created_at', { ascending: false })
+        .then(({ data, error }) => {
+          setSubs(data || []);
+          setSubsLoading(false);
+          console.log('subs:', data);
+        });
+    }
+  }, [showSubscriptions]);
+
+  const handleSaveKey = async () => {
+    setSaveLoading(true);
+    try {
+      // احفظ المفتاح في Supabase (جدول app_settings أو env)
+      const { error } = await supabase.from('app_settings').upsert([
+        { key: 'ASSEMBLYAI_API_KEY', value: assemblyKey }
+      ], { onConflict: 'key' });
+      if (error) throw error;
+      alert('API Key updated successfully!');
+    } catch (e) {
+      alert('Failed to update API Key');
+    }
+    setSaveLoading(false);
   };
 
   if (permissionsLoading) {
@@ -413,6 +509,12 @@ export function AdminPanel() {
                   <Text style={styles.actionButtonText}>Enable Subscription</Text>
                 </TouchableOpacity>
               )}
+              {/* زر التجربة المجانية */}
+              {!user.is_subscribed && (
+                <TouchableOpacity style={[styles.actionButton, { backgroundColor: '#6366F1' }]} onPress={() => handleGrantTrial(user.id)}>
+                  <Text style={styles.actionButtonText}>Grant 2-Day Trial</Text>
+                </TouchableOpacity>
+              )}
             </View>
           </View>
         ))}
@@ -447,7 +549,7 @@ export function AdminPanel() {
         {envVars.map((env) => (
           <View key={env.key} style={styles.envRow}>
             <Text style={styles.envKey}>{env.key}:</Text>
-            <Text style={styles.envValue}>{env.value ? String(env.value) : '-'}</Text>
+            <Text style={styles.envValue}>{env.value ? maskKey(env.value) : '-'}</Text>
           </View>
         ))}
       </ScrollView>
@@ -463,6 +565,10 @@ export function AdminPanel() {
         <Crown size={24} color="#F59E0B" />
         <Text style={styles.title}>Admin Panel</Text>
       </View>
+      {/* زر الدخول إلى شاشة رفع الملفات */}
+      <TouchableOpacity style={{backgroundColor:'#2563EB',padding:12,borderRadius:8,alignSelf:'center',marginBottom:12}} onPress={()=>router.push('/admin-upload')}>
+        <Text style={{color:'white',fontWeight:'bold',fontSize:16}}>Go to File Transcription (Admin)</Text>
+      </TouchableOpacity>
       <TouchableOpacity
         style={styles.envToggleButton}
         onPress={() => setShowEnv((prev) => !prev)}
@@ -472,6 +578,38 @@ export function AdminPanel() {
         </Text>
       </TouchableOpacity>
       {showEnv && renderEnvVars()}
+      <TouchableOpacity
+        style={{backgroundColor:'#10B981',padding:12,borderRadius:8,alignSelf:'center',marginBottom:12}}
+        onPress={()=>setShowSubscriptions(s => !s)}
+      >
+        <Text style={{color:'white',fontWeight:'bold',fontSize:16}}>
+          {showSubscriptions ? 'Hide Subscriptions' : 'Show User Subscriptions'}
+        </Text>
+      </TouchableOpacity>
+      {showSubscriptions && (
+        <View style={{backgroundColor:'#fff',borderRadius:12,padding:12,margin:12}}>
+          <Text style={{fontWeight:'bold',fontSize:18,marginBottom:8,color:'#2563EB'}}>User Subscriptions</Text>
+          {subsLoading ? (
+            <ActivityIndicator size="large" color="#2563EB" />
+          ) : (
+            <ScrollView style={{maxHeight:400}}>
+              {subs.length === 0 && <Text style={{color:'#DC2626'}}>No subscriptions found.</Text>}
+              {subs.map(sub => (
+                <View key={sub.id} style={{borderBottomWidth:1,borderColor:'#F3F4F6',paddingVertical:8}}>
+                  <Text style={{fontWeight:'bold',color:'#2563EB'}}>{sub.user_id}</Text>
+                  <Text>نوع الاشتراك: {sub.subscription_type}</Text>
+                  <Text>
+                    الحالة: <Text style={{color: sub.active ? '#10B981' : '#DC2626'}}>{sub.active ? 'مفعل' : 'غير مفعل'}</Text>
+                  </Text>
+                  <Text>تاريخ البداية: {new Date(sub.created_at).toLocaleString()}</Text>
+                  <Text>تاريخ الانتهاء: {sub.expires_at ? new Date(sub.expires_at).toLocaleString() : 'غير محدد'}</Text>
+                  <Text>الاستهلاك (ثواني): {sub.usage_seconds}</Text>
+                </View>
+              ))}
+            </ScrollView>
+          )}
+        </View>
+      )}
       <View style={styles.tabContainer}>
         <TouchableOpacity
           style={[styles.tab, selectedTab === 'overview' && styles.activeTab]}
@@ -502,6 +640,24 @@ export function AdminPanel() {
           </>
         )}
       </ScrollView>
+      <View style={{ marginVertical: 16, padding: 12, backgroundColor: '#F3F4F6', borderRadius: 12 }}>
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Update ASSEMBLYAI_API_KEY</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+          <TextInput
+            value={assemblyKey}
+            onChangeText={setAssemblyKey}
+            placeholder="Enter new ASSEMBLYAI_API_KEY"
+            style={{ flex: 1, borderWidth: 1, borderColor: '#D1D5DB', borderRadius: 8, padding: 8, marginBottom: 8 }}
+            autoCapitalize="none"
+            autoCorrect={false}
+            secureTextEntry={!showKey}
+          />
+          <TouchableOpacity onPress={() => setShowKey((v) => !v)} style={{ marginLeft: 8, marginBottom: 8 }}>
+            {showKey ? <EyeOff size={20} color="#6B7280" /> : <Eye size={20} color="#6B7280" />}
+          </TouchableOpacity>
+        </View>
+        <Button title={saveLoading ? 'Saving...' : 'Save'} onPress={handleSaveKey} disabled={saveLoading} />
+      </View>
     </View>
   );
 }

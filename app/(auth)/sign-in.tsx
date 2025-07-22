@@ -18,13 +18,48 @@ import { Link, router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { Mail, Lock, Eye, EyeOff, Languages, ChevronDown, Check } from 'lucide-react-native';
 import { SpeechService } from '@/services/speechService';
+import { getItemAsync, setItemAsync, deleteItemAsync } from '@/utils/storage';
 
 export default function SignInScreen() {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [showPassword, setShowPassword] = useState(false);
   const [loading, setLoading] = useState(false);
+  const [rememberMe, setRememberMe] = useState(false);
   const { signIn } = useAuth();
+
+  React.useEffect(() => {
+    (async () => {
+      const savedEmail = await getItemAsync('savedEmail');
+      const savedPassword = await getItemAsync('savedPassword');
+      if (savedEmail && savedPassword) {
+        setEmail(savedEmail);
+        setPassword(savedPassword);
+        setRememberMe(true);
+      }
+    })();
+  }, []);
+
+  const getFriendlyErrorMessage = (error: any) => {
+    if (!error) return 'An unexpected error occurred. Please try again.';
+    const msg = error.message || error.error_description || error.code || '';
+    if (msg.includes('User already registered') || msg.includes('already registered')) {
+      return 'This email is already registered.';
+    }
+    if (msg.includes('invalid email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (msg.includes('rate limit')) {
+      return 'Too many attempts. Please try again later.';
+    }
+    if (msg.includes('Email not confirmed')) {
+      return 'Please confirm your email address first.';
+    }
+    if (msg.includes('Invalid login credentials')) {
+      return 'Invalid email or password.';
+    }
+    return 'An error occurred. Please try again.';
+  };
 
   const handleSignIn = async () => {
     if (!email || !password) {
@@ -41,14 +76,21 @@ export default function SignInScreen() {
       
       if (error) {
         console.error('[SignIn] Sign in error:', error);
-        Alert.alert('Error', error.message);
+        Alert.alert('Sign In Failed', getFriendlyErrorMessage(error));
       } else {
+        if (rememberMe) {
+          await setItemAsync('savedEmail', email);
+          await setItemAsync('savedPassword', password);
+        } else {
+          await deleteItemAsync('savedEmail');
+          await deleteItemAsync('savedPassword');
+        }
         console.log('[SignIn] Sign in successful, navigating to tabs...');
         router.replace('/(tabs)');
       }
     } catch (error) {
       console.error('[SignIn] Unexpected error:', error);
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      Alert.alert('Unexpected Error', 'Something went wrong. Please check your internet connection or try again later.');
     } finally {
       setLoading(false);
     }
@@ -59,7 +101,7 @@ export default function SignInScreen() {
       <KeyboardAvoidingView 
         style={styles.container}
         behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
-        keyboardVerticalOffset={Platform.OS === 'ios' ? 0 : 20}
+        keyboardVerticalOffset={60}
       >
         <ScrollView 
           contentContainerStyle={styles.scrollContainer}
@@ -147,6 +189,14 @@ export default function SignInScreen() {
           >
             <Text style={{ color: '#2563EB', fontSize: 14 }}>Forgot Password?</Text>
           </TouchableOpacity>
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ marginRight: 8 }}>Remember Me</Text>
+            <TouchableOpacity onPress={() => setRememberMe(!rememberMe)} accessibilityRole="checkbox" accessibilityState={{ checked: rememberMe }}>
+              <View style={{ width: 24, height: 24, borderRadius: 6, borderWidth: 2, borderColor: '#2563EB', alignItems: 'center', justifyContent: 'center', backgroundColor: rememberMe ? '#2563EB' : 'white' }}>
+                {rememberMe && <View style={{ width: 12, height: 12, backgroundColor: 'white', borderRadius: 3 }} />}
+              </View>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={[styles.signInButton, loading && styles.buttonDisabled]}
             onPress={handleSignIn}

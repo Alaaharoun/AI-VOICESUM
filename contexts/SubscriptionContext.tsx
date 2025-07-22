@@ -5,6 +5,10 @@ import { supabase } from '@/lib/supabase';
 interface SubscriptionContextType {
   isSubscribed: boolean;
   subscriptionType: 'monthly' | 'yearly' | null;
+  subscriptionPlan: 'basic' | 'sup_pro' | 'unlimited' | null;
+  subscriptionStatus: 'active' | 'canceled' | 'trial' | null;
+  subscriptionEndDate: Date | null;
+  subscriptionPlanName: string | null;
   hasFreeTrial: boolean;
   freeTrialExpired: boolean;
   dailyUsageSeconds: number;
@@ -14,20 +18,37 @@ interface SubscriptionContextType {
   checkSubscription: () => Promise<void>;
   updateDailyUsage: (additionalSeconds: number) => Promise<void>;
   getRemainingTrialTime: () => number;
+  getRemainingMinutes: () => number | null;
+  paidUsageSeconds: number;
 }
 
 const SubscriptionContext = createContext<SubscriptionContextType | undefined>(undefined);
 
 const DAILY_TRIAL_LIMIT_SECONDS = 60 * 60; // 1 hour = 3600 seconds
 
+const PLAN_MINUTES: Record<string, number> = {
+  'mini_monthly': 60,
+  'basic_monthly': 150,
+  'basic_yearly': 150,
+  'pro_monthly': 300,
+  'pro_yearly': 300,
+  'unlimited_monthly': 800,
+  'unlimited_yearly': 800,
+};
+
 export function SubscriptionProvider({ children }: { children: React.ReactNode }) {
   const { user } = useAuth();
   const mountedRef = useRef(true);
   const [isSubscribed, setIsSubscribed] = useState(false);
   const [subscriptionType, setSubscriptionType] = useState<'monthly' | 'yearly' | null>(null);
+  const [subscriptionPlan, setSubscriptionPlan] = useState<'basic' | 'sup_pro' | 'unlimited' | null>(null);
+  const [subscriptionStatus, setSubscriptionStatus] = useState<'active' | 'canceled' | 'trial' | null>(null);
+  const [subscriptionEndDate, setSubscriptionEndDate] = useState<Date | null>(null);
+  const [subscriptionPlanName, setSubscriptionPlanName] = useState<string | null>(null);
   const [hasFreeTrial, setHasFreeTrial] = useState(false);
   const [freeTrialExpired, setFreeTrialExpired] = useState(false);
   const [dailyUsageSeconds, setDailyUsageSeconds] = useState(0);
+  const [paidUsageSeconds, setPaidUsageSeconds] = useState<number>(0);
   const [loading, setLoading] = useState(true);
 
   const dailyLimitSeconds = DAILY_TRIAL_LIMIT_SECONDS;
@@ -153,9 +174,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       if (mountedRef.current) {
         setIsSubscribed(false);
         setSubscriptionType(null);
+        setSubscriptionPlan(null);
+        setSubscriptionStatus(null);
+        setSubscriptionEndDate(null);
+        setSubscriptionPlanName(null);
         setHasFreeTrial(false);
         setFreeTrialExpired(false);
         setDailyUsageSeconds(0);
+        setPaidUsageSeconds(0);
         setLoading(false);
       }
       return;
@@ -166,8 +192,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     }
 
     try {
-      // Check subscription status
-      const { data, error } = await supabase
+      // Check subscription status using the new table structure
+      const { data: subscriptionData, error } = await supabase
         .from('user_subscriptions')
         .select('*')
         .eq('user_id', user.id)
@@ -180,18 +206,27 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         // Don't return early, continue to check trial status
       }
 
-      if (data) {
+      if (subscriptionData) {
         if (mountedRef.current) {
           setIsSubscribed(true);
-          setSubscriptionType(data.subscription_type);
+          setSubscriptionType(subscriptionData.subscription_type as 'monthly' | 'yearly');
+          setSubscriptionPlan(subscriptionData.subscription_type as 'basic' | 'sup_pro' | 'unlimited');
+          setSubscriptionStatus(subscriptionData.subscription_status);
+          setSubscriptionEndDate(subscriptionData.subscription_end_date ? new Date(subscriptionData.subscription_end_date) : null);
+          setSubscriptionPlanName(subscriptionData.subscriptions?.name || null);
           setHasFreeTrial(false);
           setFreeTrialExpired(false);
           setDailyUsageSeconds(0);
+          setPaidUsageSeconds(subscriptionData.usage_seconds || 0);
         }
       } else {
         if (mountedRef.current) {
           setIsSubscribed(false);
           setSubscriptionType(null);
+          setSubscriptionPlan(null);
+          setSubscriptionStatus(null);
+          setSubscriptionEndDate(null);
+          setSubscriptionPlanName(null);
         }
         // Check free trial status for non-subscribed users
         await checkFreeTrialStatus();
@@ -201,6 +236,10 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       if (mountedRef.current) {
         setIsSubscribed(false);
         setSubscriptionType(null);
+        setSubscriptionPlan(null);
+        setSubscriptionStatus(null);
+        setSubscriptionEndDate(null);
+        setSubscriptionPlanName(null);
         // Still try to check trial status on error
         try {
           await checkFreeTrialStatus();
@@ -224,11 +263,29 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
     };
   }, [user]);
 
+  // دالة موحدة لحساب الدقائق المتبقية
+  const getRemainingMinutes = () => {
+    if (hasFreeTrial && !freeTrialExpired) {
+      return Math.max(0, Math.floor((dailyLimitSeconds - dailyUsageSeconds) / 60));
+    }
+    if (isSubscribed && subscriptionType) {
+      const plan = PLAN_MINUTES[subscriptionType];
+      if (typeof plan === 'number') {
+        return Math.max(0, plan - Math.floor(paidUsageSeconds / 60));
+      }
+    }
+    return null;
+  };
+
   return (
     <SubscriptionContext.Provider
       value={{
         isSubscribed,
         subscriptionType,
+        subscriptionPlan,
+        subscriptionStatus,
+        subscriptionEndDate,
+        subscriptionPlanName,
         hasFreeTrial,
         freeTrialExpired,
         dailyUsageSeconds,
@@ -238,6 +295,8 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         checkSubscription,
         updateDailyUsage,
         getRemainingTrialTime,
+        getRemainingMinutes,
+        paidUsageSeconds,
       }}
     >
       {children}

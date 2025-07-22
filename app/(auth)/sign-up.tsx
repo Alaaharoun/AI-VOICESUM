@@ -23,6 +23,27 @@ export default function SignUpScreen() {
   const [loading, setLoading] = useState(false);
   const { signUp } = useAuth();
 
+  const getFriendlyErrorMessage = (error: any) => {
+    if (!error) return 'An unexpected error occurred. Please try again.';
+    const msg = error.message || error.error_description || error.code || '';
+    if (msg.includes('User already registered') || msg.includes('already registered')) {
+      return 'This email is already registered.';
+    }
+    if (msg.includes('invalid email')) {
+      return 'Please enter a valid email address.';
+    }
+    if (msg.includes('rate limit')) {
+      return 'Too many attempts. Please try again later.';
+    }
+    if (msg.includes('Email not confirmed')) {
+      return 'Please confirm your email address first.';
+    }
+    if (msg.includes('Invalid login credentials')) {
+      return 'Invalid email or password.';
+    }
+    return msg || 'An error occurred. Please try again.';
+  };
+
   const handleSignUp = async () => {
     if (!email || !password || !confirmPassword) {
       Alert.alert('Error', 'Please fill in all fields');
@@ -43,7 +64,8 @@ export default function SignUpScreen() {
     try {
       const { error } = await signUp(email, password);
       if (error) {
-        Alert.alert('Error', error.message);
+        console.error('[SignUp] Error:', error.message || error);
+        Alert.alert('Sign Up Failed', getFriendlyErrorMessage(error));
       } else {
         Alert.alert(
           'Check your email',
@@ -51,13 +73,19 @@ export default function SignUpScreen() {
           [
             {
               text: 'OK',
-              onPress: () => router.push('/(auth)/sign-in'),
+              onPress: () => {
+                // استخدام setTimeout لتجنب ارتجاف الشاشة
+                setTimeout(() => {
+                  router.replace('/(auth)/sign-in');
+                }, 100);
+              },
             },
           ]
         );
       }
     } catch (error) {
-      Alert.alert('Error', 'Something went wrong. Please try again.');
+      console.error('[SignUp] Unexpected error:', error);
+      Alert.alert('Unexpected Error', 'Something went wrong. Please check your internet connection or try again later.');
     } finally {
       setLoading(false);
     }
@@ -67,6 +95,7 @@ export default function SignUpScreen() {
     <KeyboardAvoidingView 
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : 'height'}
+      keyboardVerticalOffset={60}
     >
       <ScrollView 
         contentContainerStyle={styles.scrollContainer}

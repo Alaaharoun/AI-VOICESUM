@@ -86,13 +86,14 @@ android {
     buildToolsVersion rootProject.ext.buildToolsVersion
     compileSdk rootProject.ext.compileSdkVersion
 
-    namespace 'com.anonymous.boltexponativewind'
+    namespace 'com.ailivetranslate.app'
     defaultConfig {
-        applicationId 'com.anonymous.boltexponativewind'
+        applicationId 'com.ailivetranslate.app'
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
-        versionCode 1
-        versionName "1.0.0"
+        versionCode 66
+        versionName "6.6.0"
+        resValue "string", "RNIapStore", "play"
     }
     signingConfigs {
         debug {
@@ -100,6 +101,12 @@ android {
             storePassword 'android'
             keyAlias 'androiddebugkey'
             keyPassword 'android'
+        }
+        release {
+            storeFile file('my-release-key.keystore')
+            storePassword '141414'
+            keyAlias 'my-key-alias'
+            keyPassword '141414'
         }
     }
     buildTypes {
@@ -109,7 +116,7 @@ android {
         release {
             // Caution! In production, you need to generate your own keystore file.
             // see https://reactnative.dev/docs/signed-apk-android.
-            signingConfig signingConfigs.debug
+            signingConfig signingConfigs.release
             shrinkResources true
             minifyEnabled true
             proguardFiles getDefaultProguardFile("proguard-android.txt"), "proguard-rules.pro"
@@ -132,6 +139,12 @@ android {
             reset()
             include 'armeabi-v7a', 'arm64-v8a', 'x86', 'x86_64'
             universalApk false
+        }
+    }
+    flavorDimensions "store"
+    productFlavors {
+        play {
+            dimension "store"
         }
     }
 }
@@ -159,6 +172,7 @@ android {
 dependencies {
     // The version of react-native is set by the React Native Gradle Plugin
     implementation("com.facebook.react:react-android")
+    implementation 'com.android.billingclient:billing:6.1.0'
 
     def isGifEnabled = (findProperty('expo.gif.enabled') ?: "") == "true";
     def isWebpEnabled = (findProperty('expo.webp.enabled') ?: "") == "true";

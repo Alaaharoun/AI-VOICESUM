@@ -1,0 +1,151 @@
+# ========================================
+# LIVE TRANSLATE PROJECT - COMMAND REFERENCE
+# ========================================
+
+# ========================================
+# ANDROID BUILD COMMANDS (React Native CLI)
+# ========================================
+
+# بناء APK للإنتاج (للاختبار المحلي)
+cd android && ./gradlew assembleRelease
+
+# بناء AAB للإنتاج (لرفع Google Play)
+cd android
+./gradlew clean
+./gradlew bundleRelease
+
+# مسار ملف AAB الناتج
+android/app/build/outputs/bundle/release/app-release.aab
+
+# ========================================
+# EAS BUILD COMMANDS (Expo)
+# ========================================
+
+# بناء إنتاجي عبر EAS
+eas build -p android --profile production
+
+# بناء عام عبر EAS
+eas build -p android
+
+# ========================================
+# EXPO DEVELOPMENT COMMANDS
+# ========================================
+
+# تشغيل التطبيق في وضع التطوير
+npx expo start
+
+# تشغيل التطبيق مع مسح الكاش
+npx expo start -c
+
+# تشغيل التطبيق مع مسح الكاش (من مجلد محدد)
+cd project && npx expo start --clear
+
+# تشغيل التطبيق في وضع الويب
+npx expo start --web
+
+# ========================================
+# EAS SETUP COMMANDS
+# ========================================
+
+# تثبيت EAS CLI
+npm install -g eas-cli
+
+# تسجيل الدخول لـ EAS
+eas login
+
+# الانتقال لمجلد المشروع
+cd C:\LiveTranslateproject
+
+# إعداد EAS للمشروع
+eas build:configure
+
+# بناء preview
+eas build --platform android --profile preview
+
+# تثبيت expo-dev-client
+npx expo install expo-dev-client
+
+# بناء development
+eas build --platform android --profile development
+
+# بناء production
+eas build --platform android --profile production
+
+# ========================================
+# CLEANUP COMMANDS
+# ========================================
+
+# حذف node_modules
+Remove-Item -Recurse -Force node_modules
+
+# حذف مجلد .expo
+Remove-Item -Recurse -Force .expo
+
+# حذف مجلد .cache
+Remove-Item -Recurse -Force .cache
+
+# إعادة تثبيت dependencies
+npm install
+
+# ========================================
+# SERVER COMMANDS
+# ========================================
+
+# تشغيل السيرفر المحلي
+node server.js
+
+# ========================================
+# GIT COMMANDS
+# ========================================
+
+# تهيئة Git
+git init
+
+# تعيين remote repository
+git remote set-url origin https://github.com/Alaaharoun/AI-VOICESUM.git
+
+# إضافة جميع الملفات
+git add .
+
+# عمل commit
+git commit -m "Initial commit"
+
+# رفع التغييرات
+git push -u origin master
+
+# ========================================
+# MAINTENANCE COMMANDS
+# ========================================
+
+# فحص التثبيت
+npx expo install --check
+
+# ========================================
+# ALTERNATIVE BUILD COMMANDS
+# ========================================
+
+# بناء production عبر npx
+npx eas build --platform android --profile production
+
+# بناء preview عبر npx
+npx eas build --platform android --profile preview
+
+# بناء محلي
+npx eas build --local --platform android
+
+# بناء عام عبر npx
+npx eas build --platform android
+
+# ========================================
+# DEPLOYMENT URLS
+# ========================================
+
+# رابط التطبيق المباشر
+https://ai-voicesum.onrender.com/live-translate
+
+# ========================================
+# NOTES:
+# - استخدم React Native CLI commands إذا كان لديك مجلد android
+# - استخدم EAS commands إذا كنت تستخدم Expo managed workflow
+# - تأكد من وجود keystore قبل بناء release
+# ========================================

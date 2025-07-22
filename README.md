@@ -19,6 +19,14 @@ It enables users to record audio, transcribe speech, translate in real-time, and
 - In-app subscription management (activate, deactivate, upgrade).
 - Usage tracking (minutes/hours used, daily limits).
 
+#### Subscription Plans
+| Plan ID | Plan Name | Price | Daily Limit | Features |
+|---------|-----------|-------|-------------|----------|
+| `free` | Free Plan | $0 | 10 minutes | Basic transcription, 14+ languages |
+| `basic` | Basic Plan | $4.99/month | 60 minutes | Enhanced transcription, priority processing |
+| `premium` | Premium Plan | $9.99/month | 180 minutes | Advanced features, unlimited summaries |
+| `pro` | Pro Plan | $19.99/month | 480 minutes | Professional features, API access |
+
 ### 🕹️ **Modern UI/UX**
 - Clean, mobile-first design.
 - Multi-language support (Arabic & English, auto-detects device language).

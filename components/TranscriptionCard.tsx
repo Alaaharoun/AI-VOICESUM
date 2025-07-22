@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Alert, Platform, Linking } from 'react-native';
 import { FileText, Sparkles, Languages, Download, FileDown, Bot, Zap, Volume2, Copy } from 'lucide-react-native';
 import { DownloadHelper } from '@/utils/downloadHelper';
-import * as Speech from 'expo-speech';
+import Tts from 'react-native-tts';
 import * as Clipboard from 'expo-clipboard';
 import * as IntentLauncher from 'expo-intent-launcher';
 
@@ -209,13 +209,13 @@ export function TranscriptionCard({
   const handleSpeakToggle = async (text: string, lang?: string) => {
     if (!text) return;
     if (isSpeaking || speakingRef.current) {
-      Speech.stop();
+      Tts.stop();
       setIsSpeaking(false);
       speakingRef.current = false;
       return;
     }
-    let language = lang || 'en';
-    const voices = await Speech.getAvailableVoicesAsync();
+    let language = lang || 'en-US';
+    const voices = await Tts.voices();
     const hasVoice = voices.some(v => v.language.startsWith(language));
     if (!hasVoice) {
       Alert.alert(
@@ -241,17 +241,8 @@ export function TranscriptionCard({
     }
     setIsSpeaking(true);
     speakingRef.current = true;
-    Speech.speak(text, {
-      language,
-      onDone: () => {
-        setIsSpeaking(false);
-        speakingRef.current = false;
-      },
-      onStopped: () => {
-        setIsSpeaking(false);
-        speakingRef.current = false;
-      }
-    });
+    Tts.setDefaultLanguage(language);
+    Tts.speak(text);
   };
 
   const handleDownloadTranscription = (format: 'txt' | 'rtf' | 'doc') => {

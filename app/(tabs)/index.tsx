@@ -18,7 +18,9 @@ import { RecordButton } from '@/components/RecordButton';
 import { TranscriptionCard } from '@/components/TranscriptionCard';
 import { LanguageSelector } from '@/components/LanguageSelector';
 import { supabase } from '@/lib/supabase';
-import { Crown, Sparkles, Settings, Clock, Timer, CircleAlert as AlertCircle, Languages } from 'lucide-react-native';
+import { Crown, Sparkles, Settings, Clock, Timer, CircleAlert as AlertCircle, Languages, Save } from 'lucide-react-native';
+import { ensureMicPermission } from '@/utils/permissionHelper';
+import AudioRecord from 'react-native-audio-record';
 
 const styles = StyleSheet.create({
   container: {
@@ -418,8 +420,24 @@ export default function RecordScreen() {
   const [apiError, setApiError] = useState<string>('');
   const [isRealTimeMode, setIsRealTimeMode] = useState(false);
   const [liveTranslateEnabled, setLiveTranslateEnabled] = useState(false);
+  const [isInitializingLiveTranslation, setIsInitializingLiveTranslation] = useState(false);
+  const [liveTranslationReady, setLiveTranslationReady] = useState(false);
   const [showSourceLangSelector, setShowSourceLangSelector] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState<{ code: string; name: string; flag: string } | null>(null);
+  const [isSaved, setIsSaved] = useState(false);
+
+  // مراقبة تغييرات isSaved
+  useEffect(() => {
+    console.log('🔄 isSaved changed to:', isSaved);
+  }, [isSaved]);
+
+  // إعادة تعيين isSaved عند تغيير البيانات (فقط إذا لم تكن البيانات محفوظة بالفعل)
+  useEffect(() => {
+    if ((currentTranscription || currentTranslation || currentSummary || currentTranslationSummary) && !isSaved) {
+      console.log('🔄 Data changed and not saved, resetting isSaved to false');
+      setIsSaved(false);
+    }
+  }, [currentTranscription, currentTranslation, currentSummary, currentTranslationSummary, isSaved]);
 
   const router = useRouter();
 
@@ -429,24 +447,10 @@ export default function RecordScreen() {
   // Helper to check if user has exhausted their daily minutes
   const hasNoMinutesLeft = (!isSubscribed && hasFreeTrial && !hasRemainingTrialTime) || (isSubscribed && dailyUsageSeconds >= dailyLimitSeconds);
 
+  // استدعِ فحص إعدادات الـ API مرة واحدة فقط عند تحميل الصفحة
   useEffect(() => {
-    if (!user) {
-      router.replace('/(auth)/sign-in');
-      return;
-    }
-    // Allow admin/superadmin to always access the main page
-    if (permissionsLoading) return;
-    if (isSuperadmin || hasRole('admin')) {
-      checkApiConfiguration();
-      return;
-    }
-    // Redirect to subscription/free trial if not subscribed and has free trial
-    if (!isSubscribed && hasFreeTrial && !subscriptionLoading) {
-      router.replace('/subscription');
-      return;
-    }
     checkApiConfiguration();
-  }, [user, isSubscribed, hasFreeTrial, subscriptionLoading, isSuperadmin, hasRole, permissionsLoading]);
+  }, []);
 
   useEffect(() => {
     if (isRecording) {
@@ -490,6 +494,77 @@ export default function RecordScreen() {
     setApiError('');
   };
 
+  // دالة تهيئة الترجمة المباشرة
+  const initializeLiveTranslation = async (): Promise<boolean> => {
+    setIsInitializingLiveTranslation(true);
+    
+    try {
+      // طلب إذن المايك باستخدام الدالة المشتركة
+      const hasMicPermission = await ensureMicPermission();
+      if (!hasMicPermission) {
+        throw new Error('Microphone permission denied.');
+      }
+
+      // تهيئة AudioRecord
+      try {
+        if (!AudioRecord || typeof AudioRecord.init !== 'function') {
+          throw new Error('AudioRecord is not available.');
+        }
+        const audioOptions = {
+          sampleRate: 16000,
+          channels: 1,
+          bitsPerSample: 16,
+          wavFile: '',
+        };
+        AudioRecord.init(audioOptions);
+      } catch (audioError) {
+        console.error('AudioRecord initialization error:', audioError);
+        throw new Error('Failed to initialize audio recording. Please make sure the app has proper permissions.');
+      }
+
+      // اختبار الاتصال بالسيرفر
+      return new Promise<boolean>((resolve, reject) => {
+        try {
+          if (typeof WebSocket === 'undefined') {
+            reject(new Error('WebSocket is not available in this environment.'));
+            return;
+          }
+          
+          const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+          const timeoutId = setTimeout(() => {
+            reject(new Error('Connection timeout. Please check your internet connection.'));
+          }, 5000);
+
+          ws.onopen = () => {
+            clearTimeout(timeoutId);
+            ws.close();
+            resolve(true);
+          };
+
+          ws.onerror = (error) => {
+            clearTimeout(timeoutId);
+            console.error('WebSocket error:', error);
+            reject(new Error('Failed to connect to server.'));
+          };
+
+          ws.onclose = (event) => {
+            clearTimeout(timeoutId);
+            console.error('WebSocket closed:', event);
+            reject(new Error('Connection closed unexpectedly.'));
+          };
+        } catch (wsError) {
+          console.error('WebSocket creation error:', wsError);
+          reject(new Error('Failed to create connection.'));
+        }
+      });
+    } catch (error) {
+      console.error('Live translation initialization error:', error);
+      throw error;
+    } finally {
+      setIsInitializingLiveTranslation(false);
+    }
+  };
+
   const handleStartRecording = async () => {
     if (apiStatus !== 'ready') {
       Alert.alert('Configuration Error', apiError);
@@ -504,6 +579,16 @@ export default function RecordScreen() {
       return;
     }
 
+    // طلب إذن المايك أولاً
+    const hasMicPermission = await ensureMicPermission();
+    if (!hasMicPermission) {
+      Alert.alert(
+        'Microphone Permission Required',
+        'Please grant microphone permission to record audio. You can enable it in your device settings.'
+      );
+      return;
+    }
+
     // إذا كانت الترجمة الفورية مفعلة ويوجد لغة هدف، انتقل مباشرة إلى صفحة الترجمة الفورية
     if (liveTranslateEnabled && selectedLanguage) {
       router.push({
@@ -511,6 +596,7 @@ export default function RecordScreen() {
         params: {
           targetLanguage: selectedLanguage.code,
           languageName: selectedLanguage.name,
+          autoStart: 'true',
         },
       } as any);
       return;
@@ -557,18 +643,40 @@ export default function RecordScreen() {
           audioBlob,
             async (transcription) => {
               setCurrentTranscription(transcription);
-            console.log('Transcription completed:', transcription);
-              
-            // ترجمة النص تلقائياً إذا تم اختيار لغة هدف
+              console.log('Transcription completed:', transcription);
+              // ترجمة النص تلقائياً إذا تم اختيار لغة هدف
               if (selectedLanguage && transcription) {
                 try {
                   const { SpeechService } = await import('@/services/speechService');
                   const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
                   setCurrentTranslation(translation);
-                console.log('Translation completed:', translation);
+                  console.log('Translation completed:', translation);
+                                // حفظ النتائج بعد الترجمة
+              console.log('🔄 Auto-saving transcription with translation...');
+              await addToHistory({
+                transcription,
+                translation,
+                summary: '',
+                translationSummary: '',
+                created_at: new Date().toISOString(),
+              });
+              // تعيين isSaved إلى true بعد الحفظ التلقائي
+              setIsSaved(true);
                 } catch (error) {
                   console.error('Translation error:', error);
                 }
+              } else {
+                // إذا لم توجد ترجمة، احفظ فقط النص
+                console.log('🔄 Auto-saving transcription without translation...');
+                await addToHistory({
+                  transcription,
+                  translation: '',
+                  summary: '',
+                  translationSummary: '',
+                  created_at: new Date().toISOString(),
+                });
+                // تعيين isSaved إلى true بعد الحفظ التلقائي
+                setIsSaved(true);
               }
             },
           () => {}, // لا تلخيص تلقائي
@@ -590,7 +698,18 @@ export default function RecordScreen() {
           Alert.alert('Summary Error', 'AI did not return a summary. Try again with a longer or clearer recording.');
           setCurrentSummary('');
         } else {
-        setCurrentSummary(summary);
+          setCurrentSummary(summary);
+          // حفظ التلخيص تلقائياً في history
+          console.log('🔄 Auto-saving summary...');
+          await addToHistory({
+            transcription: currentTranscription,
+            translation: currentTranslation,
+            summary,
+            translationSummary: currentTranslationSummary,
+            created_at: new Date().toISOString(),
+          });
+          // تعيين isSaved إلى true بعد الحفظ التلقائي
+          setIsSaved(true);
           // انتقل إلى صفحة الملخص مع تمرير النصوص المطلوبة
           router.navigate({
             pathname: '/(tabs)/summary-view',
@@ -618,6 +737,17 @@ export default function RecordScreen() {
       const { SpeechService } = await import('@/services/speechService');
       const summaryTranslation = await SpeechService.summarizeText(currentTranslation, selectedLanguage?.code);
       setCurrentTranslationSummary(summaryTranslation);
+      // حفظ ملخص الترجمة تلقائياً في history
+      console.log('🔄 Auto-saving translation summary...');
+      await addToHistory({
+        transcription: currentTranscription,
+        translation: currentTranslation,
+        summary: currentSummary,
+        translationSummary: summaryTranslation,
+        created_at: new Date().toISOString(),
+      });
+      // تعيين isSaved إلى true بعد الحفظ التلقائي
+      setIsSaved(true);
     } catch (error) {
       console.error('Translation summary generation error:', error);
       Alert.alert('Summary Error', error instanceof Error ? error.message : 'Failed to generate translation summary. Please try again.');
@@ -679,19 +809,28 @@ export default function RecordScreen() {
     created_at: string;
   }) => {
     try {
-      // استخدم upsert لتجنب التعدد
-      await supabase.from('recordings').upsert([record], { 
-        onConflict: 'user_id,created_at',
-        ignoreDuplicates: false 
-      });
+      console.log('📝 addToHistory called with:', { user_id: user?.id, ...record });
+      const { error } = await supabase.from('recordings').insert([
+        {
+          user_id: user?.id,
+          ...record
+        }
+      ]);
+      if (error) {
+        console.error('❌ Supabase error:', error);
+        throw error;
+      }
+      console.log('✅ Successfully saved to history');
     } catch (e) {
-      console.warn('Failed to save to history', e);
+      console.warn('❌ Failed to save to history', e);
+      throw e;
     }
   };
 
   // عدل onGenerateSummary أو زر Back to Home ليكون:
   const handleBackToHome = async () => {
     if (currentTranscription || currentTranslation || currentSummary || currentTranslationSummary) {
+      console.log('🔄 Auto-saving on back to home...');
       await addToHistory({
         transcription: currentTranscription,
         translation: currentTranslation,
@@ -699,6 +838,8 @@ export default function RecordScreen() {
         translationSummary: currentTranslationSummary,
         created_at: new Date().toISOString(),
       });
+      // تعيين isSaved إلى true بعد الحفظ التلقائي
+      setIsSaved(true);
     }
     setCurrentTranscription('');
     setCurrentTranslation('');
@@ -720,6 +861,26 @@ export default function RecordScreen() {
     });
   };
 
+  const handleSaveToHistory = async () => {
+    console.log('🔄 handleSaveToHistory called, isSaved before:', isSaved);
+    try {
+      await addToHistory({
+        transcription: currentTranscription,
+        translation: currentTranslation,
+        summary: currentSummary,
+        translationSummary: currentTranslationSummary,
+        created_at: new Date().toISOString(),
+      });
+      setIsSaved(true);
+      console.log('✅ handleSaveToHistory success, isSaved after:', true);
+      Alert.alert('Success', 'Content saved to history!');
+    } catch (e) {
+      setIsSaved(false);
+      console.warn('❌ handleSaveToHistory failed:', e);
+      Alert.alert('Error', 'Failed to save to history');
+    }
+  };
+
   useFocusEffect(
     React.useCallback(() => {
       // Re-fetch subscription data when the page is focused
@@ -731,7 +892,11 @@ export default function RecordScreen() {
   );
 
   if (!user) {
-    return null;
+    return (
+      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
+        <Text style={{ fontSize: 16, color: '#6B7280' }}>Please sign in to use the app.</Text>
+      </View>
+    );
   }
 
   return (
@@ -799,12 +964,30 @@ export default function RecordScreen() {
               shadowRadius: 6,
               elevation: 4,
             }}
-            onPress={() => setLiveTranslateEnabled(!liveTranslateEnabled)}
+            onPress={async () => {
+              // تحقق من إذن المايك أولاً
+              const hasMicPermission = await ensureMicPermission();
+              if (!hasMicPermission) {
+                Alert.alert('Microphone Permission Required', 'Please grant microphone permission to use live translation.');
+                return;
+              }
+              if (liveTranslateEnabled) {
+                // إلغاء التفعيل
+                setLiveTranslateEnabled(false);
+                setLiveTranslationReady(false);
+              } else {
+                // تفعيل الترجمة الفورية
+                setLiveTranslateEnabled(true);
+                setLiveTranslationReady(true);
+              }
+            }}
           >
-            <Crown size={22} color={liveTranslateEnabled ? '#fff' : '#F59E0B'} style={{ marginRight: 10 }} />
-            <Text style={{ color: liveTranslateEnabled ? '#fff' : '#F59E0B', fontWeight: 'bold', fontSize: 16, textAlign: 'center', flex: 1 }}>
-              {liveTranslateEnabled ? 'Live Translation to World Languages Enabled' : 'Enable Live Translation to World Languages'}
-            </Text>
+            <>
+              <Crown size={22} color={liveTranslateEnabled ? '#fff' : '#F59E0B'} style={{ marginRight: 10 }} />
+              <Text style={{ color: liveTranslateEnabled ? '#fff' : '#F59E0B', fontWeight: 'bold', fontSize: 16, textAlign: 'center', flex: 1 }}>
+                {liveTranslateEnabled ? 'Live Translation to World Languages Enabled' : 'Enable Live Translation to World Languages'}
+              </Text>
+            </>
           </TouchableOpacity>
           {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
           <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
@@ -864,7 +1047,6 @@ export default function RecordScreen() {
             targetLanguage={selectedLanguage}
             isProcessing={isProcessing || isGeneratingSummary || isGeneratingTranslationSummary}
             onGenerateSummary={handleOpenSummaryView}
-            onGenerateTranslationSummary={!currentTranslationSummary ? handleGenerateTranslationSummary : undefined}
             isRealTime={isRealTimeMode}
           />
         )}
@@ -890,6 +1072,19 @@ export default function RecordScreen() {
               </Text>
             )}
           </View>
+        )}
+
+        {(currentTranscription || currentTranslation || currentSummary || currentTranslationSummary) && !isSaved && (
+          <>
+            {console.log('🔄 Showing save button - data exists and not saved')}
+            <TouchableOpacity
+              style={{ position: 'absolute', bottom: 24, right: 24, backgroundColor: '#2563EB', borderRadius: 24, padding: 10, elevation: 4 }}
+              onPress={handleSaveToHistory}
+              accessibilityLabel="Save to history"
+            >
+              <Save size={22} color="#fff" />
+            </TouchableOpacity>
+          </>
         )}
       </ScrollView>
     </>

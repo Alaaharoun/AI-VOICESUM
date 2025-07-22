@@ -10,6 +10,7 @@ interface AuthContextType {
   signIn: (email: string, password: string) => Promise<{ error: any }>;
   signUp: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
+  deleteAccount: () => Promise<{ error: any }>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -72,10 +73,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await supabase.auth.signInWithPassword({ email, password });
       console.log('[AuthContext] Sign in result:', result.error ? 'Error' : 'Success');
+      if (result.error && typeof (result.error as any).message !== 'string') {
+        result.error = { message: String(result.error) } as any;
+      }
       return result;
     } catch (error) {
       console.error('[AuthContext] Sign in error:', error);
-      throw error;
+      return { error: { message: error && typeof (error as any).message === 'string' ? (error as any).message : String(error) } };
     }
   };
 
@@ -84,21 +88,88 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     try {
       const result = await supabase.auth.signUp({ email, password });
       console.log('[AuthContext] Sign up result:', result.error ? 'Error' : 'Success');
+      if (result.error && typeof (result.error as any).message !== 'string') {
+        result.error = { message: String(result.error) } as any;
+      }
+      if (!result.error && result.data?.user) {
+        const user = result.data.user;
+        try {
+          const { error: profileError } = await supabase.from('profiles').insert([
+            {
+              id: user.id,
+              full_name: '',
+              avatar_url: ''
+            }
+          ]);
+          if (profileError) {
+            console.error('[AuthContext] Error creating profile after sign up:', profileError);
+          }
+        } catch (profileInsertError) {
+          console.error('[AuthContext] Exception creating profile after sign up:', profileInsertError);
+        }
+      }
       return result;
-    } catch (error) {
+    } catch (error: any) {
       console.error('[AuthContext] Sign up error:', error);
-      throw error;
+      return { error: { message: error && typeof (error as any).message === 'string' ? (error as any).message : String(error) } };
     }
   };
 
   const signOut = async () => {
     console.log('[AuthContext] Signing out...');
     try {
-    await supabase.auth.signOut();
+      await supabase.auth.signOut();
+      if (mountedRef.current) {
+        setUser(null);
+        setSession(null);
+      }
       console.log('[AuthContext] Sign out successful');
     } catch (error) {
       console.error('[AuthContext] Sign out error:', error);
       throw error;
+    }
+  };
+
+  const deleteAccount = async () => {
+    console.log('[AuthContext] Deleting account...');
+    if (!user) {
+      return { error: { message: 'No user logged in' } };
+    }
+
+    try {
+      // Delete user data from all tables
+      const tables = ['recordings', 'user_subscriptions', 'free_trials'];
+      
+      for (const table of tables) {
+        const { error: deleteError } = await supabase
+          .from(table)
+          .delete()
+          .eq('user_id', user.id);
+
+        if (deleteError) {
+          console.error(`[AuthContext] Error deleting from ${table}:`, deleteError);
+        }
+      }
+
+      // Delete the user account
+      const { error: deleteUserError } = await supabase.auth.admin.deleteUser(user.id);
+
+      if (deleteUserError) {
+        console.error('[AuthContext] Error deleting user:', deleteUserError);
+        return { error: { message: 'Failed to delete user account' } };
+      }
+
+      // Clear local state
+      if (mountedRef.current) {
+        setUser(null);
+        setSession(null);
+      }
+
+      console.log('[AuthContext] Account deletion successful');
+      return { error: null };
+    } catch (error) {
+      console.error('[AuthContext] Account deletion error:', error);
+      return { error: { message: error && typeof (error as any).message === 'string' ? (error as any).message : String(error) } };
     }
   };
 
@@ -111,6 +182,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signIn,
         signUp,
         signOut,
+        deleteAccount,
       }}
     >
       {children}

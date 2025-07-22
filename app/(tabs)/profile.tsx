@@ -18,9 +18,10 @@ import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
 import { useSubscription } from '@/contexts/SubscriptionContext';
 import { supabase } from '@/lib/supabase';
-import { User, Mail, Crown, Settings, LogOut, Calendar, CircleCheck as CheckCircle, Sun, Moon, Info } from 'lucide-react-native';
+import { User, Mail, Crown, Settings, LogOut, Calendar, CircleCheck as CheckCircle, Sun, Moon, Info, Trash2 } from 'lucide-react-native';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { useColorScheme } from 'react-native';
+import * as SecureStore from 'expo-secure-store';
 
 const styles = StyleSheet.create({
   container: {
@@ -207,16 +208,53 @@ const styles = StyleSheet.create({
     color: '#374151',
     marginLeft: 12,
   },
+  actionButton: {
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  actionButtonText: {
+    fontSize: 14,
+    fontFamily: 'Inter-SemiBold',
+    color: 'white',
+  },
 });
+
+const PLAN_LABELS: Record<string, string> = {
+  'mini-monthly': 'Mini (Basic+)',
+  'basic-monthly': 'Basic Monthly',
+  'basic-yearly': 'Basic Yearly',
+  'pro-monthly': 'Pro Monthly',
+  'pro-yearly': 'Pro Yearly',
+  'unlimited-monthly': 'Unlimited Monthly',
+  'unlimited-yearly': 'Unlimited Yearly',
+  'free_trial': 'Free Trial',
+};
 
 export default function ProfileScreen() {
   const { user, signOut } = useAuth();
-  const { isSubscribed, subscriptionType, dailyUsageSeconds, dailyLimitSeconds, hasFreeTrial } = useSubscription();
-  const [remainingPaidMinutes, setRemainingPaidMinutes] = useState<number|null>(null);
+  const { 
+    isSubscribed,
+    checkSubscription, 
+    hasFreeTrial, 
+    freeTrialExpired,
+    dailyUsageSeconds,
+    dailyLimitSeconds,
+    getRemainingTrialTime,
+    getRemainingMinutes,
+    subscriptionType,
+    subscriptionPlan,
+    subscriptionStatus,
+    subscriptionEndDate,
+    subscriptionPlanName
+  } = useSubscription();
+  const [loading, setLoading] = useState(false);
   const [loadingPaid, setLoadingPaid] = useState(false);
+  const [remainingPaidMinutes, setRemainingPaidMinutes] = useState<number | null>(null);
   const [settingsVisible, setSettingsVisible] = useState(false);
-  const [micStatus, setMicStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
-  const [storageStatus, setStorageStatus] = useState<'unknown' | 'granted' | 'denied'>('unknown');
+  const [micStatus, setMicStatus] = useState<'granted' | 'denied' | 'unknown'>('unknown');
+  const [storageStatus, setStorageStatus] = useState<'granted' | 'denied' | 'unknown'>('unknown');
   const systemScheme = useColorScheme();
   const [privacyVisible, setPrivacyVisible] = useState(false);
   const [termsVisible, setTermsVisible] = useState(false);
@@ -224,8 +262,10 @@ export default function ProfileScreen() {
   const [supportMessage, setSupportMessage] = useState("");
   const [rateTapCount, setRateTapCount] = useState(0);
   const rateTapTimeout = useRef<NodeJS.Timeout | number | null>(null);
-  const [rateUsUrl, setRateUsUrl] = useState('https://play.google.com/store/apps/details?id=com.yourcompany.yourapp');
-  const [shareAppUrl, setShareAppUrl] = useState('https://your-app-link.com');
+  const [rateUsUrl, setRateUsUrl] = useState('');
+  const [shareAppUrl, setShareAppUrl] = useState('');
+  const [signingOut, setSigningOut] = useState(false);
+  const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
     const fetchPaidUsage = async () => {
@@ -259,47 +299,77 @@ export default function ProfileScreen() {
       setLoadingPaid(false);
     };
     fetchPaidUsage();
-  }, [user, isSubscribed, subscriptionType]);
+  }, [user, checkSubscription, subscriptionType]);
 
   useEffect(() => {
     const fetchLinks = async () => {
-      const { data: rateData } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'rate_us_url')
-        .single();
-      if (rateData && rateData.value) setRateUsUrl(rateData.value);
-      const { data: shareData } = await supabase
-        .from('app_settings')
-        .select('value')
-        .eq('key', 'share_app_url')
-        .single();
-      if (shareData && shareData.value) setShareAppUrl(shareData.value);
+      try {
+        const { data: rateData, error: rateError } = await supabase
+          .from('app_settings')
+          .select('value')
+          .eq('key', 'rate_us_url')
+          .single();
+        
+        if (rateError) {
+          console.warn('Error fetching rate_us_url:', rateError);
+          setRateUsUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+        } else if (rateData && rateData.value) {
+          setRateUsUrl(rateData.value);
+        }
+        
+        const { data: shareData, error: shareError } = await supabase
+          .from('app_settings')
+          .select('value')
+          .eq('key', 'share_app_url')
+          .single();
+        
+        if (shareError) {
+          console.warn('Error fetching share_app_url:', shareError);
+          setShareAppUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+        } else if (shareData && shareData.value) {
+          setShareAppUrl(shareData.value);
+        }
+      } catch (error) {
+        console.error('Error fetching app settings:', error);
+        // Set default values if there's an error
+        setRateUsUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+        setShareAppUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+      }
     };
     fetchLinks();
   }, []);
 
-  const handleSignOut = async () => {
-    Alert.alert(
-      'Sign Out',
-      'Are you sure you want to sign out?',
-      [
-        { text: 'Cancel', style: 'cancel' },
-        {
-          text: 'Sign Out',
-          style: 'destructive',
-          onPress: async () => {
-            try {
-              await signOut();
-              router.replace('/(auth)/sign-in');
-            } catch (error) {
-              Alert.alert('Error', 'Failed to sign out');
-            }
-          },
+  const handleSignOut = () => {
+    Alert.alert('Sign Out', 'Are you sure?', [
+      { text: 'Cancel', style: 'cancel' },
+      {
+        text: 'Sign Out',
+        style: 'destructive',
+        onPress: async () => {
+          setSigningOut(true);
+          try {
+            await signOut();
+            await SecureStore.deleteItemAsync('savedEmail');
+            await SecureStore.deleteItemAsync('savedPassword');
+            await AsyncStorage.clear();
+          } catch (err) {
+            console.error('SignOut failed:', err);
+            const msg = (err && typeof err === 'object' && 'message' in err) ? (err as any).message : String(err);
+            Alert.alert('Error', msg ?? 'Failed to sign out');
+          } finally {
+            setSigningOut(false);
+            router.replace('/(auth)/sign-in');
+          }
         },
-      ]
-    );
+      },
+    ]);
   };
+
+  useEffect(() => {
+    if (!user && !signingOut) {
+      router.replace('/(auth)/sign-in');
+    }
+  }, [user, signingOut]);
 
   const checkMicPermission = async () => {
     if (Platform.OS === 'android') {
@@ -400,6 +470,22 @@ export default function ProfileScreen() {
     }
   };
 
+  const getPlanLabel = () => {
+    if (!isSubscribed && hasFreeTrial && !freeTrialExpired) return PLAN_LABELS['free_trial'];
+    if (!isSubscribed) return 'Free';
+    if (subscriptionType && PLAN_LABELS[subscriptionType]) return PLAN_LABELS[subscriptionType];
+    return 'Premium'; // fallback
+  };
+
+  const getMemberSince = () => {
+    if (!user?.created_at) return '';
+    const created = new Date(user.created_at);
+    const now = new Date();
+    // إذا كان التاريخ في المستقبل، اعرض تاريخ اليوم
+    if (created > now) return now.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+    return created.toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+  };
+
   if (!user) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
@@ -411,206 +497,295 @@ export default function ProfileScreen() {
   try {
     return (
       <ScrollView style={styles.container}>
-      <View style={styles.header}>
-        <View style={styles.avatarContainer}>
-          <View style={styles.avatar}>
-            <User size={32} color="#6B7280" />
+        <View style={styles.header}>
+          <View style={styles.avatarContainer}>
+            <View style={styles.avatar}>
+              <User size={32} color="#6B7280" />
+            </View>
+          </View>
+          <Text style={styles.userName}>{user.email}</Text>
+          <View style={styles.subscriptionBadge}>
+            <Crown size={16} color="#F59E0B" />
+            <Text style={styles.subscriptionText}>{getPlanLabel()} Plan</Text>
           </View>
         </View>
-        <Text style={styles.userName}>{user.email}</Text>
-        <View style={styles.subscriptionBadge}>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Account</Text>
+          <View style={styles.infoCard}>
+            <View style={styles.infoRow}>
+              <Mail size={20} color="#6B7280" />
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Email</Text>
+                <Text style={styles.infoValue}>{user.email}</Text>
+              </View>
+            </View>
+            <View style={styles.infoRow}>
+              <Calendar size={20} color="#6B7280" />
+              <View style={styles.infoContent}>
+                <Text style={styles.infoLabel}>Member Since</Text>
+                <Text style={styles.infoValue}>{getMemberSince()}</Text>
+              </View>
+            </View>
+          </View>
+        </View>
+
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Subscription Status</Text>
           {isSubscribed ? (
-            <>
-              <Crown size={16} color="#F59E0B" />
-              <Text style={styles.subscriptionText}>
-                Premium {subscriptionType === 'yearly' ? 'Annual' : 'Monthly'}
-              </Text>
-            </>
+            <View style={styles.subscriptionCard}>
+              <View style={styles.subscriptionHeader}>
+                <Crown size={24} color="#F59E0B" />
+                <Text style={styles.subscriptionTitle}>{getPlanLabel()} Plan</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <Calendar size={20} color="#6B7280" />
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Subscription Type</Text>
+                  <Text style={styles.infoValue}>{getPlanLabel()} Plan</Text>
+                </View>
+              </View>
+              <View style={styles.infoRow}>
+                <Calendar size={20} color="#6B7280" />
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Valid Until</Text>
+                  <Text style={styles.infoValue}>
+                    {subscriptionEndDate
+                      ? subscriptionEndDate.toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })
+                      : ''}
+                  </Text>
+                </View>
+              </View>
+              <View style={styles.infoRow}>
+                <CheckCircle size={20} color="#10B981" />
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Minutes Left</Text>
+                  <Text style={[styles.infoValue, { color: '#10B981' }]}> 
+                    {loadingPaid ? '-' : (subscriptionPlan === 'unlimited' ? 'Unlimited' : (getRemainingMinutes() !== null && getRemainingMinutes() !== undefined ? String(getRemainingMinutes()) + ' min' : '-'))}
+                  </Text>
+                </View>
+              </View>
+              <View style={{ flexDirection: 'row', gap: 12, marginTop: 16 }}>
+                <TouchableOpacity
+                  style={[styles.actionButton, { flex: 1, backgroundColor: '#2563EB' }]}
+                  onPress={() => router.push('/subscription')}
+                >
+                  <Text style={styles.actionButtonText}>Change Plan</Text>
+                </TouchableOpacity>
+                <TouchableOpacity
+                  style={[styles.actionButton, { flex: 1, backgroundColor: '#EF4444' }]}
+                  onPress={() => {
+                    Alert.alert(
+                      'Cancel Subscription',
+                      'Are you sure you want to cancel your subscription? You can reactivate it anytime.',
+                      [
+                        { text: 'No', style: 'cancel' },
+                        {
+                          text: 'Yes, Cancel',
+                          style: 'destructive',
+                          onPress: () => {
+                            // TODO: Implement subscription cancellation
+                            Alert.alert('Subscription Cancelled', 'Your subscription has been cancelled. You can reactivate it anytime from the subscription page.');
+                          }
+                        }
+                      ]
+                    );
+                  }}
+                >
+                  <Text style={styles.actionButtonText}>Cancel</Text>
+                </TouchableOpacity>
+              </View>
+            </View>
+          ) : hasFreeTrial ? (
+            <View style={styles.subscriptionCard}>
+              <View style={styles.subscriptionHeader}>
+                <Crown size={24} color="#10B981" />
+                <Text style={styles.subscriptionTitle}>Free Trial</Text>
+              </View>
+              <View style={styles.infoRow}>
+                <CheckCircle size={20} color="#10B981" />
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Minutes Left</Text>
+                  <Text style={[styles.infoValue, { color: '#10B981' }]}> {Math.floor((dailyLimitSeconds - dailyUsageSeconds) / 60)} min</Text>
+                </View>
+              </View>
+              <View style={styles.infoRow}>
+                <Calendar size={20} color="#6B7280" />
+                <View style={styles.infoContent}>
+                  <Text style={styles.infoLabel}>Trial Ends</Text>
+                  <Text style={styles.infoValue}>
+                    {subscriptionEndDate
+                      ? subscriptionEndDate.toLocaleDateString('en-US', {
+                          year: 'numeric',
+                          month: 'long',
+                          day: 'numeric'
+                        })
+                      : hasFreeTrial
+                        ? (() => { const d = new Date(); d.setDate(d.getDate() + 2); return d.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' }); })()
+                        : ''}
+                  </Text>
+                </View>
+              </View>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: '#2563EB', marginTop: 16 }]}
+                onPress={() => router.push('/subscription')}
+              >
+                <Text style={styles.actionButtonText}>Upgrade to Premium</Text>
+              </TouchableOpacity>
+            </View>
           ) : (
-            <Text style={styles.freeText}>Free Plan</Text>
-          )}
-        </View>
-      </View>
-
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Account</Text>
-        <View style={styles.infoCard}>
-          <View style={styles.infoRow}>
-            <Mail size={20} color="#6B7280" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Email</Text>
-              <Text style={styles.infoValue}>{user.email}</Text>
-            </View>
-          </View>
-          <View style={styles.infoRow}>
-            <Calendar size={20} color="#6B7280" />
-            <View style={styles.infoContent}>
-              <Text style={styles.infoLabel}>Member Since</Text>
-              <Text style={styles.infoValue}>
-                {new Date(user.created_at).toLocaleDateString('en-US', {
-                  month: 'long',
-                  year: 'numeric',
-                })}
+            <View style={styles.subscriptionCard}>
+              <View style={styles.subscriptionHeader}>
+                <Crown size={24} color="#6B7280" />
+                <Text style={styles.subscriptionTitle}>No Active Subscription</Text>
+              </View>
+              <Text style={styles.subscriptionDescription}>
+                Upgrade to premium to get unlimited transcriptions, AI summaries, and instant translations.
               </Text>
-            </View>
-          </View>
-          {/* Remaining minutes info - now in Account section */}
-          {(!isSubscribed && hasFreeTrial) && (
-            <View style={styles.infoRow}>
-              <CheckCircle size={20} color="#10B981" />
-              <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Minutes left today</Text>
-                <Text style={[styles.infoValue, { color: '#10B981' }]}>{Math.floor((dailyLimitSeconds - dailyUsageSeconds) / 60)} min</Text>
-              </View>
-            </View>
-          )}
-          {(isSubscribed && subscriptionType !== 'yearly') && (
-            <View style={styles.infoRow}>
-              <CheckCircle size={20} color="#2563EB" />
-              <View style={styles.infoContent}>
-                <Text style={styles.infoLabel}>Minutes left in your plan</Text>
-                <Text style={[styles.infoValue, { color: '#2563EB' }]}> {loadingPaid ? '...' : remainingPaidMinutes !== null ? `${remainingPaidMinutes} min` : ''}</Text>
-              </View>
+              <TouchableOpacity
+                style={[styles.actionButton, { backgroundColor: '#2563EB', marginTop: 16 }]}
+                onPress={() => router.push('/subscription')}
+              >
+                <Text style={styles.actionButtonText}>View Plans</Text>
+              </TouchableOpacity>
             </View>
           )}
         </View>
-      </View>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Subscription</Text>
-        
-        <TouchableOpacity
-          style={styles.upgradeCard}
-          onPress={() => router.push('/subscription')}
-        >
-          <View style={styles.upgradeHeader}>
-            <Crown size={24} color="#F59E0B" />
-            <Text style={styles.upgradeTitle}>{isSubscribed ? 'Manage Subscription' : 'Upgrade to Premium'}</Text>
-          </View>
-          <Text style={styles.upgradeDescription}>
-            {isSubscribed
-              ? 'Manage, renew, or cancel your subscription.'
-              : 'Get unlimited voice transcriptions and AI summaries'}
-          </Text>
-        </TouchableOpacity>
-      </View>
+        <View style={styles.section}>
+          <Text style={styles.sectionTitle}>Settings</Text>
+          
+          <TouchableOpacity
+            style={styles.settingItem}
+            onPress={() => {
+              setSettingsVisible(true);
+              checkAllPermissions();
+            }}
+          >
+            <Settings size={20} color="#6B7280" />
+            <Text style={styles.settingText}>App Settings</Text>
+          </TouchableOpacity>
+          
+          <TouchableOpacity style={styles.settingItem} onPress={handleSignOut} disabled={signingOut}>
+            <LogOut size={20} color="#EF4444" />
+            <Text style={[styles.settingText, { color: '#EF4444' }]}>{signingOut ? 'Signing Out...' : 'Sign Out'}</Text>
+          </TouchableOpacity>
 
-      <View style={styles.section}>
-        <Text style={styles.sectionTitle}>Settings</Text>
-        
-        <TouchableOpacity
-          style={styles.settingItem}
-          onPress={() => {
-            setSettingsVisible(true);
-            checkAllPermissions();
-          }}
-        >
-          <Settings size={20} color="#6B7280" />
-          <Text style={styles.settingText}>App Settings</Text>
-        </TouchableOpacity>
-        
-        <TouchableOpacity style={styles.settingItem} onPress={handleSignOut}>
-          <LogOut size={20} color="#EF4444" />
-          <Text style={[styles.settingText, { color: '#EF4444' }]}>Sign Out</Text>
-        </TouchableOpacity>
-
-        {/* Enable Live Translate Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#E0F2FE', marginTop: 8 }]}
-          onPress={() => router.push('/(tabs)/live-translation')}
-        >
-          <Info size={20} color="#2563EB" />
-          <Text style={[styles.settingText, { color: '#2563EB' }]}>Enable Live Translate</Text>
-        </TouchableOpacity>
-
-        {/* Rate Us Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#FEF3C7', marginTop: 8 }]}
-          onPress={() => Linking.openURL(rateUsUrl)}
-        >
-          <Crown size={20} color="#F59E0B" />
-          <Text style={[styles.settingText, { color: '#F59E0B' }]}>Rate Us</Text>
-        </TouchableOpacity>
-
-        {/* Privacy Policy Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
-          onPress={() => setPrivacyVisible(true)}
-        >
-          <Info size={20} color="#2563EB" />
-          <Text style={[styles.settingText, { color: '#2563EB' }]}>Privacy Policy</Text>
-        </TouchableOpacity>
-
-        {/* Terms of Service Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
-          onPress={() => setTermsVisible(true)}
-        >
-          <Info size={20} color="#2563EB" />
-          <Text style={[styles.settingText, { color: '#2563EB' }]}>Terms of Service</Text>
-        </TouchableOpacity>
-
-        {/* Customer Support Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
-          onPress={() => setSupportVisible(true)}
-        >
-          <Info size={20} color="#10B981" />
-          <Text style={[styles.settingText, { color: '#10B981' }]}>Customer Support</Text>
-        </TouchableOpacity>
-
-        {/* Share App Button */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#E0F2FE', marginTop: 8 }]}
-          onPress={handleShareApp}
-        >
-          <Info size={20} color="#2563EB" />
-          <Text style={[styles.settingText, { color: '#2563EB' }]}>Share App</Text>
-        </TouchableOpacity>
-
-        {/* App Version Display */}
-        <TouchableOpacity
-          style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8, justifyContent: 'center' }]}
-          onPress={handleRateUsSecret}
-        >
-          <Info size={20} color="#6B7280" />
-          <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: 1.0.0</Text>
-        </TouchableOpacity>
-      </View>
-
-      <Modal visible={settingsVisible} animationType="slide" transparent={true} onRequestClose={() => setSettingsVisible(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
-          <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'80%' }}>
-            <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:16 }}>App Permissions</Text>
-            <View style={{ marginBottom:16 }}>
-              <Text style={{ fontSize:16 }}>Microphone: {micStatus === 'granted' ? '✅ Granted' : micStatus === 'denied' ? '❌ Denied' : 'Unknown'}</Text>
-              <TouchableOpacity style={{ marginTop:8, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={requestMicPermission}>
-                <Text style={{ color:'white', textAlign:'center' }}>Request Microphone Permission</Text>
-              </TouchableOpacity>
-            </View>
-            <View style={{ marginBottom:16 }}>
-              <Text style={{ fontSize:16 }}>Storage: {storageStatus === 'granted' ? '✅ Granted' : storageStatus === 'denied' ? '❌ Denied' : 'Unknown'}</Text>
-              <TouchableOpacity style={{ marginTop:8, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={requestStoragePermission}>
-                <Text style={{ color:'white', textAlign:'center' }}>Request Storage Permission</Text>
-              </TouchableOpacity>
-            </View>
-            <TouchableOpacity style={{ marginTop:8, backgroundColor:'#10B981', borderRadius:8, padding:10 }} onPress={() => Linking.openSettings()}>
-              <Text style={{ color:'white', textAlign:'center' }}>Open App Settings</Text>
+          {/* Enable Live Translate Button */}
+          {(isSubscribed || (hasFreeTrial && !freeTrialExpired && (dailyLimitSeconds - dailyUsageSeconds) > 0)) && (
+            <TouchableOpacity
+              style={[styles.settingItem, { backgroundColor: '#E0F2FE', marginTop: 8 }]}
+              onPress={() => router.push('/(tabs)/live-translation')}
+            >
+              <Info size={20} color="#2563EB" />
+              <Text style={[styles.settingText, { color: '#2563EB' }]}>Enable Live Translate</Text>
             </TouchableOpacity>
-            <TouchableOpacity style={{ marginTop:8, backgroundColor:'#6B7280', borderRadius:8, padding:10 }} onPress={() => setSettingsVisible(false)}>
-              <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
-            </TouchableOpacity>
-          </View>
+          )}
+
+          {/* Rate Us Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#FEF3C7', marginTop: 8 }]}
+            onPress={() => Linking.openURL(rateUsUrl)}
+          >
+            <Crown size={20} color="#F59E0B" />
+            <Text style={[styles.settingText, { color: '#F59E0B' }]}>Rate Us</Text>
+          </TouchableOpacity>
+
+          {/* Privacy Policy Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
+            onPress={() => setPrivacyVisible(true)}
+          >
+            <Info size={20} color="#2563EB" />
+            <Text style={[styles.settingText, { color: '#2563EB' }]}>Privacy Policy</Text>
+          </TouchableOpacity>
+
+          {/* Terms of Service Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
+            onPress={() => setTermsVisible(true)}
+          >
+            <Info size={20} color="#2563EB" />
+            <Text style={[styles.settingText, { color: '#2563EB' }]}>Terms of Service</Text>
+          </TouchableOpacity>
+
+          {/* Customer Support Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8 }]}
+            onPress={() => setSupportVisible(true)}
+          >
+            <Info size={20} color="#10B981" />
+            <Text style={[styles.settingText, { color: '#10B981' }]}>Customer Support</Text>
+          </TouchableOpacity>
+
+          {/* Share App Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#E0F2FE', marginTop: 8 }]}
+            onPress={handleShareApp}
+          >
+            <Info size={20} color="#2563EB" />
+            <Text style={[styles.settingText, { color: '#2563EB' }]}>Share App</Text>
+          </TouchableOpacity>
+
+          {/* App Version Display */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#F3F4F6', marginTop: 8, justifyContent: 'center' }]}
+            onPress={handleRateUsSecret}
+          >
+            <Info size={20} color="#6B7280" />
+            <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: 6.6.0</Text>
+          </TouchableOpacity>
+
+          {/* Delete Account Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#FEE2E2', marginTop: 8 }]}
+            onPress={() => {
+              const deleteAccountUrl = 'https://ai-voicesum.onrender.com/simple-delete-account.html';
+              Linking.openURL(deleteAccountUrl);
+            }}
+          >
+            <Trash2 size={20} color="#DC2626" />
+            <Text style={[styles.settingText, { color: '#DC2626' }]}>Delete Account</Text>
+          </TouchableOpacity>
         </View>
-      </Modal>
 
-      {/* Privacy Policy Modal */}
-      <Modal visible={privacyVisible} animationType="slide" transparent={true} onRequestClose={() => setPrivacyVisible(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
-          <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxHeight:'90%' }}>
-            <ScrollView>
-              <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Privacy Policy</Text>
-              <Text style={{ fontSize:13, color:'#374151' }}>
+        <Modal visible={settingsVisible} animationType="slide" transparent={true} onRequestClose={() => setSettingsVisible(false)}>
+          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
+            <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'80%' }}>
+              <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:16 }}>App Permissions</Text>
+              <View style={{ marginBottom:16 }}>
+                <Text style={{ fontSize:16 }}>Microphone: {micStatus === 'granted' ? '✅ Granted' : micStatus === 'denied' ? '❌ Denied' : 'Unknown'}</Text>
+                <TouchableOpacity style={{ marginTop:8, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={requestMicPermission}>
+                  <Text style={{ color:'white', textAlign:'center' }}>Request Microphone Permission</Text>
+                </TouchableOpacity>
+              </View>
+              <View style={{ marginBottom:16 }}>
+                <Text style={{ fontSize:16 }}>Storage: {storageStatus === 'granted' ? '✅ Granted' : storageStatus === 'denied' ? '❌ Denied' : 'Unknown'}</Text>
+                <TouchableOpacity style={{ marginTop:8, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={requestStoragePermission}>
+                  <Text style={{ color:'white', textAlign:'center' }}>Request Storage Permission</Text>
+                </TouchableOpacity>
+              </View>
+              <TouchableOpacity style={{ marginTop:8, backgroundColor:'#10B981', borderRadius:8, padding:10 }} onPress={() => Linking.openSettings()}>
+                <Text style={{ color:'white', textAlign:'center' }}>Open App Settings</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ marginTop:8, backgroundColor:'#6B7280', borderRadius:8, padding:10 }} onPress={() => setSettingsVisible(false)}>
+                <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+
+        {/* Privacy Policy Modal */}
+        <Modal visible={privacyVisible} animationType="slide" transparent={true} onRequestClose={() => setPrivacyVisible(false)}>
+          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
+            <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxHeight:'90%' }}>
+              <ScrollView>
+                <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Privacy Policy</Text>
+                <Text style={{ fontSize:13, color:'#374151' }}>
 Effective Date: 2024-07-05
 {"\n"}
 
@@ -668,22 +843,22 @@ You may:{"\n"}
 
 8. Children's Privacy{"\n"}
 This app is not intended for children under 13 years of age. If we learn that we have collected data from a child, we will delete it promptly.
-              </Text>
-            </ScrollView>
-            <TouchableOpacity style={{ marginTop:16, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={() => setPrivacyVisible(false)}>
-              <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
-            </TouchableOpacity>
+                </Text>
+              </ScrollView>
+              <TouchableOpacity style={{ marginTop:16, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={() => setPrivacyVisible(false)}>
+                <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
           </View>
-        </View>
-      </Modal>
+        </Modal>
 
-      {/* Terms of Service Modal */}
-      <Modal visible={termsVisible} animationType="slide" transparent={true} onRequestClose={() => setTermsVisible(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
-          <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxHeight:'90%' }}>
-            <ScrollView>
-              <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Terms of Service & End User License Agreement</Text>
-              <Text style={{ fontSize:13, color:'#374151' }}>
+        {/* Terms of Service Modal */}
+        <Modal visible={termsVisible} animationType="slide" transparent={true} onRequestClose={() => setTermsVisible(false)}>
+          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
+            <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxHeight:'90%' }}>
+              <ScrollView>
+                <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Terms of Service & End User License Agreement</Text>
+                <Text style={{ fontSize:13, color:'#374151' }}>
 Effective Date: 2024-07-05
 {"\n"}
 
@@ -712,66 +887,64 @@ The developer may update the App or these terms at any time. Continued use after
 
 8. Contact
 For questions or support, contact: alaa.zekroum@gmail.com
-              </Text>
-            </ScrollView>
-            <TouchableOpacity style={{ marginTop:16, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={() => setTermsVisible(false)}>
-              <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
-            </TouchableOpacity>
-          </View>
-        </View>
-      </Modal>
-
-      {/* Customer Support Modal */}
-      <Modal visible={supportVisible} animationType="slide" transparent={true} onRequestClose={() => setSupportVisible(false)}>
-        <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
-          <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxWidth:400 }}>
-            <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Customer Support</Text>
-            <Text style={{ fontSize:13, color:'#374151', marginBottom:12 }}>Send us your question or issue. Your message will be sent to our support team.</Text>
-            <View style={{ minHeight:80, borderColor:'#E5E7EB', borderWidth:1, borderRadius:8, marginBottom:16, padding:8 }}>
-              <TextInput
-                style={{ fontSize:15, color:'#1F2937', minHeight:60 }}
-                placeholder="Type your message here..."
-                value={supportMessage}
-                onChangeText={setSupportMessage}
-                multiline
-              />
+                </Text>
+              </ScrollView>
+              <TouchableOpacity style={{ marginTop:16, backgroundColor:'#2563EB', borderRadius:8, padding:10 }} onPress={() => setTermsVisible(false)}>
+                <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
+              </TouchableOpacity>
             </View>
-            <TouchableOpacity
-              style={{ backgroundColor:'#10B981', borderRadius:8, padding:12, marginBottom:8 }}
-              onPress={async () => {
-                let deviceInfo = '';
-                try {
-                  const info = [
-                    `Platform: ${Platform.OS}`,
-                    `Version: ${Platform.Version}`,
-                    `User Email: ${user?.email || 'N/A'}`
-                  ];
-                  deviceInfo = info.join('\n');
-                } catch (e) { deviceInfo = ''; }
-                const subject = encodeURIComponent('Customer Support Request');
-                const body = encodeURIComponent(`${supportMessage}\n\n---\n${deviceInfo}`);
-                Linking.openURL(`mailto:alaa.zekroum@gmail.com?subject=${subject}&body=${body}`);
-                setSupportVisible(false);
-                setSupportMessage("");
-              }}
-              disabled={!supportMessage.trim()}
-            >
-              <Text style={{ color:'white', textAlign:'center', fontWeight:'bold' }}>Send</Text>
-            </TouchableOpacity>
-            <TouchableOpacity style={{ marginTop:4, backgroundColor:'#6B7280', borderRadius:8, padding:10 }} onPress={() => setSupportVisible(false)}>
-              <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
-            </TouchableOpacity>
           </View>
-        </View>
-      </Modal>
-    </ScrollView>
-  );
-  } catch (error) {
-    console.error('Profile screen error:', error);
+        </Modal>
+
+        {/* Customer Support Modal */}
+        <Modal visible={supportVisible} animationType="slide" transparent={true} onRequestClose={() => setSupportVisible(false)}>
+          <View style={{ flex:1, backgroundColor:'rgba(0,0,0,0.3)', justifyContent:'center', alignItems:'center' }}>
+            <View style={{ backgroundColor:'white', borderRadius:16, padding:24, width:'90%', maxWidth:400 }}>
+              <Text style={{ fontSize:18, fontWeight:'bold', marginBottom:8 }}>Customer Support</Text>
+              <Text style={{ fontSize:13, color:'#374151', marginBottom:12 }}>Send us your question or issue. Your message will be sent to our support team.</Text>
+              <View style={{ minHeight:80, borderColor:'#E5E7EB', borderWidth:1, borderRadius:8, marginBottom:16, padding:8 }}>
+                <TextInput
+                  style={{ fontSize:15, color:'#1F2937', minHeight:60 }}
+                  placeholder="Type your message here..."
+                  value={supportMessage}
+                  onChangeText={setSupportMessage}
+                  multiline
+                />
+              </View>
+              <TouchableOpacity
+                style={{ backgroundColor:'#10B981', borderRadius:8, padding:12, marginBottom:8 }}
+                onPress={async () => {
+                  let deviceInfo = '';
+                  try {
+                    const info = [
+                      `Platform: ${Platform.OS}`,
+                      `Version: ${Platform.Version}`,
+                      `User Email: ${user?.email || 'N/A'}`
+                    ];
+                    deviceInfo = info.join('\n');
+                  } catch (e) { deviceInfo = ''; }
+                  const subject = encodeURIComponent('Customer Support Request');
+                  const body = encodeURIComponent(`${supportMessage}\n\n---\n${deviceInfo}`);
+                  Linking.openURL(`mailto:alaa.zekroum@gmail.com?subject=${subject}&body=${body}`);
+                  setSupportVisible(false);
+                  setSupportMessage("");
+                }}
+                disabled={!supportMessage.trim()}
+              >
+                <Text style={{ color:'white', textAlign:'center', fontWeight:'bold' }}>Send</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={{ marginTop:4, backgroundColor:'#6B7280', borderRadius:8, padding:10 }} onPress={() => setSupportVisible(false)}>
+                <Text style={{ color:'white', textAlign:'center' }}>Close</Text>
+              </TouchableOpacity>
+            </View>
+          </View>
+        </Modal>
+      </ScrollView>
+    );
+  } catch (e) {
     return (
       <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
-        <Text style={{ fontSize: 16, color: '#DC2626', textAlign: 'center', marginBottom: 16 }}>⚠️ Error loading profile</Text>
-        <Text style={{ fontSize: 14, color: '#6B7280', textAlign: 'center' }}>Please try again later</Text>
+        <Text style={{ fontSize: 16, color: '#EF4444' }}>Error loading profile.</Text>
       </View>
     );
   }

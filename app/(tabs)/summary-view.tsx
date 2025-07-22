@@ -3,37 +3,49 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Button, Alert } f
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DownloadHelper } from '@/utils/downloadHelper';
 import { SpeechService } from '@/services/speechService';
-import { Copy, Volume2 } from 'lucide-react-native';
+import { Copy, Volume2, Save } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
-import * as Speech from 'expo-speech';
+import Tts from 'react-native-tts';
+import { useSummary } from '@/contexts/SummaryContext';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
+import { franc } from 'franc';
 
 export default function SummaryView() {
   const router = useRouter();
   const params = useLocalSearchParams();
-  const summary = params.summary as string || '';
-  const transcription = params.transcription as string || '';
-  const translation = params.translation as string || '';
-  const targetLanguage = params.targetLanguage as string || '';
-  const [aiSummary, setAiSummary] = React.useState(summary);
+  const { summary, setSummary, transcription, setTranscription, translation, setTranslation, targetLanguage, setTargetLanguage } = useSummary();
+  const effectiveTranscription = typeof params.transcription === 'string' && params.transcription.length > 0 ? params.transcription : transcription;
+  const effectiveTranslation = typeof params.translation === 'string' && params.translation.length > 0 ? params.translation : translation;
+  const effectiveSummary = typeof params.summary === 'string' && params.summary.length > 0 ? params.summary : summary;
+  const effectiveTargetLanguage = typeof params.targetLanguage === 'string' && params.targetLanguage.length > 0 ? params.targetLanguage : targetLanguage;
+  const [aiSummary, setAiSummary] = React.useState(effectiveSummary);
   const [isSummarizing, setIsSummarizing] = React.useState(false);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
+  const { user } = useAuth();
+  const [isSaved, setIsSaved] = React.useState(false);
+
+  const languageMap: Record<string, string> = {
+    'eng': 'en-US',
+    'ara': 'ar-SA',
+    'fra': 'fr-FR',
+    'spa': 'es-ES',
+    // أضف المزيد حسب الحاجة
+  };
 
   React.useEffect(() => {
-    console.log('SummaryView - Received params:', {
-      summary: summary ? summary.substring(0, 50) + '...' : 'empty',
-      transcription: transcription ? transcription.substring(0, 50) + '...' : 'empty',
-      translation: translation ? translation.substring(0, 50) + '...' : 'empty',
-      targetLanguage,
-    });
-    
     // إنشاء تلخيص تلقائياً إذا لم يكن موجوداً وكان هناك نص للتلخيص
-    if (!aiSummary && !isSummarizing && (translation || transcription)) {
-      const textToSummarize = translation || transcription;
+    if (!aiSummary && !isSummarizing && (effectiveTranslation || effectiveTranscription)) {
+      const textToSummarize = effectiveTranslation || effectiveTranscription;
       if (textToSummarize && textToSummarize.trim().length >= 50) {
         handleGenerateSummary();
       }
     }
   }, [summary, transcription, translation, targetLanguage]);
+
+  React.useEffect(() => {
+    setIsSaved(false);
+  }, [aiSummary]);
 
   const handleDownloadSummary = (format: 'txt' | 'rtf' | 'doc') => {
     const textToDownload = aiSummary || summary;
@@ -45,22 +57,44 @@ export default function SummaryView() {
     DownloadHelper.downloadText(textToDownload, filename, format);
   };
 
+  const saveSummaryToHistory = async (summaryText: string) => {
+    if (!user) return;
+    try {
+      const { error } = await supabase.from('recordings').insert([
+        {
+          user_id: user.id,
+          transcription: effectiveTranscription,
+          translation: effectiveTranslation,
+          summary: summaryText,
+          translationSummary: '',
+          target_language: effectiveTargetLanguage,
+          created_at: new Date().toISOString(),
+        }
+      ]);
+      if (error) throw error;
+      setIsSaved(true);
+      Alert.alert('Success', 'Summary saved to history!');
+    } catch (e) {
+      setIsSaved(false);
+      console.warn('Failed to save summary to history', e);
+      Alert.alert('Error', 'Could not save summary to history');
+    }
+  };
+
   const handleGenerateSummary = async () => {
-    const textToSummarize = translation || transcription;
+    const textToSummarize = effectiveTranslation || effectiveTranscription;
     if (!textToSummarize || textToSummarize.trim().length < 50) {
       Alert.alert('Notice', 'Text is too short to summarize. Please provide at least 50 characters.');
       return;
     }
     if (isSummarizing) return; // تجنب التكرار
-    
     setIsSummarizing(true);
     try {
-      console.log('Generating summary for:', textToSummarize.substring(0, 100) + '...');
-      const result = await SpeechService.summarizeText(textToSummarize, targetLanguage);
-      console.log('Summary generated:', result ? result.substring(0, 100) + '...' : 'empty');
+      const result = await SpeechService.summarizeText(textToSummarize, effectiveTargetLanguage);
       setAiSummary(result);
+      setSummary(result);
+      await saveSummaryToHistory(result);
     } catch (err) {
-      console.error('Summary generation error:', err);
       Alert.alert('Error', err instanceof Error ? err.message : 'Failed to generate summary.');
     } finally {
       setIsSummarizing(false);
@@ -79,58 +113,55 @@ export default function SummaryView() {
   const [speakingText, setSpeakingText] = React.useState<string | null>(null);
 
   const handleSpeakToggle = async (text: string, type: string, lang?: string) => {
-    // إذا كان نفس النص يتحدث حالياً، أوقفه
     if (speakingText === text && isSpeaking) {
-      Speech.stop();
+      Tts.stop();
       setIsSpeaking(false);
       setSpeakingText(null);
       return;
     }
-
-    // إذا كان نص آخر يتحدث، أوقفه أولاً
     if (isSpeaking) {
-      Speech.stop();
+      Tts.stop();
       setIsSpeaking(false);
       setSpeakingText(null);
     }
-
     if (!text || text.trim() === '') {
       Alert.alert('Notice', 'No text to speak');
       return;
     }
-
     setIsSpeaking(true);
     setSpeakingText(text);
-    
     try {
-      // تحديد اللغة بناءً على نوع النص
-      let speechLang = 'en';
-      if (type === 'translation' && targetLanguage === 'Arabic') {
-        speechLang = 'ar';
-      } else if (type === 'transcription') {
-        // للنص الأساسي، نحاول تحديد اللغة من النص نفسه
-        const arabicRegex = /[\u0600-\u06FF]/;
-        speechLang = arabicRegex.test(text) ? 'ar' : 'en';
+      let speechLang = 'en-US';
+      if (type === 'transcription') {
+        // استخدم franc لتخمين اللغة
+        const francCode = franc(text);
+        speechLang = languageMap[francCode] || 'en-US';
+      } else if (type === 'translation' || type === 'summary') {
+        // استخدم اللغة المختارة من المنسدلة
+        if (effectiveTargetLanguage === 'Arabic') speechLang = 'ar-SA';
+        else if (effectiveTargetLanguage === 'French') speechLang = 'fr-FR';
+        else if (effectiveTargetLanguage === 'Spanish') speechLang = 'es-ES';
+        else speechLang = 'en-US';
       }
-
-      console.log(`Speaking ${type} in language: ${speechLang}`);
-      
-      await Speech.speak(text, {
-        language: speechLang,
+      Tts.setDefaultLanguage(speechLang);
+      Tts.speak(text, {
+        iosVoiceId: '',
         rate: 0.9,
-        pitch: 1.0,
-        onDone: () => {
-          setIsSpeaking(false);
-          setSpeakingText(null);
+        androidParams: {
+          KEY_PARAM_PAN: 0,
+          KEY_PARAM_VOLUME: 0.5,
+          KEY_PARAM_STREAM: 'STREAM_MUSIC',
         },
-        onError: (error) => {
-          console.error('Speech error:', error);
-          setIsSpeaking(false);
-          setSpeakingText(null);
-        }
+      });
+      Tts.addEventListener('tts-finish', () => {
+        setIsSpeaking(false);
+        setSpeakingText(null);
+      });
+      Tts.addEventListener('tts-cancel', () => {
+        setIsSpeaking(false);
+        setSpeakingText(null);
       });
     } catch (err) {
-      console.error('Speech error:', err);
       Alert.alert('Error', 'Failed to speak text');
       setIsSpeaking(false);
       setSpeakingText(null);
@@ -144,50 +175,50 @@ export default function SummaryView() {
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Original Transcription:</Text>
-            {transcription && (
+            {effectiveTranscription && (
               <View style={styles.actionButtons}>
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleCopy(transcription, 'Transcription')}
+                  onPress={() => handleCopy(effectiveTranscription, 'Transcription')}
                 >
                   <Copy size={16} color="#2563EB" />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleSpeakToggle(transcription, 'transcription')}
+                  onPress={() => handleSpeakToggle(effectiveTranscription, 'transcription')}
                 >
-                  <Volume2 size={16} color={(isSpeaking && speakingText === transcription) ? '#DC2626' : '#2563EB'} />
+                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranscription) ? '#DC2626' : '#2563EB'} />
                 </TouchableOpacity>
               </View>
             )}
           </View>
           <Text style={styles.text}>
-            {transcription || 'No transcription available'}
+            {effectiveTranscription || 'No transcription available'}
           </Text>
         </View>
         
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
-        <Text style={styles.sectionTitle}>Translation {targetLanguage ? `(${targetLanguage})` : ''}:</Text>
-            {translation && (
+        <Text style={styles.sectionTitle}>Translation {effectiveTargetLanguage ? `(${effectiveTargetLanguage})` : ''}:</Text>
+            {effectiveTranslation && (
               <View style={styles.actionButtons}>
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleCopy(translation, 'Translation')}
+                  onPress={() => handleCopy(effectiveTranslation, 'Translation')}
                 >
                   <Copy size={16} color="#8B5CF6" />
                 </TouchableOpacity>
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleSpeakToggle(translation, 'translation')}
+                  onPress={() => handleSpeakToggle(effectiveTranslation, 'translation')}
                 >
-                  <Volume2 size={16} color={(isSpeaking && speakingText === translation) ? '#DC2626' : '#8B5CF6'} />
+                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranslation) ? '#DC2626' : '#8B5CF6'} />
                 </TouchableOpacity>
               </View>
             )}
           </View>
           <Text style={styles.text}>
-            {translation || 'No translation available'}
+            {effectiveTranslation || 'No translation available'}
           </Text>
         </View>
         
@@ -208,20 +239,25 @@ export default function SummaryView() {
                 >
                   <Volume2 size={16} color={(isSpeaking && speakingText === aiSummary) ? '#DC2626' : '#10B981'} />
                 </TouchableOpacity>
+                {!isSaved && !!aiSummary && (
+                  <TouchableOpacity
+                    style={[styles.actionButton, { marginLeft: 4 }]} 
+                    onPress={() => saveSummaryToHistory(aiSummary)}
+                    accessibilityLabel="Save summary to history"
+                  >
+                    <Save size={16} color="#2563EB" />
+                  </TouchableOpacity>
+                )}
               </View>
             )}
           </View>
-          <ScrollView style={{ maxHeight: 250 }} showsVerticalScrollIndicator={true}>
-            <Text style={[styles.text, {paddingRight: 2, lineHeight: 26}]}>
-              {isSummarizing ? 'Generating summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
-            </Text>
-          </ScrollView>
+          <Text style={[styles.text, {paddingRight: 2, lineHeight: 26}]}> 
+            {isSummarizing ? 'Generating summary...' : (aiSummary || 'No summary available. Click "AI Summarize" to generate one.')}
+          </Text>
         </View>
         
-        {!transcription && !translation && (
-          <Text style={[styles.text, { color: '#EF4444', fontStyle: 'italic' }]}>
-            No data available. Please go back and record some audio first.
-          </Text>
+        {!effectiveTranscription && !effectiveTranslation && (
+          <Text style={[styles.text, { color: '#EF4444', fontStyle: 'italic' }]}>No data available. Please go back and record some audio first.</Text>
         )}
       </ScrollView>
       
@@ -244,7 +280,7 @@ export default function SummaryView() {
         <TouchableOpacity
           style={[styles.extraSmallActionButton, isSummarizing && { backgroundColor: '#9CA3AF' }]}
           onPress={handleGenerateSummary}
-          disabled={isSummarizing || (!translation && !transcription)}
+          disabled={isSummarizing || (!effectiveTranslation && !effectiveTranscription)}
         >
           <Text style={styles.extraSmallActionButtonText}>
             {isSummarizing ? 'Summarizing...' : (aiSummary ? 'Regenerate Summary' : 'AI Summarize')}
