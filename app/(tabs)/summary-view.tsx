@@ -90,21 +90,32 @@ export default function SummaryView() {
     if (isSummarizing) return; // تجنب التكرار
     
     setIsSummarizing(true);
-    console.log('Starting summary generation for text:', textToSummarize.substring(0, 100) + '...');
+    console.log('=== SUMMARY GENERATION DEBUG ===');
+    console.log('Text to summarize:', textToSummarize.substring(0, 100) + '...');
+    console.log('Target language:', effectiveTargetLanguage);
+    console.log('Text length:', textToSummarize.length);
     
     try {
       const result = await SpeechService.summarizeText(textToSummarize, effectiveTargetLanguage);
-      console.log('Summary generated successfully:', result.substring(0, 100) + '...');
+      console.log('Summary generation completed successfully');
+      console.log('Result length:', result ? result.length : 0);
+      console.log('Result preview:', result ? result.substring(0, 100) + '...' : 'null');
       
       if (result && result.trim().length > 0) {
         setAiSummary(result);
         setSummary(result);
         await saveSummaryToHistory(result);
+        console.log('Summary saved to state and history');
       } else {
+        console.error('Generated summary is empty or null');
         throw new Error('Generated summary is empty');
       }
     } catch (err) {
-      console.error('Summary generation error:', err);
+      console.error('=== SUMMARY GENERATION ERROR ===');
+      console.error('Error type:', typeof err);
+      console.error('Error message:', err instanceof Error ? err.message : 'Unknown error');
+      console.error('Full error:', err);
+      
       const errorMessage = err instanceof Error ? err.message : 'Failed to generate summary.';
       Alert.alert('Summary Error', errorMessage);
       
@@ -112,6 +123,7 @@ export default function SummaryView() {
       setAiSummary('❌ Failed to generate summary. Please try again or check your internet connection.');
     } finally {
       setIsSummarizing(false);
+      console.log('Summary generation process completed');
     }
   };
 

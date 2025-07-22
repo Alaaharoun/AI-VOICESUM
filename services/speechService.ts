@@ -487,9 +487,24 @@ export class SpeechService {
     }
 
     // Try Qwen API first if key is available
-    const qwenApiKey = process.env.EXPO_PUBLIC_QWEN_API_KEY;
+    let qwenApiKey = process.env.EXPO_PUBLIC_QWEN_API_KEY;
+    
+    // Fallback to Expo Constants if process.env doesn't work
+    if (!qwenApiKey) {
+      try {
+        const Constants = require('expo-constants');
+        qwenApiKey = Constants.expoConfig?.extra?.EXPO_PUBLIC_QWEN_API_KEY;
+      } catch (error) {
+        console.log('Expo Constants not available:', error);
+      }
+    }
+    
+    console.log('Qwen API Key available:', !!qwenApiKey);
+    console.log('Qwen API Key length:', qwenApiKey ? qwenApiKey.length : 0);
+    
     if (qwenApiKey && qwenApiKey.trim() !== '' && qwenApiKey !== 'your_api_key_here') {
       try {
+        console.log('Attempting Qwen API summarization...');
         const response = await fetch('https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions', {
           method: 'POST',
           headers: {
@@ -514,18 +529,31 @@ export class SpeechService {
           }),
         });
 
+        console.log('Qwen API response status:', response.status);
+        
         if (!response.ok) {
-          throw new Error(`Qwen API error: ${response.status}`);
+          const errorText = await response.text();
+          console.error('Qwen API error response:', errorText);
+          throw new Error(`Qwen API error: ${response.status} - ${errorText}`);
         }
 
         const data = await response.json();
+        console.log('Qwen API response data:', data);
         
         if (data.choices && data.choices.length > 0 && data.choices[0].message?.content) {
-          return data.choices[0].message.content.trim();
+          const summary = data.choices[0].message.content.trim();
+          console.log('Qwen API summary generated successfully:', summary.substring(0, 100) + '...');
+          return summary;
+        } else {
+          console.error('Qwen API returned invalid response structure:', data);
+          throw new Error('Invalid response from Qwen API');
         }
       } catch (error) {
-        console.warn('Qwen API failed, falling back to local summarization:', error);
+        console.error('Qwen API failed with error:', error);
+        console.warn('Falling back to local summarization...');
       }
+    } else {
+      console.log('Qwen API key not available, using local summarization');
     }
 
     // Fallback: Create a simple local summary
@@ -566,6 +594,7 @@ export class SpeechService {
         }
       }
 
+      console.log('Local summary generated successfully:', summary.substring(0, 100) + '...');
       return summary;
     } catch (error) {
       console.error('Local summarization error:', error);
