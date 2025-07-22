@@ -790,7 +790,7 @@ Effective Date: 2024-07-05
 {"\n"}
 
 1. Introduction{"\n"}
-Welcome to AI VoiceSum. This Privacy Policy explains how we collect, use, and protect your personal information when you use our mobile application (the App).{"\n"}
+Welcome to AI LIVE TRANSLATE. This Privacy Policy explains how we collect, use, and protect your personal information when you use our mobile application (the App).{"\n"}
 
 Your privacy is important to us, and we are committed to complying with applicable privacy laws and Google Play policies.{"\n"}
 
@@ -862,7 +862,7 @@ This app is not intended for children under 13 years of age. If we learn that we
 Effective Date: 2024-07-05
 {"\n"}
 
-Welcome to AI VoiceSum: Speak and Translate with Summary (the "App"). By using this App, you agree to the following Terms of Service and End User License Agreement (EULA). Please read them carefully before using the App.{"\n"}
+Welcome to AI LIVE TRANSLATE: Speak and Translate with Summary (the "App"). By using this App, you agree to the following Terms of Service and End User License Agreement (EULA). Please read them carefully before using the App.{"\n"}
 
 1. License Grant
 You are granted a limited, non-exclusive, non-transferable, revocable license to use the App for personal, non-commercial purposes only. You may not reverse engineer, decompile, or modify the App.{"\n"}

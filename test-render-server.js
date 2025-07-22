@@ -36,7 +36,7 @@ async function testRenderServer() {
       console.log('✅ الصفحة متاحة!');
       console.log('📄 حجم الصفحة:', html.length, 'حرف');
       console.log('🔍 يحتوي على "Delete Account":', html.includes('Delete Account'));
-      console.log('🔍 يحتوي على "AI VoiceSum":', html.includes('AI VoiceSum'));
+      console.log('🔍 يحتوي على "AI LIVE TRANSLATE":', html.includes('AI LIVE TRANSLATE'));
     } else {
       console.log('❌ الصفحة غير متاحة');
       console.log('📝 رسالة الخطأ:', pageResponse.statusText);

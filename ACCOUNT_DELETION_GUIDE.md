@@ -1,4 +1,4 @@
-# Account Deletion Guide - AI VoiceSum
+# Account Deletion Guide - AI LIVE TRANSLATE
 
 ## For Google Play Console
 

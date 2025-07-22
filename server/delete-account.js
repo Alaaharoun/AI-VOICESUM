@@ -25,7 +25,7 @@ app.get('/simple-delete-account.html', (req, res) => {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Delete Account - AI VoiceSum</title>
+    <title>Delete Account - AI LIVE TRANSLATE</title>
     <script src="https://unpkg.com/@supabase/supabase-js@2"></script>
     <style>
         * {
@@ -208,7 +208,7 @@ app.get('/simple-delete-account.html', (req, res) => {
     <div class="container">
         <div class="header">
             <div class="logo-icon">🎤</div>
-            <div class="logo">AI VoiceSum</div>
+            <div class="logo">AI LIVE TRANSLATE</div>
             <h1 class="title">Delete Account</h1>
             <p class="subtitle">Permanently remove your account and all associated data</p>
         </div>
