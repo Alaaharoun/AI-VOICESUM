@@ -58,8 +58,18 @@ export default function SummaryView() {
   };
 
   const saveSummaryToHistory = async (summaryText: string) => {
-    if (!user) return;
+    if (!user) {
+      console.log('No user available, skipping history save');
+      return;
+    }
+    
+    if (!summaryText || summaryText.trim().length === 0) {
+      console.log('Empty summary text, skipping history save');
+      return;
+    }
+    
     try {
+      console.log('Saving summary to history...');
       const { error } = await supabase.from('recordings').insert([
         {
           user_id: user.id,
@@ -71,13 +81,19 @@ export default function SummaryView() {
           created_at: new Date().toISOString(),
         }
       ]);
-      if (error) throw error;
+      
+      if (error) {
+        console.error('Supabase error:', error);
+        throw error;
+      }
+      
       setIsSaved(true);
-      Alert.alert('Success', 'Summary saved to history!');
+      console.log('Summary saved to history successfully');
+      // لا نعرض Alert هنا لتجنب إزعاج المستخدم
     } catch (e) {
       setIsSaved(false);
-      console.warn('Failed to save summary to history', e);
-      Alert.alert('Error', 'Could not save summary to history');
+      console.warn('Failed to save summary to history:', e);
+      // لا نعرض Alert هنا لتجنب إزعاج المستخدم
     }
   };
 
@@ -102,10 +118,17 @@ export default function SummaryView() {
       console.log('Result preview:', result ? result.substring(0, 100) + '...' : 'null');
       
       if (result && result.trim().length > 0) {
+        // أولاً: حفظ التلخيص في state
         setAiSummary(result);
         setSummary(result);
-        await saveSummaryToHistory(result);
-        console.log('Summary saved to state and history');
+        console.log('Summary saved to state successfully');
+        
+        // ثانياً: حفظ في التاريخ (بدون انتظار)
+        saveSummaryToHistory(result).catch(error => {
+          console.warn('Failed to save to history, but summary is still available:', error);
+        });
+        
+        console.log('Summary generation and state update completed');
       } else {
         console.error('Generated summary is empty or null');
         throw new Error('Generated summary is empty');
@@ -265,13 +288,13 @@ export default function SummaryView() {
                 >
                   <Volume2 size={16} color={(isSpeaking && speakingText === aiSummary) ? '#DC2626' : '#10B981'} />
                 </TouchableOpacity>
-                {!isSaved && !!aiSummary && (
+                {aiSummary && (
                   <TouchableOpacity
                     style={[styles.actionButton, { marginLeft: 4 }]} 
                     onPress={() => saveSummaryToHistory(aiSummary)}
                     accessibilityLabel="Save summary to history"
                   >
-                    <Save size={16} color="#2563EB" />
+                    <Save size={16} color={isSaved ? "#10B981" : "#2563EB"} />
                   </TouchableOpacity>
                 )}
               </View>
