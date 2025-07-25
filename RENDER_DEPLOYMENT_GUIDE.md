@@ -1,106 +1,87 @@
-# دليل نشر التحديثات على Render
+# 🚀 Render Deployment Guide for AI Voice Translate
 
-## 🚨 المشكلة الحالية
-الصفحة `https://ai-voicesum.onrender.com/simple-delete-account.html` تعطي خطأ 404 لأن السيرفر لا يحتوي على endpoint المطلوب.
+## Environment Variables Required on Render
 
-## ✅ الحل المطبق
-
-### 1. تحديث ملف `server/delete-account.js`
-- ✅ إضافة endpoint `GET /simple-delete-account.html`
-- ✅ تحديث endpoint `POST /api/delete-account` ليتعامل مع كلمة المرور
-- ✅ تحديث متغيرات البيئة لتتطابق مع السيرفر الرئيسي
-
-### 2. الملفات المحدثة
-- `server/delete-account.js` - الملف الرئيسي للسيرفر
-- `server/package.json` - يحتوي على dependencies المطلوبة
-
-## 🚀 خطوات النشر على Render
-
-### 1. رفع التحديثات إلى Git
-```bash
-git add .
-git commit -m "Add delete account page endpoint to server"
-git push origin main
+### Azure Speech Services (Required for Audio Transcription)
+```
+AZURE_SPEECH_KEY=your_azure_speech_key_here
+AZURE_SPEECH_REGION=your_azure_region_here
 ```
 
-### 2. التحقق من Render Dashboard
-1. اذهب إلى [Render Dashboard](https://dashboard.render.com)
-2. اختر مشروع `AI-VOICESUM`
-3. انتظر حتى يكتمل البناء والنشر التلقائي
-
-### 3. التحقق من متغيرات البيئة
-تأكد من وجود المتغيرات التالية في Render:
-```env
-EXPO_PUBLIC_SUPABASE_URL=https://ai-voicesum.supabase.co
-SUPABASE_SERVICE_ROLE_KEY=your_service_role_key_here
+### Supabase (Required for Account Management)
+```
+SUPABASE_SERVICE_ROLE_KEY=your_supabase_service_role_key_here
+EXPO_PUBLIC_SUPABASE_URL=https://your-project.supabase.co
 ```
 
-## 🧪 اختبار النشر
-
-### 1. اختبار الصفحة
-```bash
-curl -I https://ai-voicesum.onrender.com/simple-delete-account.html
+### Server Configuration
 ```
-**النتيجة المتوقعة:** `HTTP/1.1 200 OK`
+PORT=10000
+```
 
-### 2. اختبار Health Check
+## Render Settings
+
+### Build & Deploy Settings
+- **Build Command**: `npm install`
+- **Start Command**: `node server.js`
+- **Environment**: `Node`
+- **Auto-Deploy**: `Yes` (connected to GitHub)
+
+### Health Check
+- **Health Check Path**: `/health`
+- **Expected Response**: `{"status":"ok","apiKey":"Present","timestamp":"..."}`
+
+## Current Status
+
+### ✅ Working Features:
+- Server deployment and basic health check
+- WebSocket connection establishment
+- GitHub auto-deployment
+
+### ⚠️ Requires Investigation:
+- Azure Speech Service responses (may need environment variable update)
+- WebSocket message handling
+
+## Testing Commands
+
+### Test Server Health:
 ```bash
 curl https://ai-voicesum.onrender.com/health
 ```
-**النتيجة المتوقعة:** `{"status":"OK"}`
 
-### 3. اختبار API
+### Test Live Translation API:
 ```bash
-curl -X POST https://ai-voicesum.onrender.com/api/delete-account \
+curl -X POST "https://ai-voicesum.onrender.com/live-translate" \
   -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"password123"}'
+  -d '{"audio":"dGVzdA==","audioType":"audio/wav","language":"ar-SA"}'
 ```
 
-## 🔧 استكشاف الأخطاء
-
-### 1. خطأ 404 مستمر
-- ✅ تأكد من أن Git push تم بنجاح
-- ✅ تحقق من سجلات البناء في Render
-- ✅ تأكد من أن الملف `server/delete-account.js` يحتوي على التحديثات
-
-### 2. خطأ في متغيرات البيئة
-- ✅ تحقق من وجود `SUPABASE_SERVICE_ROLE_KEY`
-- ✅ تحقق من صحة مفتاح Supabase
-
-### 3. خطأ في قاعدة البيانات
-- ✅ تأكد من وجود الجداول المطلوبة
-- ✅ تحقق من صلاحيات Service Role
-
-## 📊 مراقبة النشر
-
-### 1. سجلات Render
-- اذهب إلى Render Dashboard
-- اختر مشروعك
-- انقر على "Logs" لمراقبة السجلات
-
-### 2. سجلات السيرفر
-```bash
-# في Render Dashboard > Logs
-# ابحث عن رسائل مثل:
-# "Delete account server running on port 10000"
-# "Delete account page available at: ..."
+### Test WebSocket:
+```javascript
+const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+ws.onopen = () => ws.send(JSON.stringify({type: 'init', language: 'ar-SA'}));
 ```
 
-## 🎯 النتيجة النهائية
+## Next Steps
 
-بعد النشر الناجح:
-- ✅ `https://ai-voicesum.onrender.com/simple-delete-account.html` ستعمل
-- ✅ صفحة حذف الحساب ستظهر بشكل صحيح
-- ✅ API حذف الحساب سيعمل مع كلمة المرور
+1. **Check Environment Variables**: Verify Azure credentials are set in Render dashboard
+2. **Monitor Logs**: Check Render deployment logs for Azure Speech errors
+3. **Test Audio Processing**: Ensure audio chunks are properly formatted for Azure
+4. **Verify Auto-Deploy**: Confirm latest code changes are deployed
 
-## 📝 ملاحظات مهمة
+## Latest Optimizations Applied
 
-1. **البناء التلقائي**: Render سيبني المشروع تلقائياً عند push التحديثات
-2. **وقت النشر**: قد يستغرق النشر 2-5 دقائق
-3. **الاختبار**: اختبر الصفحة بعد النشر للتأكد من عملها
-4. **المراقبة**: راقب سجلات Render للتأكد من عدم وجود أخطاء
+- ✅ Audio chunk size optimization (5 second intervals)
+- ✅ Client-side audio buffering (10 seconds)
+- ✅ Azure Speech SDK configuration improvements
+- ✅ Enhanced debugging and logging
+- ✅ WebSocket timeout management
+- ✅ Proper audio format specification (48kHz PCM)
 
-## 🚀 جاهز للنشر!
+## Support
 
-بعد تطبيق هذه التحديثات ورفعها إلى Git، ستكون صفحة حذف الحساب متاحة على:
-`https://ai-voicesum.onrender.com/simple-delete-account.html` 
+If Azure Speech Service is not responding:
+1. Check Render environment variables
+2. Verify Azure Speech Service quota and billing
+3. Check Render deployment logs for specific errors
+4. Test with local server to isolate issues 
