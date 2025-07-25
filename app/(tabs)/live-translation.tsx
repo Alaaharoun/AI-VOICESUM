@@ -63,6 +63,9 @@ export default function LiveTranslationScreen() {
   const pendingChunksRef = useRef<Uint8Array[]>([]); // قائمة مؤقتة للـchunks
   const wsTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // timeout للـWebSocket
   const lastActivityRef = useRef<number>(Date.now()); // آخر نشاط للـWebSocket
+  const chunkBufferRef = useRef<Uint8Array[]>([]); // buffer لتجميع الـchunks
+  const chunkBufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // timeout لتجميع الـchunks
+  const maxBufferTimeRef = useRef<number>(10000); // أقصى وقت للتجميع (10 ثوانٍ للاختبار)
 
   // Initialize target language
   useEffect(() => {
@@ -181,6 +184,9 @@ export default function LiveTranslationScreen() {
     if (wsTimeoutRef.current) {
       clearTimeout(wsTimeoutRef.current);
     }
+    if (chunkBufferTimeoutRef.current) {
+      clearTimeout(chunkBufferTimeoutRef.current);
+    }
     // تنظيف البيانات المؤقتة
     setTranscriptions([]);
     setRealTimeTranscription('');
@@ -206,13 +212,49 @@ export default function LiveTranslationScreen() {
     // تحديث آخر نشاط
     lastActivityRef.current = Date.now();
     
-    // تعيين timeout جديد (دقيقة واحدة)
+    // تعيين timeout جديد (5 دقائق)
     wsTimeoutRef.current = setTimeout(() => {
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
         Logger.info('WebSocket timeout reached, closing connection');
         wsRef.current.close(1000, 'Timeout - no activity');
       }
-    }, 60000); // دقيقة واحدة
+    }, 300000); // 5 دقائق
+  };
+
+  // دالة لتجميع وإرسال الـchunks
+  const sendBufferedChunks = () => {
+    Logger.info(`[sendBufferedChunks] Called with ${chunkBufferRef.current.length} chunks in buffer`);
+    
+    if (chunkBufferRef.current.length === 0) {
+      Logger.warn(`[sendBufferedChunks] No chunks to send`);
+      return;
+    }
+    
+    // دمج جميع الـchunks في chunk واحد كبير
+    const totalSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    const combinedChunk = new Uint8Array(totalSize);
+    
+    let offset = 0;
+    chunkBufferRef.current.forEach((chunk, index) => {
+      Logger.info(`[sendBufferedChunks] Combining chunk ${index + 1}: ${chunk.byteLength} bytes at offset ${offset}`);
+      combinedChunk.set(chunk, offset);
+      offset += chunk.byteLength;
+    });
+    
+    Logger.info(`[sendBufferedChunks] 🚀 SENDING COMBINED CHUNK - Total size: ${combinedChunk.byteLength} bytes from ${chunkBufferRef.current.length} chunks`);
+    
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(combinedChunk);
+      manageWebSocketTimeout();
+      Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully`);
+    } else {
+      pendingChunksRef.current.push(combinedChunk);
+      Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsRef.current?.readyState}), combined chunk stored in pending queue`);
+    }
+    
+    // تفريغ الـbuffer
+    chunkBufferRef.current = [];
+    Logger.info(`[sendBufferedChunks] Buffer cleared`);
   };
 
   // Initialize WebSocket connection
@@ -709,11 +751,11 @@ export default function LiveTranslationScreen() {
         // طباعة معلومات الـchunk للتشخيص
         const chunkSize = chunk.size || 0;
         const timestamp = Date.now();
-        Logger.info(`Audio chunk received - Size: ${chunkSize} bytes, Time: ${timestamp}`);
+        Logger.info(`[onData] 🎵 Audio chunk received - Size: ${chunkSize} bytes, Time: ${timestamp}, Expected: ~${5000 * 48} bytes (5000ms @ 48kHz)`);
         
-        // تجاهل الـchunks الصغيرة جداً (صمت)
-        if (chunkSize < 1000) {
-          Logger.warn(`Skipping small chunk (${chunkSize} bytes) - likely silence`);
+        // تجاهل الـchunks الصغيرة جداً (صمت) - عتبة أعلى
+        if (chunkSize < 5000) {
+          Logger.warn(`[onData] ⏭️ Skipping small chunk (${chunkSize} bytes) - likely silence`);
           return;
         }
         
@@ -721,41 +763,60 @@ export default function LiveTranslationScreen() {
         let raw: Uint8Array;
         try {
           raw = base64ToUint8Array(chunk.data);
+          Logger.info(`[onData] ✅ Successfully converted chunk to Uint8Array: ${raw.byteLength} bytes`);
         } catch (error) {
-          Logger.error('Failed to convert chunk to binary:', error);
+          Logger.error('[onData] ❌ Failed to convert chunk to binary:', error);
           return;
         }
         
-        if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-          // تنظيف AsyncStorage عند إرسال بيانات صوتية - فقط في الموبايل
-          if (Platform.OS !== 'web') {
-            AsyncStorage.removeItem('audio_cache').catch(() => {});
-            AsyncStorage.removeItem('transcription_cache').catch(() => {});
-            AsyncStorage.removeItem('translation_cache').catch(() => {});
-          }
-          
-          // إرسال البيانات كـbinary
-          wsRef.current.send(raw);
-          Logger.info(`Audio chunk sent as binary - Size: ${raw.byteLength} bytes, Time: ${timestamp}`);
-          
-          // تحديث الـtimeout عند كل نشاط
-          manageWebSocketTimeout();
-        } else {
-          // تخزين في القائمة المؤقتة إذا لم يكن WebSocket جاهز
-          pendingChunksRef.current.push(raw);
-          Logger.warn(`WebSocket not ready, chunk stored in pending queue (${pendingChunksRef.current.length} chunks)`);
+        // إضافة الـchunk إلى الـbuffer
+        chunkBufferRef.current.push(raw);
+        Logger.info(`[onData] 📦 Added chunk to buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
+        
+        // إذا كان الحجم كبير (أكثر من 100000 bytes)، أرسل فوراً
+        if (raw.byteLength > 100000) {
+          Logger.info(`[onData] 🚀 Large chunk detected (${raw.byteLength} bytes), sending immediately`);
+          sendBufferedChunks();
+          return;
+        }
+        
+        // إلغاء الـtimeout السابق للتجميع
+        if (chunkBufferTimeoutRef.current) {
+          clearTimeout(chunkBufferTimeoutRef.current);
+          Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
+        }
+        
+        // تعيين timeout جديد لتجميع الـchunks (30 ثانية)
+        chunkBufferTimeoutRef.current = setTimeout(() => {
+          Logger.info(`[onData] ⏰ Buffer timeout reached (${maxBufferTimeRef.current}ms), calling sendBufferedChunks`);
+          sendBufferedChunks();
+        }, maxBufferTimeRef.current); // تجميع لمدة 30 ثانية
+        
+        Logger.info(`[onData] ⏰ Set new buffer timeout for ${maxBufferTimeRef.current}ms`);
+        
+        // تنظيف AsyncStorage عند إرسال بيانات صوتية - فقط في الموبايل
+        if (Platform.OS !== 'web') {
+          AsyncStorage.removeItem('audio_cache').catch(() => {});
+          AsyncStorage.removeItem('transcription_cache').catch(() => {});
+          AsyncStorage.removeItem('translation_cache').catch(() => {});
         }
       });
       
     setIsRecording(true);
       setError(null);
       
+      // تنظيف الـbuffer عند بدء التسجيل
+      chunkBufferRef.current = [];
+      Logger.info('[startStreaming] 🧹 Cleared chunk buffer');
+      
       // NEW: Clear real-time data when starting
       if (isRealTimeMode) {
         setRealTimeTranscription('');
         setRealTimeTranslation('');
-        Logger.info('Cleared real-time data for new recording');
+        Logger.info('[startStreaming] Cleared real-time data for new recording');
       }
+      
+      Logger.info('[startStreaming] ✅ Live streaming started successfully');
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Logger.error('Failed to start streaming:', errorMessage);
@@ -778,7 +839,7 @@ export default function LiveTranslationScreen() {
       pendingChunksRef.current = [];
       Logger.info('Pending chunks cleared');
       
-      // إلغاء الـtimeout
+      // إلغاء الـtimeout الحالي
       if (wsTimeoutRef.current) {
         clearTimeout(wsTimeoutRef.current);
         Logger.info('WebSocket timeout cleared');
@@ -796,12 +857,23 @@ export default function LiveTranslationScreen() {
         }
       }
       
-      if (wsRef.current) {
-        wsRef.current.close();
-      }
-      
       setIsRecording(false);
-      setConnectionStatus('disconnected');
+      
+      // إبقاء الاتصال مفتوحًا لمدة دقيقة إضافية
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        Logger.info('Keeping WebSocket connection open for 1 minute after stopping');
+        
+        // تعيين timeout جديد لإغلاق الاتصال بعد دقيقة
+        wsTimeoutRef.current = setTimeout(() => {
+          if (wsRef.current) {
+            Logger.info('Closing WebSocket connection after 1 minute timeout');
+            wsRef.current.close();
+            setConnectionStatus('disconnected');
+          }
+        }, 60000); // دقيقة واحدة
+      } else {
+        setConnectionStatus('disconnected');
+      }
       
       // NEW: Save real-time transcription to history if exists
       if (isRealTimeMode && realTimeTranscription) {
@@ -836,7 +908,7 @@ export default function LiveTranslationScreen() {
         setRealTimeTranslation('');
       }
       
-      Logger.info('Audio streaming stopped');
+      Logger.info('Audio streaming stopped, WebSocket kept open for 1 minute');
     } catch (error) {
       Logger.error('Failed to stop streaming:', error);
     }
@@ -1141,7 +1213,9 @@ export default function LiveTranslationScreen() {
             style={styles.reconnectButton} 
             onPress={initializeWebSocket}
           >
-            <Text style={styles.reconnectButtonText}>Reconnect</Text>
+            <Text style={styles.reconnectButtonText}>
+              {Platform.OS === 'web' ? 'Reconnect' : 'إعادة الاتصال'}
+            </Text>
           </TouchableOpacity>
         </View>
       )}
@@ -1165,6 +1239,30 @@ export default function LiveTranslationScreen() {
             {Platform.OS === 'web' 
               ? 'Setting up audio service...' 
               : 'جاري إعداد خدمة الصوت...'
+            }
+          </Text>
+        </View>
+      )}
+      
+      {/* Status message for connection kept open */}
+      {!isRecording && connectionStatus === 'connected' && (
+        <View style={[styles.statusContainer, { backgroundColor: '#e8f5e8', borderLeftColor: '#4caf50' }]}>
+          <Text style={[styles.statusText, { color: '#2e7d32' }]}>
+            {Platform.OS === 'web' 
+              ? 'Connection kept open for 1 minute...' 
+              : 'الاتصال مفتوح لمدة دقيقة...'
+            }
+          </Text>
+        </View>
+      )}
+      
+      {/* Status message for audio buffering */}
+      {isRecording && chunkBufferRef.current && chunkBufferRef.current.length > 0 && (
+        <View style={[styles.statusContainer, { backgroundColor: '#fff3e0', borderLeftColor: '#ff9800' }]}>
+          <Text style={[styles.statusText, { color: '#e65100' }]}>
+            {Platform.OS === 'web' 
+              ? `Buffering audio (${chunkBufferRef.current ? chunkBufferRef.current.length : 0} chunks, max 10s)...` 
+              : `تجميع الصوت (${chunkBufferRef.current ? chunkBufferRef.current.length : 0} chunks، أقصى 10 ثوانٍ)...`
             }
           </Text>
         </View>

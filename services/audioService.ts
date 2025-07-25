@@ -59,7 +59,7 @@ class MobileAudioService implements AudioService {
     
     try {
       const defaultOptions = {
-        sampleRate: options?.sampleRate || 16000,
+        sampleRate: options?.sampleRate || 48000, // زيادة sample rate أكثر
         channels: options?.channels || 1,
         bitsPerSample: options?.bitsPerSample || 16,
         audioSource: options?.audioSource || 6,
@@ -103,7 +103,13 @@ class MobileAudioService implements AudioService {
     try {
       await AudioRecord.stop();
       this.isRecording = false;
-      Logger.info('Mobile audio recording stopped');
+      Logger.info('Mobile audio recording stopped, keeping data for 1 minute');
+      
+      // إبقاء البيانات لمدة دقيقة في الموبايل أيضاً
+      setTimeout(() => {
+        Logger.info('Mobile audio data cleared after 1 minute delay');
+      }, 60000); // دقيقة واحدة
+      
     } catch (error) {
       Logger.error('Failed to stop mobile audio recording:', error);
       throw new Error(`Failed to stop mobile audio recording: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -232,14 +238,14 @@ class WebAudioService implements AudioService {
       // إنشاء AudioContext جديد بدون تنظيف سابق
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       
-      // طلب إذن المايكروفون
+      // طلب إذن المايكروفون مع إعدادات محسنة
       this.stream = await navigator.mediaDevices.getUserMedia({
         audio: {
-          sampleRate: options?.sampleRate || 16000,
+          sampleRate: options?.sampleRate || 48000, // زيادة sample rate أكثر
           channelCount: options?.channels || 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true
+          echoCancellation: false, // إيقاف echo cancellation للحصول على صوت خام
+          noiseSuppression: false, // إيقاف noise suppression للحصول على صوت خام
+          autoGainControl: false // إيقاف auto gain للحصول على صوت خام
         }
       });
 
@@ -312,7 +318,7 @@ class WebAudioService implements AudioService {
         Logger.error('MediaRecorder error:', event);
       };
       
-      this.mediaRecorder.start(200); // إرسال بيانات كل 200ms لتجميع عينات أكبر
+      this.mediaRecorder.start(5000); // إرسال بيانات كل 5000ms (5 ثوانٍ) لتجميع عينات أكبر بكثير
       this.isRecording = true;
       Logger.info('Web audio recording started with fresh MediaRecorder');
     } catch (error) {
@@ -333,10 +339,15 @@ class WebAudioService implements AudioService {
       this.mediaRecorder.stop();
       this.isRecording = false;
       
-      // تنظيف البيانات المؤقتة
-      this.audioChunks = [];
+      // إبقاء البيانات المؤقتة لمدة دقيقة بدلاً من مسحها فورًا
+      Logger.info('Web audio recording stopped, keeping chunks for 1 minute');
       
-      Logger.info('Web audio recording stopped and chunks cleared');
+      // تنظيف البيانات بعد دقيقة
+      setTimeout(() => {
+        this.audioChunks = [];
+        Logger.info('Audio chunks cleared after 1 minute delay');
+      }, 60000); // دقيقة واحدة
+      
     } catch (error) {
       Logger.error('Failed to stop web audio recording:', error);
       throw new Error(`Failed to stop web audio recording: ${error instanceof Error ? error.message : 'Unknown error'}`);

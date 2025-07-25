@@ -533,23 +533,29 @@ function startWebSocketServer(server) {
     let previousPushStream = null;
     
     // إعداد جلسة Azure Speech جديدة لكل عميل
-    const pushStream = speechsdk.AudioInputStream.createPushStream();
-    const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
-    const speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-    speechConfig.speechRecognitionLanguage = 'ar-SA'; // يمكنك جعلها ديناميكية
-    const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+      const pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
+  const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+  const speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
+  speechConfig.speechRecognitionLanguage = 'ar-SA'; // يمكنك جعلها ديناميكية
+  
+  // تحسينات Azure لاستقبال chunks كبيرة
+  speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
+  speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "10000");
+  speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceResponse_RequestDetailedResultTrueFalse, "true");
+  
+  const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
     recognizer.recognizing = (s, e) => {
-      console.log('Partial result:', e.result.text);
+      console.log(`[Azure Speech] 🔄 Partial result: "${e.result.text}"`);
       if (e.result.text && e.result.text.trim()) {
-        console.log('Sending partial transcription:', e.result.text);
+        console.log(`[Azure Speech] 📤 Sending partial transcription: "${e.result.text}"`);
         ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
       }
     };
     recognizer.recognized = (s, e) => {
       if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-        console.log('Final result:', e.result.text);
+        console.log(`[Azure Speech] ✅ Final result: "${e.result.text}"`);
         if (e.result.text && e.result.text.trim()) {
-          console.log('Sending final transcription:', e.result.text);
+          console.log(`[Azure Speech] 📤 Sending final transcription: "${e.result.text}"`);
           ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
         } else {
           console.log('Empty final result, not sending');
@@ -584,7 +590,7 @@ function startWebSocketServer(server) {
             }
             
             // إنشاء جلسة جديدة
-            const newPushStream = speechsdk.AudioInputStream.createPushStream();
+            const newPushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
             const newAudioConfig = speechsdk.AudioConfig.fromStreamInput(newPushStream);
             const newRecognizer = new speechsdk.SpeechRecognizer(speechConfig, newAudioConfig);
             
@@ -644,7 +650,7 @@ function startWebSocketServer(server) {
             }
             
             // إنشاء جلسة جديدة مع اللغة المحدثة
-            const newPushStream = speechsdk.AudioInputStream.createPushStream();
+            const newPushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
             const newAudioConfig = speechsdk.AudioConfig.fromStreamInput(newPushStream);
             const newRecognizer = new speechsdk.SpeechRecognizer(speechConfig, newAudioConfig);
             
@@ -728,6 +734,9 @@ function startWebSocketServer(server) {
         console.error('Error processing WebSocket message:', error);
         // Fallback to raw audio processing
         if (data && (data.length > 0 || data.byteLength > 0)) {
+          const dataSize = data.length || data.byteLength || 0;
+          console.log(`[Azure Speech] 📥 Receiving audio chunk: ${dataSize} bytes (${dataSize > 100000 ? 'LARGE' : 'normal'} chunk)`);
+          
           if (data instanceof Buffer) {
             pushStream.write(data);
           } else if (data instanceof ArrayBuffer) {
@@ -736,7 +745,7 @@ function startWebSocketServer(server) {
             pushStream.write(Buffer.from(data));
           }
         } else {
-          console.log('Skipping empty data in fallback processing');
+          console.log('[Azure Speech] ⚠️ Skipping empty data in fallback processing');
         }
       }
     });
