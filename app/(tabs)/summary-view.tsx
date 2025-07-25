@@ -19,6 +19,7 @@ export default function SummaryView() {
   const effectiveTranslation = typeof params.translation === 'string' && params.translation.length > 0 ? params.translation : translation;
   const effectiveSummary = typeof params.summary === 'string' && params.summary.length > 0 ? params.summary : summary;
   const effectiveTargetLanguage = typeof params.targetLanguage === 'string' && params.targetLanguage.length > 0 ? params.targetLanguage : targetLanguage;
+  const shouldAutoSummarize = typeof params.autoSummarize === 'string' && params.autoSummarize === 'true';
   const [aiSummary, setAiSummary] = React.useState(effectiveSummary);
   const [isSummarizing, setIsSummarizing] = React.useState(false);
   const [isSpeaking, setIsSpeaking] = React.useState(false);
@@ -37,15 +38,39 @@ export default function SummaryView() {
     // إنشاء تلخيص تلقائياً إذا لم يكن موجوداً وكان هناك نص للتلخيص
     if (!aiSummary && !isSummarizing && (effectiveTranslation || effectiveTranscription)) {
       const textToSummarize = effectiveTranslation || effectiveTranscription;
-      if (textToSummarize && textToSummarize.trim().length >= 50) {
-        handleGenerateSummary();
-      }
+              if (textToSummarize && textToSummarize.trim().length >= 50) {
+          // التحقق من العلامة التلقائية أو الشروط العادية
+          if (shouldAutoSummarize || (!aiSummary && !summary)) {
+            console.log('Auto-generating summary - shouldAutoSummarize:', shouldAutoSummarize, 'text length:', textToSummarize.trim().length);
+            setTimeout(() => {
+              handleGenerateSummary();
+            }, 500); // Small delay to ensure UI is ready
+          }
+        } else if (shouldAutoSummarize) {
+          console.log('Auto-summarize requested but text too short:', textToSummarize ? textToSummarize.trim().length : 0);
+        }
     }
-  }, [summary, transcription, translation, targetLanguage]);
+  }, [summary, transcription, translation, targetLanguage, shouldAutoSummarize, effectiveTranscription, effectiveTranslation]);
 
   React.useEffect(() => {
     setIsSaved(false);
   }, [aiSummary]);
+
+  // حفظ البيانات في السياق عند استلامها من المعاملات
+  React.useEffect(() => {
+    if (effectiveTranscription && effectiveTranscription !== transcription) {
+      console.log('Updating transcription in context from params');
+      setTranscription(effectiveTranscription);
+    }
+    if (effectiveTranslation && effectiveTranslation !== translation) {
+      console.log('Updating translation in context from params');
+      setTranslation(effectiveTranslation);
+    }
+    if (effectiveTargetLanguage && effectiveTargetLanguage !== targetLanguage) {
+      console.log('Updating target language in context from params');
+      setTargetLanguage(effectiveTargetLanguage);
+    }
+  }, [effectiveTranscription, effectiveTranslation, effectiveTargetLanguage]);
 
   const handleDownloadSummary = (format: 'txt' | 'rtf' | 'doc') => {
     const textToDownload = aiSummary || summary;
@@ -99,11 +124,21 @@ export default function SummaryView() {
 
   const handleGenerateSummary = async () => {
     const textToSummarize = effectiveTranslation || effectiveTranscription;
+    console.log('=== SUMMARY GENERATION START ===');
+    console.log('effectiveTranslation:', effectiveTranslation ? effectiveTranslation.substring(0, 100) + '...' : 'null');
+    console.log('effectiveTranscription:', effectiveTranscription ? effectiveTranscription.substring(0, 100) + '...' : 'null');
+    console.log('textToSummarize:', textToSummarize ? textToSummarize.substring(0, 100) + '...' : 'null');
+    console.log('textToSummarize length:', textToSummarize ? textToSummarize.trim().length : 0);
+    
     if (!textToSummarize || textToSummarize.trim().length < 50) {
+      console.log('Text too short for summary, length:', textToSummarize ? textToSummarize.trim().length : 0);
       Alert.alert('Notice', 'Text is too short to summarize. Please provide at least 50 characters.');
       return;
     }
-    if (isSummarizing) return; // تجنب التكرار
+    if (isSummarizing) {
+      console.log('Already summarizing, skipping...');
+      return; // تجنب التكرار
+    }
     
     setIsSummarizing(true);
     console.log('=== SUMMARY GENERATION DEBUG ===');
@@ -245,17 +280,17 @@ export default function SummaryView() {
               <View style={styles.actionButtons}>
                 {effectiveTranscription && (
                   <>
-                    <TouchableOpacity 
-                      style={styles.actionButton} 
-                      onPress={() => handleCopy(effectiveTranscription, 'Transcription')}
-                    >
-                      <Copy size={16} color="#2563EB" />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={styles.actionButton} 
-                      onPress={() => handleSpeakToggle(effectiveTranscription, 'transcription')}
-                    >
-                      <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranscription) ? '#DC2626' : '#2563EB'} />
+                <TouchableOpacity 
+                  style={styles.actionButton} 
+                  onPress={() => handleCopy(effectiveTranscription, 'Transcription')}
+                >
+                  <Copy size={16} color="#2563EB" />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.actionButton} 
+                  onPress={() => handleSpeakToggle(effectiveTranscription, 'transcription')}
+                >
+                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranscription) ? '#DC2626' : '#2563EB'} />
                     </TouchableOpacity>
                   </>
                 )}
@@ -278,17 +313,17 @@ export default function SummaryView() {
               <View style={styles.actionButtons}>
                 {effectiveTranslation && (
                   <>
-                    <TouchableOpacity 
-                      style={styles.actionButton} 
-                      onPress={() => handleCopy(effectiveTranslation, 'Translation')}
-                    >
-                      <Copy size={16} color="#8B5CF6" />
-                    </TouchableOpacity>
-                    <TouchableOpacity 
-                      style={styles.actionButton} 
-                      onPress={() => handleSpeakToggle(effectiveTranslation, 'translation')}
-                    >
-                      <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranslation) ? '#DC2626' : '#8B5CF6'} />
+                <TouchableOpacity 
+                  style={styles.actionButton} 
+                  onPress={() => handleCopy(effectiveTranslation, 'Translation')}
+                >
+                  <Copy size={16} color="#8B5CF6" />
+                </TouchableOpacity>
+                <TouchableOpacity 
+                  style={styles.actionButton} 
+                  onPress={() => handleSpeakToggle(effectiveTranslation, 'translation')}
+                >
+                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranslation) ? '#DC2626' : '#8B5CF6'} />
                     </TouchableOpacity>
                   </>
                 )}

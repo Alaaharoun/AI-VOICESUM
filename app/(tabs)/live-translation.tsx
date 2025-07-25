@@ -8,6 +8,8 @@ import { LanguageSelector, Language } from '../../components/LanguageSelector';
 import { SpeechService } from '../../services/speechService';
 import { getAudioService } from '../../services/audioService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
+import { supabase } from '@/lib/supabase';
+import { useAuth } from '@/contexts/AuthContext';
 
 interface TranscriptionItem {
   id: string;
@@ -34,6 +36,7 @@ function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 export default function LiveTranslationScreen() {
+  const { user } = useAuth();
   const { targetLanguage, languageName, sourceLanguage, sourceLanguageName } = useLocalSearchParams<{
     targetLanguage: string;
     languageName: string;
@@ -1010,9 +1013,50 @@ export default function LiveTranslationScreen() {
       
       Logger.info('Audio streaming stopped successfully. Final buffer cleared only once at stop.');
       
-      // Show summary button if we have transcriptions
-      setTimeout(() => {
+      // Auto-save to database when recording ends
+      setTimeout(async () => {
         if (transcriptions.length > 0 || realTimeTranscription) {
+          try {
+            // جمع جميع النصوص للحفظ
+            let allOriginalText = '';
+            let allTranslatedText = '';
+            
+            // إضافة النص المباشر
+            if (realTimeTranscription && realTimeTranscription.trim()) {
+              allOriginalText += realTimeTranscription.trim();
+              if (realTimeTranslation && realTimeTranslation.trim()) {
+                allTranslatedText += realTimeTranslation.trim();
+              }
+            }
+            
+            // إضافة النصوص التاريخية
+            transcriptions.forEach((item) => {
+              if (item.originalText && item.originalText.trim()) {
+                if (allOriginalText) allOriginalText += '\n\n';
+                allOriginalText += item.originalText.trim();
+              }
+              if (item.translatedText && item.translatedText.trim()) {
+                if (allTranslatedText) allTranslatedText += '\n\n';
+                allTranslatedText += item.translatedText.trim();
+              }
+            });
+            
+            // حفظ في قاعدة البيانات
+            if (allOriginalText || allTranslatedText) {
+              Logger.info('Auto-saving session to database...');
+              await addToHistory({
+                transcription: allOriginalText,
+                translation: allTranslatedText,
+                summary: '',
+                translationSummary: '',
+                created_at: new Date().toISOString(),
+              });
+              Logger.info('Session saved to database successfully');
+            }
+          } catch (error) {
+            Logger.error('Failed to auto-save session:', error);
+          }
+          
           Logger.info('Showing AI Summary button');
           setShowSummaryButton(true);
         }
@@ -1165,12 +1209,99 @@ export default function LiveTranslationScreen() {
   
   const navigateToSummary = () => {
     Logger.info('User chose to navigate to summary page');
-    router.push('/summary-view');
+    
+    // جمع جميع النصوص الأصلية والمترجمة
+    let allOriginalText = '';
+    let allTranslatedText = '';
+    
+    // إضافة النص المباشر إذا كان موجوداً
+    if (realTimeTranscription && realTimeTranscription.trim()) {
+      allOriginalText += realTimeTranscription.trim();
+      if (realTimeTranslation && realTimeTranslation.trim()) {
+        allTranslatedText += realTimeTranslation.trim();
+      }
+    }
+    
+    // إضافة النصوص التاريخية
+    transcriptions.forEach((item, index) => {
+      if (item.originalText && item.originalText.trim()) {
+        if (allOriginalText) allOriginalText += '\n\n';
+        allOriginalText += item.originalText.trim();
+      }
+      if (item.translatedText && item.translatedText.trim()) {
+        if (allTranslatedText) allTranslatedText += '\n\n';
+        allTranslatedText += item.translatedText.trim();
+      }
+    });
+    
+    Logger.info('Navigating to summary with data:', {
+      originalLength: allOriginalText.length,
+      translationLength: allTranslatedText.length,
+      targetLanguage: selectedTargetLanguage?.name,
+      originalPreview: allOriginalText.substring(0, 100),
+      translationPreview: allTranslatedText.substring(0, 100)
+    });
+    
+    if (!allOriginalText && !allTranslatedText) {
+      Logger.warn('No text data available for summary');
+      Alert.alert('Notice', 'No transcription or translation data available for summary. Please record some audio first.');
+      return;
+    }
+    
+    // التنقل مع تمرير البيانات
+    router.push({
+      pathname: '/summary-view',
+      params: {
+        transcription: allOriginalText,
+        translation: allTranslatedText,
+        targetLanguage: selectedTargetLanguage?.name || '',
+        autoSummarize: 'true' // علامة لبدء التلخيص التلقائي
+      }
+    });
   };
 
   const dismissSummaryButton = () => {
     setShowSummaryButton(false);
     Logger.info('Summary button dismissed by user');
+  };
+
+  // دالة لحفظ النتائج في history (جدول recordings)
+  const addToHistory = async (record: {
+    transcription?: string;
+    translation?: string;
+    summary?: string;
+    translationSummary?: string;
+    created_at: string;
+  }) => {
+    try {
+      if (!user) {
+        Logger.warn('No user available, skipping history save');
+        return;
+      }
+      
+      Logger.info('📝 addToHistory called with:', { user_id: user.id, ...record });
+      const { error } = await supabase.from('recordings').insert([
+        {
+          user_id: user.id,
+          transcription: record.transcription || '',
+          translation: record.translation || '',
+          summary: record.summary || '',
+          translationSummary: record.translationSummary || '',
+          target_language: selectedTargetLanguage?.name || '',
+          created_at: record.created_at,
+        }
+      ]);
+      
+      if (error) {
+        Logger.error('❌ Supabase error:', error);
+        throw error;
+      }
+      
+      Logger.info('✅ Successfully saved to history');
+    } catch (e) {
+      Logger.warn('❌ Failed to save to history', e);
+      // Don't throw error to avoid disrupting the flow
+    }
   };
 
   const clearTranscriptions = () => {
