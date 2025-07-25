@@ -527,7 +527,12 @@ function startWebSocketServer(server) {
       ws.close();
       return;
     }
-    // إعداد جلسة Azure Speech لكل عميل
+    
+    // تنظيف أي جلسة سابقة
+    let previousRecognizer = null;
+    let previousPushStream = null;
+    
+    // إعداد جلسة Azure Speech جديدة لكل عميل
     const pushStream = speechsdk.AudioInputStream.createPushStream();
     const audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
     const speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
@@ -568,16 +573,124 @@ function startWebSocketServer(server) {
           console.log('Received JSON message:', message.type, message);
           
                      if (message.type === 'init') {
+            // تنظيف الجلسة السابقة قبل إعادة التهيئة
+            try {
+              recognizer.stopContinuousRecognitionAsync();
+              recognizer.close();
+              pushStream.close();
+              console.log('Cleaned up previous session before reinitialization');
+            } catch (error) {
+              console.error('Error cleaning up previous session:', error);
+            }
+            
+            // إنشاء جلسة جديدة
+            const newPushStream = speechsdk.AudioInputStream.createPushStream();
+            const newAudioConfig = speechsdk.AudioConfig.fromStreamInput(newPushStream);
+            const newRecognizer = new speechsdk.SpeechRecognizer(speechConfig, newAudioConfig);
+            
+            // إعداد المستمعين الجدد
+            newRecognizer.recognizing = (s, e) => {
+              console.log('Partial result:', e.result.text);
+              if (e.result.text && e.result.text.trim()) {
+                console.log('Sending partial transcription:', e.result.text);
+                ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
+              }
+            };
+            
+            newRecognizer.recognized = (s, e) => {
+              if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+                console.log('Final result:', e.result.text);
+                if (e.result.text && e.result.text.trim()) {
+                  console.log('Sending final transcription:', e.result.text);
+                  ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+                } else {
+                  console.log('Empty final result, not sending');
+                }
+              }
+            };
+            
+            newRecognizer.canceled = (s, e) => {
+              ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
+              newRecognizer.close();
+            };
+            
+            newRecognizer.sessionStopped = (s, e) => {
+              ws.send(JSON.stringify({ type: 'done' }));
+              newRecognizer.close();
+            };
+            
             // Update speech recognition language based on client request
             const language = message.language || 'ar-SA';
             speechConfig.speechRecognitionLanguage = language;
             console.log('Updated speech language to:', language);
+            
+            // بدء التعرف الجديد
+            newRecognizer.startContinuousRecognitionAsync();
+            
+            // تحديث المراجع
+            Object.assign(pushStream, newPushStream);
+            Object.assign(recognizer, newRecognizer);
+            
             ws.send(JSON.stringify({ type: 'status', message: 'Initialized with language: ' + language }));
           } else if (message.type === 'language_update') {
+            // تنظيف الجلسة الحالية قبل تحديث اللغة
+            try {
+              recognizer.stopContinuousRecognitionAsync();
+              recognizer.close();
+              pushStream.close();
+              console.log('Cleaned up session before language update');
+            } catch (error) {
+              console.error('Error cleaning up session for language update:', error);
+            }
+            
+            // إنشاء جلسة جديدة مع اللغة المحدثة
+            const newPushStream = speechsdk.AudioInputStream.createPushStream();
+            const newAudioConfig = speechsdk.AudioConfig.fromStreamInput(newPushStream);
+            const newRecognizer = new speechsdk.SpeechRecognizer(speechConfig, newAudioConfig);
+            
+            // إعداد المستمعين الجدد
+            newRecognizer.recognizing = (s, e) => {
+              console.log('Partial result:', e.result.text);
+              if (e.result.text && e.result.text.trim()) {
+                console.log('Sending partial transcription:', e.result.text);
+                ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
+              }
+            };
+            
+            newRecognizer.recognized = (s, e) => {
+              if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+                console.log('Final result:', e.result.text);
+                if (e.result.text && e.result.text.trim()) {
+                  console.log('Sending final transcription:', e.result.text);
+                  ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+                } else {
+                  console.log('Empty final result, not sending');
+                }
+              }
+            };
+            
+            newRecognizer.canceled = (s, e) => {
+              ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
+              newRecognizer.close();
+            };
+            
+            newRecognizer.sessionStopped = (s, e) => {
+              ws.send(JSON.stringify({ type: 'done' }));
+              newRecognizer.close();
+            };
+            
             // Update language during session
             const language = message.sourceLanguage || 'ar-SA';
             speechConfig.speechRecognitionLanguage = language;
             console.log('Updated speech language to:', language);
+            
+            // بدء التعرف الجديد
+            newRecognizer.startContinuousRecognitionAsync();
+            
+            // تحديث المراجع
+            Object.assign(pushStream, newPushStream);
+            Object.assign(recognizer, newRecognizer);
+            
             ws.send(JSON.stringify({ type: 'status', message: 'Language updated to: ' + language }));
           } else if (message.type === 'audio') {
             // Handle audio data
@@ -585,12 +698,36 @@ function startWebSocketServer(server) {
             if (audioData) {
               const audioBuffer = Buffer.from(audioData, 'base64');
               console.log('Received audio chunk from client. Size:', audioBuffer.length, 'SourceLang:', message.sourceLanguage, 'TargetLang:', message.targetLanguage);
-              pushStream.write(audioBuffer);
+              
+              // التحقق من أن البيانات ليست فارغة أو قديمة جداً
+              if (audioBuffer.length > 0) {
+                pushStream.write(audioBuffer);
+              } else {
+                console.log('Skipping empty audio buffer');
+              }
             }
           }
         } else {
           // Handle raw audio data (fallback)
           console.log('Received raw audio chunk from client. Size:', data.length || data.byteLength);
+          
+          // التحقق من أن البيانات ليست فارغة
+          if (data && (data.length > 0 || data.byteLength > 0)) {
+            if (data instanceof Buffer) {
+              pushStream.write(data);
+            } else if (data instanceof ArrayBuffer) {
+              pushStream.write(Buffer.from(data));
+            } else {
+              pushStream.write(Buffer.from(data));
+            }
+          } else {
+            console.log('Skipping empty raw audio data');
+          }
+        }
+      } catch (error) {
+        console.error('Error processing WebSocket message:', error);
+        // Fallback to raw audio processing
+        if (data && (data.length > 0 || data.byteLength > 0)) {
           if (data instanceof Buffer) {
             pushStream.write(data);
           } else if (data instanceof ArrayBuffer) {
@@ -598,23 +735,23 @@ function startWebSocketServer(server) {
           } else {
             pushStream.write(Buffer.from(data));
           }
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-        // Fallback to raw audio processing
-        if (data instanceof Buffer) {
-          pushStream.write(data);
-        } else if (data instanceof ArrayBuffer) {
-          pushStream.write(Buffer.from(data));
         } else {
-          pushStream.write(Buffer.from(data));
+          console.log('Skipping empty data in fallback processing');
         }
       }
     });
     ws.on('close', () => {
       console.log('WS client disconnected');
-      pushStream.close();
-      recognizer.stopContinuousRecognitionAsync();
+      
+      // تنظيف شامل للجلسة
+      try {
+        pushStream.close();
+        recognizer.stopContinuousRecognitionAsync();
+        recognizer.close();
+        console.log('Session cleaned up completely');
+      } catch (error) {
+        console.error('Error during session cleanup:', error);
+      }
     });
   });
 }

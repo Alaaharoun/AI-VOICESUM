@@ -163,6 +163,7 @@ class WebAudioService implements AudioService {
   private isInitialized = false;
   private isRecording = false;
   private mimeType: string;
+  private audioChunks: Blob[] = []; // إضافة مصفوفة لتخزين البيانات المؤقتة
 
   constructor() {
     this.mimeType = this.getSupportedMimeType();
@@ -228,7 +229,7 @@ class WebAudioService implements AudioService {
     }
 
     try {
-      // إنشاء AudioContext
+      // إنشاء AudioContext جديد بدون تنظيف سابق
       this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
       
       // طلب إذن المايكروفون
@@ -258,10 +259,18 @@ class WebAudioService implements AudioService {
     Logger.info('Starting web audio recording...');
     
     try {
+      // تنظيف البيانات القديمة قبل البدء
+      this.audioChunks = [];
+      
       // استئناف AudioContext إذا كان معلقاً
       if (this.audioContext.state === 'suspended') {
         await this.audioContext.resume();
-        Logger.info('AudioContext resumed');
+        Logger.info('AudioContext resumed from suspended state');
+      }
+      
+      // التأكد من أن AudioContext نشط
+      if (this.audioContext.state !== 'running') {
+        Logger.warn(`AudioContext state is: ${this.audioContext.state}`);
       }
       
       // فحص إضافي للتأكد من أن Stream لا يزال نشطاً
@@ -270,26 +279,32 @@ class WebAudioService implements AudioService {
         throw new Error('Audio stream is no longer active');
       }
       
+      // إنشاء MediaRecorder جديد في كل مرة
       this.mediaRecorder = new MediaRecorder(stream, {
         mimeType: this.mimeType
       });
       
       this.mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 0 && this.dataCallback) {
-          // تحويل Blob إلى base64
-          const reader = new FileReader();
-          reader.onload = () => {
-            const result = reader.result as string;
-            const base64Data = result.split(',')[1];
-            this.dataCallback({
-              data: base64Data,
-              size: base64Data.length
-            });
-          };
-          reader.onerror = (error) => {
-            Logger.error('FileReader error:', error);
-          };
-          reader.readAsDataURL(event.data);
+        if (event.data.size > 0) {
+          // تخزين البيانات في المصفوفة المؤقتة
+          this.audioChunks.push(event.data);
+          
+          if (this.dataCallback && typeof this.dataCallback === 'function') {
+            // تحويل Blob إلى base64
+            const reader = new FileReader();
+            reader.onload = () => {
+              const result = reader.result as string;
+              const base64Data = result.split(',')[1];
+              this.dataCallback!({
+                data: base64Data,
+                size: base64Data.length
+              });
+            };
+            reader.onerror = (error) => {
+              Logger.error('FileReader error:', error);
+            };
+            reader.readAsDataURL(event.data);
+          }
         }
       };
       
@@ -297,9 +312,9 @@ class WebAudioService implements AudioService {
         Logger.error('MediaRecorder error:', event);
       };
       
-      this.mediaRecorder.start(100); // إرسال بيانات كل 100ms
+      this.mediaRecorder.start(200); // إرسال بيانات كل 200ms لتجميع عينات أكبر
       this.isRecording = true;
-      Logger.info('Web audio recording started');
+      Logger.info('Web audio recording started with fresh MediaRecorder');
     } catch (error) {
       Logger.error('Failed to start web audio recording:', error);
       throw new Error(`Failed to start web audio recording: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -317,7 +332,11 @@ class WebAudioService implements AudioService {
     try {
       this.mediaRecorder.stop();
       this.isRecording = false;
-      Logger.info('Web audio recording stopped');
+      
+      // تنظيف البيانات المؤقتة
+      this.audioChunks = [];
+      
+      Logger.info('Web audio recording stopped and chunks cleared');
     } catch (error) {
       Logger.error('Failed to stop web audio recording:', error);
       throw new Error(`Failed to stop web audio recording: ${error instanceof Error ? error.message : 'Unknown error'}`);
@@ -337,9 +356,12 @@ class WebAudioService implements AudioService {
     
     try {
       // إيقاف التسجيل إذا كان نشطاً
-      if (this.isRecording && this.mediaRecorder) {
+      if (this.isRecording && this.mediaRecorder && typeof this.mediaRecorder.stop === 'function') {
         await this.stop();
       }
+      
+      // تنظيف البيانات المؤقتة
+      this.audioChunks = [];
       
       // إيقاف مسارات الصوت
       const stream = this.stream;
@@ -367,9 +389,12 @@ class WebAudioService implements AudioService {
         Logger.info('AudioContext closed');
       }
       
+      // تنظيف MediaRecorder
+      this.mediaRecorder = null;
+      
       this.removeAllListeners();
       this.isInitialized = false;
-      Logger.info('Web audio service cleaned up');
+      Logger.info('Web audio service cleaned up completely');
     } catch (error) {
       Logger.error('Failed to cleanup web audio service:', error);
     }
@@ -389,5 +414,16 @@ export function getAudioService(): AudioService {
   }
 }
 
+// دالة تحويل Base64 إلى Uint8Array للمتصفح
+function base64ToUint8Array(base64: string): Uint8Array {
+  const binary = atob(base64);
+  const len = binary.length;
+  const bytes = new Uint8Array(len);
+  for (let i = 0; i < len; i++) {
+    bytes[i] = binary.charCodeAt(i);
+  }
+  return bytes;
+}
+
 // تصدير Logger للاستخدام الخارجي
-export { Logger }; 
+export { Logger, base64ToUint8Array }; 
