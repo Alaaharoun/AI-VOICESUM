@@ -42,7 +42,7 @@ export default function LiveTranslationScreen() {
   }>();
 
   // State management
-  const [selectedSourceLanguage, setSelectedSourceLanguage] = useState<string>(sourceLanguage || 'auto');
+  const [selectedSourceLanguage, setSelectedSourceLanguage] = useState<Language | null>(null);
   const [selectedTargetLanguage, setSelectedTargetLanguage] = useState<Language | null>(null);
   const [transcriptions, setTranscriptions] = useState<TranscriptionItem[]>([]);
   const [isRecording, setIsRecording] = useState(false);
@@ -51,8 +51,8 @@ export default function LiveTranslationScreen() {
   const [error, setError] = useState<string | null>(null);
   const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   
-  // NEW: Real-time translation state
-  const [isRealTimeMode, setIsRealTimeMode] = useState(false);
+  // Real-time translation state (always enabled now)
+  const isRealTimeMode = true; // Always enabled
   const [realTimeTranscription, setRealTimeTranscription] = useState<string>('');
   const [realTimeTranslation, setRealTimeTranslation] = useState<string>('');
 
@@ -67,12 +67,18 @@ export default function LiveTranslationScreen() {
   const chunkBufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // timeout لتجميع الـchunks
   const maxBufferTimeRef = useRef<number>(10000); // أقصى وقت للتجميع (10 ثوانٍ للاختبار)
 
-  // Initialize target language
+  // Initialize languages
   useEffect(() => {
     const languages = SpeechService.getAvailableLanguages();
+    
+    // Initialize target language
     const targetLang = languages.find(lang => lang.code === targetLanguage) || languages[0];
     setSelectedTargetLanguage(targetLang);
-  }, [targetLanguage]);
+    
+    // Initialize source language (default to auto-detect)
+    const sourceLang = languages.find(lang => lang.code === sourceLanguage) || { code: 'auto', name: 'Auto Detect', flag: '🌐' };
+    setSelectedSourceLanguage(sourceLang);
+  }, [targetLanguage, sourceLanguage]);
 
   // Helper function to convert language codes to Azure format
   const convertToAzureLanguage = (langCode: string): string => {
@@ -338,12 +344,12 @@ export default function LiveTranslationScreen() {
         // Validate and prepare language codes
         const supportedLanguages = SpeechService.getAvailableLanguages().map(lang => lang.code);
         
-        // Use auto detection for source language as requested by user
-        const sourceLang = 'auto'; // Always use auto detection for source
+        // Get source and target languages
+        const sourceLang = selectedSourceLanguage?.code || 'auto';
         const targetLang = selectedTargetLanguage?.code || 'en';
         
-        // For Azure, use a default language when auto is selected
-        const azureSourceLang = 'en-US'; // Default to English when auto detection is used
+        // For Azure, convert to Azure format or use default for auto detection
+        const azureSourceLang = sourceLang === 'auto' ? 'en-US' : convertToAzureLanguage(sourceLang);
         const azureTargetLang = convertToAzureLanguage(targetLang);
         
         // Validate target language only (source is auto)
@@ -353,7 +359,7 @@ export default function LiveTranslationScreen() {
           return;
         }
         
-        Logger.info('Using auto detection - Source: auto →', azureSourceLang, 'Target:', targetLang, '→', azureTargetLang);
+        Logger.info('Language configuration - Source:', sourceLang, '→', azureSourceLang, 'Target:', targetLang, '→', azureTargetLang);
         
         // Send initialization message with simplified configuration
         const initMessage = {
@@ -362,7 +368,7 @@ export default function LiveTranslationScreen() {
           targetLanguage: azureTargetLang,
           clientSideTranslation: true,
           realTimeMode: isRealTimeMode,
-          autoDetection: true, // Flag to indicate auto detection mode
+          autoDetection: sourceLang === 'auto', // True only when auto detection is selected
           audioConfig: {
             sampleRate: 16000,
             channels: 1,
@@ -515,7 +521,7 @@ export default function LiveTranslationScreen() {
                   const translatedText = await SpeechService.translateText(
                     data.text, 
                     selectedTargetLanguage?.code || 'ar',
-                    selectedSourceLanguage
+                    selectedSourceLanguage?.code
                   );
                   
                   Logger.info('Real-time translation result:', translatedText);
@@ -570,7 +576,7 @@ export default function LiveTranslationScreen() {
                   const translatedText = await SpeechService.translateText(
                     data.text, 
                     selectedTargetLanguage?.code || 'ar',
-                    selectedSourceLanguage
+                    selectedSourceLanguage?.code
                   );
                   
                   Logger.info('Translation result:', translatedText);
@@ -982,6 +988,15 @@ export default function LiveTranslationScreen() {
       }
       
       Logger.info('Audio streaming stopped successfully. Final buffer cleared only once at stop.');
+      
+      // Auto-navigate to summary page if we have transcriptions
+      setTimeout(() => {
+        if (transcriptions.length > 0 || realTimeTranscription) {
+          Logger.info('Auto-navigating to summary page');
+          router.push('/summary-view');
+        }
+      }, 1500); // Wait 1.5 seconds for any final transcriptions
+      
     } catch (error) {
       Logger.error('Failed to stop streaming:', error);
     }
@@ -1014,7 +1029,7 @@ export default function LiveTranslationScreen() {
           const newTranslatedText = await SpeechService.translateText(
             item.originalText,
             newTargetLanguage.code,
-            selectedSourceLanguage
+            selectedSourceLanguage?.code
           );
           return { ...item, translatedText: newTranslatedText };
         } catch (error) {
@@ -1062,7 +1077,7 @@ export default function LiveTranslationScreen() {
          const newTranslatedText = await SpeechService.translateText(
            realTimeTranscription,
            newTargetLanguage.code,
-           selectedSourceLanguage
+           selectedSourceLanguage?.code
          );
          Logger.info('Real-time retranslation result:', newTranslatedText);
          setRealTimeTranslation(newTranslatedText);
@@ -1097,7 +1112,7 @@ export default function LiveTranslationScreen() {
     
     // Notify server of language update
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      const sourceLang = selectedSourceLanguage && selectedSourceLanguage !== 'auto' ? selectedSourceLanguage : 'ar';
+      const sourceLang = selectedSourceLanguage && selectedSourceLanguage.code !== 'auto' ? selectedSourceLanguage.code : 'ar';
       const azureSourceLang = convertToAzureLanguage(sourceLang);
       const azureTargetLang = convertToAzureLanguage(newTargetLanguage.code);
       
@@ -1125,51 +1140,7 @@ export default function LiveTranslationScreen() {
     }
   };
 
-  // NEW: Toggle real-time mode
-  const toggleRealTimeMode = () => {
-    setIsRealTimeMode(!isRealTimeMode);
-    if (isRealTimeMode) {
-      // Switching from real-time to traditional mode
-      if (realTimeTranscription) {
-        // تجنب إضافة نفس النص مرتين
-        const isDuplicate = transcriptions.some(item => 
-          item.originalText === realTimeTranscription
-        );
-        
-        if (!isDuplicate) {
-          // تنظيف AsyncStorage قبل إضافة نص مكرر في الوضع التقليدي
-          AsyncStorage.removeItem('audio_cache').catch(() => {});
-          AsyncStorage.removeItem('transcription_cache').catch(() => {});
-          AsyncStorage.removeItem('translation_cache').catch(() => {});
-          
-          Logger.info('Traditional duplicate text added and cache cleared');
-          
-          // تنظيف إضافي قبل إضافة نصوص مكررة في الوضع التقليدي
-          AsyncStorage.removeItem('audio_cache').catch(() => {});
-          AsyncStorage.removeItem('transcription_cache').catch(() => {});
-          AsyncStorage.removeItem('translation_cache').catch(() => {});
-          
-          const newItem: TranscriptionItem = {
-            id: Date.now().toString(),
-            originalText: realTimeTranscription,
-            translatedText: realTimeTranslation,
-            timestamp: new Date()
-          };
-          setTranscriptions(prev => [...prev, newItem]);
-        }
-      }
-      setRealTimeTranscription('');
-      setRealTimeTranslation('');
-      
-      // تنظيف AsyncStorage عند تغيير الوضع - فقط في الموبايل
-      if (Platform.OS !== 'web') {
-        AsyncStorage.removeItem('audio_cache').catch(() => {});
-        AsyncStorage.removeItem('transcription_cache').catch(() => {});
-        AsyncStorage.removeItem('translation_cache').catch(() => {});
-      }
-    }
-    Logger.info('Real-time mode toggled to:', !isRealTimeMode);
-  };
+  // Real-time mode is now always enabled, no toggle needed
 
   const clearTranscriptions = () => {
     setTranscriptions([]);
@@ -1190,71 +1161,72 @@ export default function LiveTranslationScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Live Translation</Text>
       
-      {/* NEW: Real-time mode toggle */}
-      <View style={styles.realTimeToggle}>
-        <Text style={styles.toggleLabel}>Real-time Translation</Text>
-        <TouchableOpacity
-          style={[styles.toggleButton, isRealTimeMode && styles.toggleButtonActive]}
-          onPress={toggleRealTimeMode}
-        >
-          <Text style={[styles.toggleText, isRealTimeMode && styles.toggleTextActive]}>
-            {isRealTimeMode ? 'ON' : 'OFF'}
-        </Text>
-        </TouchableOpacity>
+      {/* Source Language selector */}
+      <View style={styles.languageSelector}>
+                 <Text style={styles.sectionLabel}>From (Source Language):</Text>
+        <LanguageSelector
+          selectedLanguage={selectedSourceLanguage}
+          onSelectLanguage={setSelectedSourceLanguage}
+          disabled={false}
+        />
       </View>
 
-             {/* Language selector */}
+             {/* Target Language selector */}
        <View style={styles.languageSelector}>
+         <Text style={styles.sectionLabel}>To (Target Language):</Text>
         <LanguageSelector
           selectedLanguage={selectedTargetLanguage}
            onSelectLanguage={handleTargetLanguageChange}
-           disabled={isRecording}
+           disabled={false}
         />
       </View>
       
-      {/* NEW: Real-time display */}
-      {isRealTimeMode && isRecording && (
-        <View style={styles.realTimeContainer}>
-          <View style={styles.realTimeSection}>
-            <Text style={styles.realTimeLabel}>LIVE Original</Text>
-            <Text style={styles.realTimeText}>{realTimeTranscription || 'Listening...'}</Text>
-          </View>
-          <View style={styles.realTimeSection}>
-            <Text style={styles.realTimeLabel}>LIVE Translation</Text>
-            <Text style={styles.realTimeText}>{realTimeTranslation || 'Translating...'}</Text>
-          </View>
+      {/* Live Translation Display - Old Style Design */}
+      <View style={styles.translationDisplay}>
+        <View style={styles.translationCard}>
+          {/* Live real-time section when recording */}
+          {isRecording && (
+            <View style={styles.liveSection}>
+              <View style={styles.originalBox}>
+                <Text style={styles.boxTitle}>Original</Text>
+                <Text style={styles.liveText}>{realTimeTranscription || 'Listening...'}</Text>
+              </View>
+              <View style={styles.translationBox}>
+                <Text style={styles.boxTitle}>Translation</Text>
+                <Text style={styles.liveText}>{realTimeTranslation || 'Translating...'}</Text>
+              </View>
+            </View>
+          )}
+          
+          {/* Historical transcriptions */}
+          <ScrollView style={styles.historyContainer}>
+            {transcriptions.length === 0 && !isRecording ? (
+              <Text style={styles.emptyText}>
+                Start recording to see live translation!
+              </Text>
+            ) : (
+              transcriptions.map((item) => (
+                <View key={item.id} style={styles.historyItem}>
+                  <View style={styles.originalBox}>
+                    <Text style={styles.boxTitle}>Original</Text>
+                    <Text style={styles.historyText}>{item.originalText}</Text>
+                  </View>
+                  <View style={styles.translationBox}>
+                    <Text style={styles.boxTitle}>Translation</Text>
+                    <Text style={styles.historyText}>{item.translatedText}</Text>
+                  </View>
+                </View>
+              ))
+            )}
+          </ScrollView>
         </View>
-      )}
+      </View>
       
       {/* Error display */}
       {error && (
         <View style={styles.errorContainer}>
           <Text style={styles.errorText}>{error}</Text>
         </View>
-      )}
-
-             {/* Traditional transcriptions list */}
-       {(!isRealTimeMode || !isRecording) && (
-         <ScrollView style={styles.transcriptionContainer}>
-          {transcriptions.length === 0 ? (
-            <Text style={styles.emptyText}>
-              {isRealTimeMode ? 'Start recording to see real-time translation!' : 'No transcriptions yet'}
-          </Text>
-          ) : (
-            transcriptions.map((item) => (
-              <View key={item.id} style={styles.transcriptionItem}>
-                <View style={styles.originalSection}>
-                  <Text style={styles.sectionLabel}>Original</Text>
-                  <Text style={styles.transcriptionText}>{item.originalText}</Text>
-                    </View>
-                <View style={styles.translationSection}>
-                  <Text style={styles.sectionLabel}>Translation</Text>
-                  <Text style={styles.transcriptionText}>{item.translatedText}</Text>
-                  </View>
-              </View>
-            ))
-            )}
-          </ScrollView>
       )}
 
       {/* Action buttons */}
@@ -1268,7 +1240,7 @@ export default function LiveTranslationScreen() {
           disabled={isInitializing || !selectedTargetLanguage || !isReady}
           >
             <Text style={styles.recordButtonText}>
-              {isRecording ? 'Stop Recording' : 'Start Recording'}
+              {isRecording ? 'Stop Live Streaming' : 'Start Live Streaming'}
             </Text>
           </TouchableOpacity>
           
@@ -1329,17 +1301,7 @@ export default function LiveTranslationScreen() {
         </View>
       )}
       
-      {/* Status message for audio buffering */}
-      {isRecording && chunkBufferRef.current && Array.isArray(chunkBufferRef.current) && chunkBufferRef.current.length > 0 && (
-        <View style={[styles.statusContainer, { backgroundColor: '#fff3e0', borderLeftColor: '#ff9800' }]}>
-          <Text style={[styles.statusText, { color: '#e65100' }]}>
-            {Platform.OS === 'web' 
-              ? `Buffering audio (${chunkBufferRef.current.length} chunks, max 10s)...` 
-              : `تجميع الصوت (${chunkBufferRef.current.length} chunks، أقصى 10 ثوانٍ)...`
-            }
-          </Text>
-        </View>
-      )}
+      {/* Removed chunks status message as requested by user */}
     </View>
   );
 }
@@ -1532,5 +1494,70 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 14,
     fontWeight: 'bold',
+  },
+  // New styles for improved design
+  translationDisplay: {
+    flex: 1,
+    marginVertical: 10,
+  },
+  translationCard: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 15,
+    margin: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.1,
+    shadowRadius: 4,
+    elevation: 3,
+    minHeight: 200,
+  },
+  liveSection: {
+    marginBottom: 15,
+    paddingBottom: 15,
+    borderBottomWidth: 1,
+    borderBottomColor: '#e0e0e0',
+  },
+  originalBox: {
+    backgroundColor: '#f8f9fa',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 10,
+    borderLeftWidth: 4,
+    borderLeftColor: '#2196f3',
+  },
+  translationBox: {
+    backgroundColor: '#f0f8ff',
+    padding: 12,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4caf50',
+  },
+  boxTitle: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 5,
+    textTransform: 'uppercase',
+  },
+  liveText: {
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 22,
+    fontWeight: '500',
+  },
+  historyContainer: {
+    maxHeight: 300,
+  },
+  historyItem: {
+    marginBottom: 15,
+    paddingBottom: 10,
+    borderBottomWidth: 1,
+    borderBottomColor: '#f0f0f0',
+  },
+  historyText: {
+    fontSize: 14,
+    color: '#333',
+    lineHeight: 20,
   },
 }); 

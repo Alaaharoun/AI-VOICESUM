@@ -3,7 +3,7 @@ import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Button, Alert } f
 import { useRouter, useLocalSearchParams } from 'expo-router';
 import { DownloadHelper } from '@/utils/downloadHelper';
 import { SpeechService } from '@/services/speechService';
-import { Copy, Volume2, Save } from 'lucide-react-native';
+import { Copy, Volume2, Save, Clipboard as ClipboardIcon } from 'lucide-react-native';
 import * as Clipboard from 'expo-clipboard';
 import Tts from 'react-native-tts';
 import { useSummary } from '@/contexts/SummaryContext';
@@ -159,6 +159,24 @@ export default function SummaryView() {
     }
   };
 
+  const handlePaste = async (type: string) => {
+    try {
+      const text = await Clipboard.getStringAsync();
+      if (text && text.trim().length > 0) {
+        if (type === 'Transcription') {
+          setTranscription(text);
+        } else if (type === 'Translation') {
+          setTranslation(text);
+        }
+        Alert.alert('Success', `${type} pasted from clipboard!`);
+      } else {
+        Alert.alert('Notice', 'Clipboard is empty or contains no text');
+      }
+    } catch (err) {
+      Alert.alert('Error', 'Failed to paste from clipboard');
+    }
+  };
+
   const [speakingText, setSpeakingText] = React.useState<string | null>(null);
 
   const handleSpeakToggle = async (text: string, type: string, lang?: string) => {
@@ -224,22 +242,30 @@ export default function SummaryView() {
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Original Transcription:</Text>
-            {effectiveTranscription && (
               <View style={styles.actionButtons}>
+                {effectiveTranscription && (
+                  <>
+                    <TouchableOpacity 
+                      style={styles.actionButton} 
+                      onPress={() => handleCopy(effectiveTranscription, 'Transcription')}
+                    >
+                      <Copy size={16} color="#2563EB" />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.actionButton} 
+                      onPress={() => handleSpeakToggle(effectiveTranscription, 'transcription')}
+                    >
+                      <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranscription) ? '#DC2626' : '#2563EB'} />
+                    </TouchableOpacity>
+                  </>
+                )}
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleCopy(effectiveTranscription, 'Transcription')}
+                  onPress={() => handlePaste('Transcription')}
                 >
-                  <Copy size={16} color="#2563EB" />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={styles.actionButton} 
-                  onPress={() => handleSpeakToggle(effectiveTranscription, 'transcription')}
-                >
-                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranscription) ? '#DC2626' : '#2563EB'} />
+                  <ClipboardIcon size={16} color="#059669" />
                 </TouchableOpacity>
               </View>
-            )}
           </View>
           <Text style={styles.text}>
             {effectiveTranscription || 'No transcription available'}
@@ -249,22 +275,30 @@ export default function SummaryView() {
         <View style={styles.sectionContainer}>
           <View style={styles.sectionHeader}>
         <Text style={styles.sectionTitle}>Translation {effectiveTargetLanguage ? `(${effectiveTargetLanguage})` : ''}:</Text>
-            {effectiveTranslation && (
               <View style={styles.actionButtons}>
+                {effectiveTranslation && (
+                  <>
+                    <TouchableOpacity 
+                      style={styles.actionButton} 
+                      onPress={() => handleCopy(effectiveTranslation, 'Translation')}
+                    >
+                      <Copy size={16} color="#8B5CF6" />
+                    </TouchableOpacity>
+                    <TouchableOpacity 
+                      style={styles.actionButton} 
+                      onPress={() => handleSpeakToggle(effectiveTranslation, 'translation')}
+                    >
+                      <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranslation) ? '#DC2626' : '#8B5CF6'} />
+                    </TouchableOpacity>
+                  </>
+                )}
                 <TouchableOpacity 
                   style={styles.actionButton} 
-                  onPress={() => handleCopy(effectiveTranslation, 'Translation')}
+                  onPress={() => handlePaste('Translation')}
                 >
-                  <Copy size={16} color="#8B5CF6" />
-                </TouchableOpacity>
-                <TouchableOpacity 
-                  style={styles.actionButton} 
-                  onPress={() => handleSpeakToggle(effectiveTranslation, 'translation')}
-                >
-                  <Volume2 size={16} color={(isSpeaking && speakingText === effectiveTranslation) ? '#DC2626' : '#8B5CF6'} />
+                  <ClipboardIcon size={16} color="#059669" />
                 </TouchableOpacity>
               </View>
-            )}
           </View>
           <Text style={styles.text}>
             {effectiveTranslation || 'No translation available'}
