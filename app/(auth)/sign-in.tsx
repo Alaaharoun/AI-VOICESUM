@@ -42,7 +42,12 @@ export default function SignInScreen() {
 
   const getFriendlyErrorMessage = (error: any) => {
     if (!error) return 'An unexpected error occurred. Please try again.';
-    const msg = error.message || error.error_description || error.code || '';
+    
+    // Safe error handling - check for null/undefined before accessing properties
+    const msg = (error && typeof error === 'object') 
+      ? (error.message || error.error_description || error.code || error.toString?.() || '')
+      : String(error || '');
+      
     if (msg.includes('User already registered') || msg.includes('already registered')) {
       return 'This email is already registered.';
     }
@@ -72,7 +77,10 @@ export default function SignInScreen() {
     
     try {
       console.log('[SignIn] Calling signIn function...');
-      const { error } = await signIn(email, password);
+      const result = await signIn(email, password);
+      
+      // Safe access to result and error
+      const error = result?.error || null;
       
       if (error) {
         console.error('[SignIn] Sign in error:', error);

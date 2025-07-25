@@ -121,18 +121,39 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     };
   }, []);
 
-  const signIn = async (email: string, password: string) => {
+  const signIn = async (email: string, password: string): Promise<{ error: any }> => {
     console.log('[AuthContext] Attempting sign in for:', email);
     try {
+      if (!supabase) {
+        throw new Error('Supabase not configured');
+      }
+      
       const result = await supabase.auth.signInWithPassword({ email, password });
       console.log('[AuthContext] Sign in result:', result.error ? 'Error' : 'Success');
-      if (result.error && typeof (result.error as any).message !== 'string') {
-        result.error = { message: String(result.error) } as any;
+      
+      // Ensure we always return an object with error property
+      if (result.error) {
+        return { 
+          error: {
+            message: typeof result.error === 'object' && result.error?.message 
+              ? result.error.message 
+              : String(result.error || 'Sign in failed')
+          }
+        };
       }
-      return result;
+      
+      // Success case - return no error
+      return { error: null };
+      
     } catch (error) {
       console.error('[AuthContext] Sign in error:', error);
-      return { error: { message: error && typeof (error as any).message === 'string' ? (error as any).message : String(error) } };
+      return { 
+        error: { 
+          message: error && typeof error === 'object' && (error as any).message 
+            ? (error as any).message 
+            : String(error || 'Network error')
+        } 
+      };
     }
   };
 
