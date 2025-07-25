@@ -158,11 +158,20 @@ export default function LiveTranslationScreen() {
       
       // إنشاء خدمة صوت جديدة بدون تنظيف سابق
       const audioService = getAudioService();
-      await audioService.init();
+      
+      // Configure audio service for Azure Speech SDK compatibility
+      const audioConfig = {
+        sampleRate: 16000, // Azure Speech SDK expects 16kHz
+        channels: 1, // Mono
+        bitsPerSample: 16, // 16-bit
+        encoding: 'pcm_s16le' // Linear PCM 16-bit little-endian
+      };
+      
+      await audioService.init(audioConfig);
       audioServiceRef.current = audioService;
       
       setIsReady(true);
-      Logger.info('Audio service initialized successfully with fresh data');
+      Logger.info('Audio service initialized successfully with Azure-compatible settings:', audioConfig);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Logger.error('Failed to initialize audio service:', errorMessage);
@@ -242,15 +251,29 @@ export default function LiveTranslationScreen() {
       offset += chunk.byteLength;
     });
     
-    Logger.info(`[sendBufferedChunks] 🚀 SENDING COMBINED CHUNK - Total size: ${combinedChunk.byteLength} bytes from ${chunkBufferRef.current.length} chunks`);
+    // Validate the combined chunk for Azure Speech SDK
+    const durationSeconds = totalSize / (16000 * 2); // 16kHz, 16-bit = 2 bytes per sample
+    Logger.info(`[sendBufferedChunks] 🚀 SENDING COMBINED CHUNK:
+      - Total size: ${combinedChunk.byteLength} bytes
+      - From ${chunkBufferRef.current.length} chunks
+      - Estimated duration: ${durationSeconds.toFixed(2)}s
+      - Sample rate validation: ${totalSize % 2 === 0 ? '✅ Valid' : '❌ Invalid (not 16-bit aligned)'}`);
     
     if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-      wsRef.current.send(combinedChunk);
-      manageWebSocketTimeout();
-      Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully`);
+      try {
+        wsRef.current.send(combinedChunk);
+        manageWebSocketTimeout();
+        Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully to Azure Speech SDK`);
+      } catch (sendError) {
+        Logger.error(`[sendBufferedChunks] ❌ Failed to send chunk:`, sendError);
+        pendingChunksRef.current.push(combinedChunk);
+        Logger.warn(`[sendBufferedChunks] ⚠️ Chunk stored in pending queue due to send error`);
+      }
     } else {
       pendingChunksRef.current.push(combinedChunk);
-      Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsRef.current?.readyState}), combined chunk stored in pending queue`);
+      const wsState = wsRef.current?.readyState;
+      const wsStateText = wsState === 0 ? 'CONNECTING' : wsState === 1 ? 'OPEN' : wsState === 2 ? 'CLOSING' : wsState === 3 ? 'CLOSED' : 'UNKNOWN';
+      Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), combined chunk stored in pending queue`);
     }
     
     // تفريغ الـbuffer
@@ -314,38 +337,42 @@ export default function LiveTranslationScreen() {
         
         // Validate and prepare language codes
         const supportedLanguages = SpeechService.getAvailableLanguages().map(lang => lang.code);
-        const sourceLang = selectedSourceLanguage && selectedSourceLanguage !== 'auto' ? selectedSourceLanguage : 'ar';
+        
+        // Use auto detection for source language as requested by user
+        const sourceLang = 'auto'; // Always use auto detection for source
         const targetLang = selectedTargetLanguage?.code || 'en';
         
-        const azureSourceLang = convertToAzureLanguage(sourceLang);
+        // For Azure, use a default language when auto is selected
+        const azureSourceLang = 'en-US'; // Default to English when auto detection is used
         const azureTargetLang = convertToAzureLanguage(targetLang);
         
-        // Validate source language
-        if (!supportedLanguages.includes(sourceLang)) {
-          Logger.error('Unsupported source language:', sourceLang);
-          setError(`Unsupported source language: ${sourceLang}`);
-          return;
-        }
-        
-        // Validate target language
+        // Validate target language only (source is auto)
         if (!supportedLanguages.includes(targetLang)) {
           Logger.error('Unsupported target language:', targetLang);
           setError(`Unsupported target language: ${targetLang}`);
           return;
         }
         
-        Logger.info('Using validated languages - Source:', sourceLang, 'Target:', targetLang);
+        Logger.info('Using auto detection - Source: auto →', azureSourceLang, 'Target:', targetLang, '→', azureTargetLang);
         
-        // Send initialization message
+        // Send initialization message with simplified configuration
         const initMessage = {
           type: 'init',
-          language: azureSourceLang,
+          language: azureSourceLang, // Use default English for Azure when auto is selected
           targetLanguage: azureTargetLang,
           clientSideTranslation: true,
-          realTimeMode: isRealTimeMode // NEW: Send real-time mode to server
+          realTimeMode: isRealTimeMode,
+          autoDetection: true, // Flag to indicate auto detection mode
+          audioConfig: {
+            sampleRate: 16000,
+            channels: 1,
+            bitsPerSample: 16,
+            encoding: 'pcm_s16le'
+          }
         };
+        
         ws.send(JSON.stringify(initMessage));
-        Logger.info('Init message sent with language:', initMessage.language, 'and targetLanguage:', initMessage.targetLanguage);
+        Logger.info('Init message sent with auto detection:', initMessage);
         
         // تنظيف AsyncStorage بعد إرسال رسالة التهيئة - فقط في الموبايل
         if (Platform.OS !== 'web') {
@@ -752,10 +779,15 @@ export default function LiveTranslationScreen() {
         // طباعة معلومات الـchunk للتشخيص
         const chunkSize = chunk.size || 0;
         const timestamp = Date.now();
-        Logger.info(`[onData] 🎵 Audio chunk received - Size: ${chunkSize} bytes, Time: ${timestamp}, Expected: ~${5000 * 48} bytes (5000ms @ 48kHz)`);
         
-        // تجاهل الـchunks الصغيرة جداً (صمت) - عتبة أعلى
-        if (chunkSize < 5000) {
+        // Calculate expected chunk size for 16kHz, 16-bit, mono PCM
+        // For 100ms chunks: 16000 samples/sec * 0.1 sec * 2 bytes/sample = 3200 bytes
+        const expectedChunkSize = Math.floor(16000 * 0.1 * 2); // ~3200 bytes for 100ms
+        
+        Logger.info(`[onData] 🎵 Audio chunk received - Size: ${chunkSize} bytes, Time: ${timestamp}, Expected: ~${expectedChunkSize} bytes (100ms @ 16kHz)`);
+        
+        // تجاهل الـchunks الصغيرة جداً (صمت) - عتبة محدثة للـ16kHz
+        if (chunkSize < 1600) { // ~50ms worth of audio at 16kHz
           Logger.warn(`[onData] ⏭️ Skipping small chunk (${chunkSize} bytes) - likely silence`);
           return;
         }
@@ -765,6 +797,12 @@ export default function LiveTranslationScreen() {
         try {
           raw = base64ToUint8Array(chunk.data);
           Logger.info(`[onData] ✅ Successfully converted chunk to Uint8Array: ${raw.byteLength} bytes`);
+          
+          // Validate audio data format (basic check)
+          if (raw.byteLength % 2 !== 0) {
+            Logger.warn(`[onData] ⚠️ Audio chunk size not aligned to 16-bit samples: ${raw.byteLength} bytes`);
+          }
+          
         } catch (error) {
           Logger.error('[onData] ❌ Failed to convert chunk to binary:', error);
           return;
@@ -774,9 +812,13 @@ export default function LiveTranslationScreen() {
         chunkBufferRef.current.push(raw);
         Logger.info(`[onData] 📦 Added chunk to buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
         
-        // إذا كان الحجم كبير (أكثر من 100000 bytes)، أرسل فوراً
-        if (raw.byteLength > 100000) {
-          Logger.info(`[onData] 🚀 Large chunk detected (${raw.byteLength} bytes), sending immediately`);
+        // تحديد استراتيجية الإرسال بناءً على حجم البيانات - إرسال مستمر بدون timeout
+        const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+        const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio (تقليل الحجم للاستجابة الأسرع)
+        
+        // إرسال البيانات فوراً عند الوصول للحجم المطلوب (بدون timeout)
+        if (bufferSize >= targetBufferSize) {
+          Logger.info(`[onData] 🚀 Buffer size reached target (${bufferSize}/${targetBufferSize} bytes), sending immediately`);
           sendBufferedChunks();
           return;
         }
@@ -787,13 +829,19 @@ export default function LiveTranslationScreen() {
           Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
         }
         
-        // تعيين timeout جديد لتجميع الـchunks (30 ثانية)
-        chunkBufferTimeoutRef.current = setTimeout(() => {
-          Logger.info(`[onData] ⏰ Buffer timeout reached (${maxBufferTimeRef.current}ms), calling sendBufferedChunks`);
-          sendBufferedChunks();
-        }, maxBufferTimeRef.current); // تجميع لمدة 30 ثانية
-        
-        Logger.info(`[onData] ⏰ Set new buffer timeout for ${maxBufferTimeRef.current}ms`);
+        // لا نستخدم timeout في الترجمة الفورية - فقط إرسال مباشر أو عند الإيقاف
+        if (!isRealTimeMode) {
+          // للتسجيل العادي فقط - استخدام timeout
+          const bufferTimeout = 2000; // 2 seconds for regular recording
+          chunkBufferTimeoutRef.current = setTimeout(() => {
+            Logger.info(`[onData] ⏰ Buffer timeout reached (${bufferTimeout}ms), calling sendBufferedChunks`);
+            sendBufferedChunks();
+          }, bufferTimeout);
+          
+          Logger.info(`[onData] ⏰ Set buffer timeout for regular mode: ${bufferTimeout}ms (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+        } else {
+          Logger.info(`[onData] 🔴 Real-time mode: No timeout, buffer will be sent only on size target or stop (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+        }
         
         // تنظيف AsyncStorage عند إرسال بيانات صوتية - فقط في الموبايل
         if (Platform.OS !== 'web') {
@@ -803,21 +851,28 @@ export default function LiveTranslationScreen() {
         }
       });
       
-    setIsRecording(true);
+      setIsRecording(true);
       setError(null);
       
       // تنظيف الـbuffer عند بدء التسجيل
       chunkBufferRef.current = [];
-      Logger.info('[startStreaming] 🧹 Cleared chunk buffer');
+      Logger.info('[startStreaming] 🧹 Cleared chunk buffer for new recording session');
+      
+      // إلغاء أي timeout موجود من جلسة سابقة
+      if (chunkBufferTimeoutRef.current) {
+        clearTimeout(chunkBufferTimeoutRef.current);
+        chunkBufferTimeoutRef.current = null;
+        Logger.info('[startStreaming] ⏰ Cleared any existing buffer timeout');
+      }
       
       // NEW: Clear real-time data when starting
       if (isRealTimeMode) {
         setRealTimeTranscription('');
         setRealTimeTranslation('');
-        Logger.info('[startStreaming] Cleared real-time data for new recording');
+        Logger.info('[startStreaming] 🔴 Real-time mode: Cleared real-time data for new recording');
       }
       
-      Logger.info('[startStreaming] ✅ Live streaming started successfully');
+      Logger.info(`[startStreaming] ✅ Live streaming started successfully (Real-time mode: ${isRealTimeMode})`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Logger.error('Failed to start streaming:', errorMessage);
@@ -831,14 +886,31 @@ export default function LiveTranslationScreen() {
     try {
       Logger.info('Stopping audio streaming...');
       
+      // إرسال أي chunks متبقية في الـbuffer قبل الإيقاف
+      if (chunkBufferRef.current.length > 0) {
+        Logger.info(`[stopStreaming] 📤 Sending remaining ${chunkBufferRef.current.length} chunks before stopping`);
+        sendBufferedChunks();
+      }
+      
       if (audioServiceRef.current && isReady) {
         await audioServiceRef.current.stop();
         Logger.info('Audio service stopped');
       }
       
+      // تنظيف الـbuffer بعد الإرسال
+      chunkBufferRef.current = [];
+      Logger.info('[stopStreaming] 🧹 Buffer cleared after sending remaining chunks');
+      
       // تنظيف القائمة المؤقتة
       pendingChunksRef.current = [];
       Logger.info('Pending chunks cleared');
+      
+      // إلغاء أي timeout موجود
+      if (chunkBufferTimeoutRef.current) {
+        clearTimeout(chunkBufferTimeoutRef.current);
+        chunkBufferTimeoutRef.current = null;
+        Logger.info('Buffer timeout cleared');
+      }
       
       // إلغاء الـtimeout الحالي
       if (wsTimeoutRef.current) {
@@ -860,9 +932,9 @@ export default function LiveTranslationScreen() {
       
       setIsRecording(false);
       
-      // إبقاء الاتصال مفتوحًا لمدة دقيقة إضافية
+      // إبقاء الاتصال مفتوحًا لمدة دقيقة إضافية للحصول على النتائج النهائية
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        Logger.info('Keeping WebSocket connection open for 1 minute after stopping');
+        Logger.info('Keeping WebSocket connection open for 1 minute to receive final results');
         
         // تعيين timeout جديد لإغلاق الاتصال بعد دقيقة
         wsTimeoutRef.current = setTimeout(() => {
@@ -909,7 +981,7 @@ export default function LiveTranslationScreen() {
         setRealTimeTranslation('');
       }
       
-      Logger.info('Audio streaming stopped, WebSocket kept open for 1 minute');
+      Logger.info('Audio streaming stopped successfully. Final buffer cleared only once at stop.');
     } catch (error) {
       Logger.error('Failed to stop streaming:', error);
     }
