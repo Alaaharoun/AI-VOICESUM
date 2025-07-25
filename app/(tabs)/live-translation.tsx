@@ -67,6 +67,7 @@ export default function LiveTranslationScreen() {
   const chunkBufferRef = useRef<Uint8Array[]>([]); // buffer لتجميع الـchunks
   const chunkBufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // timeout لتجميع الـchunks
   const maxBufferTimeRef = useRef<number>(10000); // أقصى وقت للتجميع (10 ثوانٍ للاختبار)
+  const scrollViewRef = useRef<ScrollView>(null); // ref for auto-scroll
 
   // Initialize languages
   useEffect(() => {
@@ -80,6 +81,24 @@ export default function LiveTranslationScreen() {
     const sourceLang = languages.find(lang => lang.code === sourceLanguage) || { code: 'auto', name: 'Auto Detect', flag: '🌐' };
     setSelectedSourceLanguage(sourceLang);
   }, [targetLanguage, sourceLanguage]);
+
+  // Auto-scroll to bottom when new transcriptions are added
+  useEffect(() => {
+    if (transcriptions.length > 0 && scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 100);
+    }
+  }, [transcriptions]);
+
+  // Auto-scroll for real-time transcription updates
+  useEffect(() => {
+    if (isRecording && realTimeTranscription && scrollViewRef.current) {
+      setTimeout(() => {
+        scrollViewRef.current?.scrollToEnd({ animated: true });
+      }, 50);
+    }
+  }, [realTimeTranscription, isRecording]);
 
   // Helper function to convert language codes to Azure format
   const convertToAzureLanguage = (langCode: string): string => {
@@ -1200,19 +1219,21 @@ export default function LiveTranslationScreen() {
           {/* Live real-time section when recording */}
           {isRecording && (
             <View style={styles.liveSection}>
-              <View style={styles.originalBox}>
-                <Text style={styles.boxTitle}>Original</Text>
-                <Text style={styles.liveText}>{realTimeTranscription || 'Listening...'}</Text>
-              </View>
-              <View style={styles.translationBox}>
-                <Text style={styles.boxTitle}>Translation</Text>
-                <Text style={styles.liveText}>{realTimeTranslation || 'Translating...'}</Text>
+              <View style={styles.horizontalContainer}>
+                <View style={[styles.originalBox, styles.leftBox]}>
+                  <Text style={styles.boxTitle}>Original</Text>
+                  <Text style={styles.liveText}>{realTimeTranscription || 'Listening...'}</Text>
+                </View>
+                <View style={[styles.translationBox, styles.rightBox]}>
+                  <Text style={styles.boxTitle}>Translation</Text>
+                  <Text style={styles.liveText}>{realTimeTranslation || 'Translating...'}</Text>
+                </View>
               </View>
             </View>
           )}
           
           {/* Historical transcriptions */}
-          <ScrollView style={styles.historyContainer}>
+          <ScrollView ref={scrollViewRef} style={styles.historyContainer}>
             {transcriptions.length === 0 && !isRecording ? (
               <Text style={styles.emptyText}>
                 Start recording to see live translation!
@@ -1220,13 +1241,15 @@ export default function LiveTranslationScreen() {
             ) : (
               transcriptions.map((item) => (
                 <View key={item.id} style={styles.historyItem}>
-                  <View style={styles.originalBox}>
-                    <Text style={styles.boxTitle}>Original</Text>
-                    <Text style={styles.historyText}>{item.originalText}</Text>
-                  </View>
-                  <View style={styles.translationBox}>
-                    <Text style={styles.boxTitle}>Translation</Text>
-                    <Text style={styles.historyText}>{item.translatedText}</Text>
+                  <View style={styles.horizontalContainer}>
+                    <View style={[styles.originalBox, styles.leftBox]}>
+                      <Text style={styles.boxTitle}>Original</Text>
+                      <Text style={styles.historyText}>{item.originalText}</Text>
+                    </View>
+                    <View style={[styles.translationBox, styles.rightBox]}>
+                      <Text style={styles.boxTitle}>Translation</Text>
+                      <Text style={styles.historyText}>{item.translatedText}</Text>
+                    </View>
                   </View>
                 </View>
               ))
@@ -1314,17 +1337,7 @@ export default function LiveTranslationScreen() {
         </View>
       )}
       
-      {/* Status message for connection kept open */}
-      {!isRecording && connectionStatus === 'connected' && (
-        <View style={[styles.statusContainer, { backgroundColor: '#e8f5e8', borderLeftColor: '#4caf50' }]}>
-          <Text style={[styles.statusText, { color: '#2e7d32' }]}>
-            {Platform.OS === 'web' 
-              ? 'Connection kept open for 1 minute...' 
-              : 'الاتصال مفتوح لمدة دقيقة...'
-            }
-          </Text>
-        </View>
-      )}
+
       
       {/* Removed chunks status message as requested by user */}
     </View>
@@ -1550,6 +1563,7 @@ const styles = StyleSheet.create({
     marginBottom: 10,
     borderLeftWidth: 4,
     borderLeftColor: '#2196f3',
+    minHeight: 80,
   },
   translationBox: {
     backgroundColor: '#f0f8ff',
@@ -1557,6 +1571,7 @@ const styles = StyleSheet.create({
     borderRadius: 8,
     borderLeftWidth: 4,
     borderLeftColor: '#4caf50',
+    minHeight: 80,
   },
   boxTitle: {
     fontSize: 12,
@@ -1576,9 +1591,12 @@ const styles = StyleSheet.create({
   },
   historyItem: {
     marginBottom: 15,
-    paddingBottom: 10,
+    paddingBottom: 15,
     borderBottomWidth: 1,
     borderBottomColor: '#f0f0f0',
+    backgroundColor: '#fafafa',
+    borderRadius: 8,
+    padding: 10,
   },
   historyText: {
     fontSize: 14,
@@ -1650,5 +1668,19 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '600',
     color: '#1b5e20',
+  },
+  // Horizontal layout styles
+  horizontalContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    alignItems: 'flex-start',
+  },
+  leftBox: {
+    flex: 1,
+    marginRight: 8,
+  },
+  rightBox: {
+    flex: 1,
+    marginLeft: 8,
   },
 }); 
