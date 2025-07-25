@@ -193,9 +193,10 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
 
     try {
       // Check subscription status using the new table structure
+      console.log('[SubscriptionContext] Checking subscription for user:', user.id);
       const { data: subscriptionData, error } = await supabase
         .from('user_subscriptions')
-        .select('*')
+        .select('id, user_id, subscription_type, active, expires_at, usage_seconds, created_at')
         .eq('user_id', user.id)
         .eq('active', true)
         .gt('expires_at', new Date().toISOString())
@@ -207,13 +208,14 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
       }
 
       if (subscriptionData) {
+        console.log('[SubscriptionContext] Active subscription found:', subscriptionData);
         if (mountedRef.current) {
           setIsSubscribed(true);
           setSubscriptionType(subscriptionData.subscription_type as 'monthly' | 'yearly');
           setSubscriptionPlan(subscriptionData.subscription_type as 'basic' | 'sup_pro' | 'unlimited');
-          setSubscriptionStatus(subscriptionData.subscription_status);
-          setSubscriptionEndDate(subscriptionData.subscription_end_date ? new Date(subscriptionData.subscription_end_date) : null);
-          setSubscriptionPlanName(subscriptionData.subscriptions?.name || null);
+          setSubscriptionStatus('active');
+          setSubscriptionEndDate(subscriptionData.expires_at ? new Date(subscriptionData.expires_at) : null);
+          setSubscriptionPlanName(subscriptionData.subscription_type || null);
           setHasFreeTrial(false);
           setFreeTrialExpired(false);
           setDailyUsageSeconds(0);

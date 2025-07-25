@@ -1258,12 +1258,12 @@ export default function LiveTranslationScreen() {
       )}
       
       {/* Status message for audio buffering */}
-      {isRecording && chunkBufferRef.current && chunkBufferRef.current.length > 0 && (
+      {isRecording && chunkBufferRef.current && Array.isArray(chunkBufferRef.current) && chunkBufferRef.current.length > 0 && (
         <View style={[styles.statusContainer, { backgroundColor: '#fff3e0', borderLeftColor: '#ff9800' }]}>
           <Text style={[styles.statusText, { color: '#e65100' }]}>
             {Platform.OS === 'web' 
-              ? `Buffering audio (${chunkBufferRef.current ? chunkBufferRef.current.length : 0} chunks, max 10s)...` 
-              : `تجميع الصوت (${chunkBufferRef.current ? chunkBufferRef.current.length : 0} chunks، أقصى 10 ثوانٍ)...`
+              ? `Buffering audio (${chunkBufferRef.current.length} chunks, max 10s)...` 
+              : `تجميع الصوت (${chunkBufferRef.current.length} chunks، أقصى 10 ثوانٍ)...`
             }
           </Text>
         </View>
