@@ -5,6 +5,8 @@ import { AdminPanel } from '@/components/AdminPanel';
 import * as DocumentPicker from 'expo-document-picker';
 import * as IntentLauncher from 'expo-intent-launcher';
 import { Audio } from 'expo-av';
+import { useAuth } from '@/contexts/AuthContext';
+import { supabase } from '@/lib/supabase';
 
 export default function AdminRoute() {
   const { isSuperadmin, hasRole, loading } = useUserPermissions();
@@ -22,13 +24,25 @@ export default function AdminRoute() {
   const [ws, setWs] = useState<WebSocket | null>(null);
   const [wsAudio, setWsAudio] = useState<Array<any>>([]);
   const [wsRecObj, setWsRecObj] = useState<Audio.Recording | null>(null);
+  const { user } = useAuth();
+  const [transcriptionStats, setTranscriptionStats] = useState<{
+    total_users: number;
+    total_minutes_purchased: number;
+    total_minutes_used: number;
+    average_usage_per_user: number;
+    active_users_today: number;
+  } | null>(null);
+  const [loadingStats, setLoadingStats] = useState(false);
 
-  const isAdmin = isSuperadmin || hasRole('admin') || hasRole('superadmin');
+  // Safe check for admin permissions
+  const isAdmin = isSuperadmin || (typeof hasRole === 'function' && (hasRole('admin') || hasRole('super_admin')));
 
+  // 1. إذا كان لا يزال يتحقق من الصلاحيات، أظهر شاشة التحميل
   if (loading) {
     return <View style={styles.center}><Text>Loading...</Text></View>;
   }
 
+  // 2. إذا لم يكن المستخدم أدمن، أظهر Access Denied مباشرة
   if (!isAdmin) {
     return (
       <View style={styles.center}>
@@ -38,6 +52,7 @@ export default function AdminRoute() {
     );
   }
 
+  // 3. إذا كان المستخدم أدمن ولم يدخل الرقم السري بعد، أظهر شاشة إدخال الرقم السري فقط
   if (!pinOk) {
     return (
       <View style={styles.center}>
@@ -54,12 +69,17 @@ export default function AdminRoute() {
         {error ? <Text style={styles.error}>{error}</Text> : null}
         <TouchableOpacity
           style={styles.pinButton}
-          onPress={() => {
-            if (pin === '1414') {
-              setPinOk(true);
-              setError('');
-            } else {
-              setError('Incorrect PIN');
+          onPress={async () => {
+            try {
+              if (pin === '1414') {
+                setPinOk(true);
+                setError('');
+              } else {
+                setError('Incorrect PIN');
+              }
+            } catch (err) {
+              setError('Unexpected error. Please try again.');
+              Alert.alert('Error', 'An unexpected error occurred while checking the PIN.');
             }
           }}
         >
@@ -69,6 +89,17 @@ export default function AdminRoute() {
     );
   }
 
+  // 4. إذا كان المستخدم أدمن وأدخل الرقم السري الصحيح، أظهر فقط رسالة ترحيب بسيطة بدون أي مكون أو بيانات أخرى
+  if (pinOk) {
+    return (
+      <View style={styles.center}>
+        <Text style={styles.headerTitle}>🔧 Welcome to Admin Panel</Text>
+        <Text style={styles.headerSubtitle}>You have successfully entered the admin area.</Text>
+      </View>
+    );
+  }
+
+  // 4. إذا كان المستخدم أدمن وأدخل الرقم السري الصحيح، أظهر لوحة الأدمن (الكود الحالي)
   const testAudioToServer = async () => {
     setResult('');
     setLoadingTest(true);
@@ -260,6 +291,57 @@ export default function AdminRoute() {
     }
   };
 
+  // جلب إحصائيات تفريغ الصوت
+  const fetchTranscriptionStats = async () => {
+    setLoadingStats(true);
+    try {
+      // إحصائيات شاملة
+      const { data: creditsData, error: creditsError } = await supabase
+        .from('transcription_credits')
+        .select('total_minutes, used_minutes');
+
+      if (!creditsError && creditsData) {
+        const totalMinutesPurchased = creditsData.reduce((sum, credit) => sum + (credit.total_minutes || 0), 0);
+        const totalMinutesUsed = creditsData.reduce((sum, credit) => sum + (credit.used_minutes || 0), 0);
+        const totalUsers = creditsData.length;
+        const averageUsage = totalUsers > 0 ? Math.round(totalMinutesUsed / totalUsers * 100) / 100 : 0;
+
+        // المستخدمين النشطين اليوم (مثال بسيط)
+        const today = new Date().toISOString().split('T')[0];
+        const { data: todayUsers } = await supabase
+          .from('transcription_credits')
+          .select('user_id')
+          .gte('updated_at', today);
+
+        setTranscriptionStats({
+          total_users: totalUsers,
+          total_minutes_purchased: totalMinutesPurchased,
+          total_minutes_used: totalMinutesUsed,
+          average_usage_per_user: averageUsage,
+          active_users_today: todayUsers?.length || 0
+        });
+      }
+    } catch (error) {
+      Alert.alert('Error', 'An error occurred while fetching transcription stats.');
+      console.error('Error fetching transcription stats:', error);
+    } finally {
+      setLoadingStats(false);
+    }
+  };
+
+  // جلب الإحصائيات عند تحميل الصفحة
+  React.useEffect(() => {
+    // لا تنفذ أي شيء إلا إذا كان المستخدم أدمن وأدخل الرقم السري
+    if (pinOk) {
+      try {
+        fetchTranscriptionStats();
+      } catch (error) {
+        Alert.alert('Error', 'An error occurred while loading admin data.');
+        console.error('Error in useEffect for fetchTranscriptionStats:', error);
+      }
+    }
+  }, [pinOk]);
+
   return (
     <ScrollView style={styles.container}>
       <View style={styles.header}>
@@ -271,6 +353,60 @@ export default function AdminRoute() {
       <View style={styles.section}>
         <Text style={styles.sectionTitle}>📊 إدارة المستخدمين والاشتراكات</Text>
         <AdminPanel />
+      </View>
+
+      {/* قسم إحصائيات تفريغ الصوت */}
+      <View style={styles.section}>
+        <Text style={styles.sectionTitle}>📈 إحصائيات تفريغ الصوت</Text>
+        
+        {loadingStats ? (
+          <ActivityIndicator color="#2563EB" size="large" />
+        ) : transcriptionStats ? (
+          <View style={styles.statsContainer}>
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{transcriptionStats.total_users}</Text>
+                <Text style={styles.statLabel}>إجمالي المستخدمين</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{transcriptionStats.total_minutes_purchased}</Text>
+                <Text style={styles.statLabel}>الدقائق المشتراة</Text>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{transcriptionStats.total_minutes_used}</Text>
+                <Text style={styles.statLabel}>الدقائق المستخدمة</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{transcriptionStats.average_usage_per_user}</Text>
+                <Text style={styles.statLabel}>متوسط الاستخدام/مستخدم</Text>
+              </View>
+            </View>
+            <View style={styles.statsRow}>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>{transcriptionStats.active_users_today}</Text>
+                <Text style={styles.statLabel}>المستخدمين النشطين اليوم</Text>
+              </View>
+              <View style={styles.statCard}>
+                <Text style={styles.statNumber}>
+                  {transcriptionStats.total_minutes_purchased > 0 
+                    ? Math.round((transcriptionStats.total_minutes_used / transcriptionStats.total_minutes_purchased) * 100)
+                    : 0}%
+                </Text>
+                <Text style={styles.statLabel}>نسبة الاستخدام الإجمالية</Text>
+              </View>
+            </View>
+            <TouchableOpacity 
+              style={styles.refreshButton}
+              onPress={fetchTranscriptionStats}
+            >
+              <Text style={styles.refreshButtonText}>تحديث الإحصائيات</Text>
+            </TouchableOpacity>
+          </View>
+        ) : (
+          <Text style={styles.noStatsText}>لا توجد إحصائيات متاحة</Text>
+        )}
       </View>
 
       {/* قسم الإعدادات */}
@@ -535,5 +671,58 @@ const styles = StyleSheet.create({
   error: {
     color: '#EF4444',
     marginBottom: 8,
+  },
+  statsContainer: {
+    backgroundColor: '#F8FAFC',
+    borderRadius: 8,
+    padding: 16,
+  },
+  statsRow: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    marginBottom: 12,
+  },
+  statCard: {
+    backgroundColor: 'white',
+    borderRadius: 8,
+    padding: 16,
+    flex: 1,
+    marginHorizontal: 4,
+    alignItems: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 2,
+    elevation: 2,
+  },
+  statNumber: {
+    fontSize: 24,
+    fontWeight: 'bold',
+    color: '#2563EB',
+    marginBottom: 4,
+  },
+  statLabel: {
+    fontSize: 12,
+    color: '#6B7280',
+    textAlign: 'center',
+  },
+  refreshButton: {
+    backgroundColor: '#10B981',
+    borderRadius: 8,
+    paddingVertical: 12,
+    paddingHorizontal: 20,
+    alignItems: 'center',
+    marginTop: 8,
+  },
+  refreshButtonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  noStatsText: {
+    textAlign: 'center',
+    color: '#6B7280',
+    fontSize: 16,
+    fontStyle: 'italic',
   },
 }); 

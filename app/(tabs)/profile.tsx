@@ -737,7 +737,7 @@ export default function ProfileScreen() {
             onPress={handleRateUsSecret}
           >
             <Info size={20} color="#6B7280" />
-            <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: 6.6.0</Text>
+            <Text style={[styles.settingText, { color: '#6B7280' }]}>Version: 6.7.0</Text>
           </TouchableOpacity>
 
           {/* Delete Account Button */}

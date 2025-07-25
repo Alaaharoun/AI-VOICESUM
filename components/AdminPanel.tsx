@@ -96,8 +96,13 @@ export function AdminPanel() {
 
   useEffect(() => {
     if (isSuperadmin && !permissionsLoading) {
+      try {
       fetchAdminData();
       fetchLinks();
+      } catch (error) {
+        console.error('Error in AdminPanel useEffect:', error);
+        setLoading(false);
+      }
     } else if (!permissionsLoading) {
       setLoading(false);
     }
@@ -106,42 +111,79 @@ export function AdminPanel() {
   const fetchAdminData = async () => {
     try {
       setLoading(true);
-      // Fetch system stats
+      
+      // Fetch system stats with error handling
+      try {
       const { data: statsData, error: statsError } = await supabase.rpc('admin_get_system_stats');
-      if (statsError) throw statsError;
-      if (statsData && statsData.length > 0) {
+        if (statsError) {
+          console.error('Stats error:', statsError);
+          // Set default stats instead of throwing
         setStats({
-          totalUsers: statsData[0].total_users,
-          totalSubscribers: statsData[0].total_subscribers,
-          totalRecordings: statsData[0].total_recordings,
-          totalUsageHours: Number(statsData[0].total_usage_hours)
+            totalUsers: 0,
+            totalSubscribers: 0,
+            totalRecordings: 0,
+            totalUsageHours: 0
+          });
+        } else if (statsData && statsData.length > 0) {
+          setStats({
+            totalUsers: statsData[0].total_users || 0,
+            totalSubscribers: statsData[0].total_subscribers || 0,
+            totalRecordings: statsData[0].total_recordings || 0,
+            totalUsageHours: Number(statsData[0].total_usage_hours) || 0
         });
       }
-      // Fetch all users
+      } catch (statsError) {
+        console.error('Error fetching stats:', statsError);
+        setStats({
+          totalUsers: 0,
+          totalSubscribers: 0,
+          totalRecordings: 0,
+          totalUsageHours: 0
+        });
+      }
+      
+      // Fetch all users with error handling
+      try {
       const { data: usersData, error: usersError } = await supabase.rpc('admin_get_all_users');
-      if (usersError) throw usersError;
+        if (usersError) {
+          console.error('Users error:', usersError);
+          setUsers([]);
+        } else {
       // Fetch roles for all users
       const userIds = (usersData || []).map((u: any) => u.id);
       let rolesMap: Record<string, string> = {};
+          
       if (userIds.length > 0) {
+            try {
         const { data: rolesData, error: rolesError } = await supabase
           .from('user_roles_view')
           .select('user_id, role_name')
           .in('user_id', userIds);
+              
         if (!rolesError && rolesData) {
-          // Prefer superadmin > admin > any other role
+          // Prefer super_admin > admin > any other role
           rolesData.forEach((r: any) => {
-            if (!rolesMap[r.user_id] || r.role_name === 'superadmin' || (r.role_name === 'admin' && rolesMap[r.user_id] !== 'superadmin')) {
+            if (!rolesMap[r.user_id] || r.role_name === 'super_admin' || (r.role_name === 'admin' && rolesMap[r.user_id] !== 'super_admin')) {
               rolesMap[r.user_id] = r.role_name;
             }
           });
         }
+            } catch (rolesError) {
+              console.error('Error fetching roles:', rolesError);
       }
+          }
+          
       // Merge role_name into users
       const usersWithRoles = (usersData || []).map((u: any) => ({ ...u, role_name: rolesMap[u.id] || 'user' }));
       setUsers(usersWithRoles);
+        }
+      } catch (usersError) {
+        console.error('Error fetching users:', usersError);
+        setUsers([]);
+      }
+      
     } catch (error) {
-      console.error('Error fetching admin data:', error);
+      console.error('Error in fetchAdminData:', error);
       Alert.alert('Error', `Failed to load admin data: ${error instanceof Error ? error.message : 'Unknown error'}`);
     } finally {
       setLoading(false);

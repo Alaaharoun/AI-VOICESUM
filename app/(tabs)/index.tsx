@@ -425,6 +425,9 @@ export default function RecordScreen() {
   const [showSourceLangSelector, setShowSourceLangSelector] = useState(false);
   const [sourceLanguage, setSourceLanguage] = useState<{ code: string; name: string; flag: string } | null>(null);
   const [isSaved, setIsSaved] = useState(false);
+  const [selectedSourceLanguage, setSelectedSourceLanguage] = useState<{ code: string; name: string; flag: string } | null>({ code: 'auto', name: 'Autodetect', flag: '🌐' });
+
+
 
   // مراقبة تغييرات isSaved
   useEffect(() => {
@@ -441,7 +444,7 @@ export default function RecordScreen() {
 
   const router = useRouter();
 
-  // Calculate if user has access (either subscribed or has remaining trial time)
+  // تعديل منطق hasAccess ليشمل الأدمن دائماً
   const hasAccess = isSubscribed || hasRemainingTrialTime || isSuperadmin || hasRole('admin');
 
   // Helper to check if user has exhausted their daily minutes
@@ -589,13 +592,29 @@ export default function RecordScreen() {
       return;
     }
 
-    // إذا كانت الترجمة الفورية مفعلة ويوجد لغة هدف، انتقل مباشرة إلى صفحة الترجمة الفورية
+    // إذا كانت الترجمة الفورية مفعلة، انتقل إلى صفحة الترجمة الفورية مع تمرير source وtarget
     if (liveTranslateEnabled && selectedLanguage) {
+      const targetLang = selectedLanguage.code === 'auto' ? 'en' : selectedLanguage.code;
+      const langName = selectedLanguage.code === 'auto' ? 'English (Auto-detect)' : selectedLanguage.name;
+      const sourceLang = selectedSourceLanguage?.code || 'auto';
+      const sourceLangName = selectedSourceLanguage?.name || 'Autodetect';
+      
+      // إضافة console.log مؤقت للتأكد من تمرير البيانات
+      console.log('🚀 Navigation Debug:', {
+        sourceLang,
+        sourceLangName,
+        selectedSourceLanguage,
+        targetLang,
+        langName
+      });
+      
       router.push({
         pathname: '/(tabs)/live-translation',
         params: {
-          targetLanguage: selectedLanguage.code,
-          languageName: selectedLanguage.name,
+          targetLanguage: targetLang,
+          languageName: langName,
+          sourceLanguage: sourceLang,
+          sourceLanguageName: sourceLangName,
           autoStart: 'true',
         },
       } as any);
@@ -648,7 +667,16 @@ export default function RecordScreen() {
               if (selectedLanguage && transcription) {
                 try {
                   const { SpeechService } = await import('@/services/speechService');
-                  const translation = await SpeechService.translateText(transcription, selectedLanguage.code);
+                  let translation;
+                  
+                  if (selectedLanguage.code === 'auto') {
+                    // إذا تم اختيار الكشف التلقائي، ترجم إلى الإنجليزية
+                    translation = await SpeechService.translateText(transcription, 'en');
+                  } else {
+                    // إذا تم اختيار لغة محددة، ترجم إلى تلك اللغة
+                    translation = await SpeechService.translateText(transcription, selectedLanguage.code);
+                  }
+                  
                   setCurrentTranslation(translation);
                   console.log('Translation completed:', translation);
                                 // حفظ النتائج بعد الترجمة
@@ -937,7 +965,11 @@ export default function RecordScreen() {
             isRecording={isRecording}
             onStartRecording={handleStartRecording}
             onStopRecording={handleStopRecording}
-            disabled={isProcessing || (!hasAccess && !subscriptionLoading) || apiStatus !== 'ready'}
+            disabled={
+              isProcessing ||
+              (!hasAccess && !subscriptionLoading && !(isSuperadmin || hasRole('admin')))
+              || apiStatus !== 'ready'
+            }
           />
           {/* Hint above the button */}
           <Text style={{ textAlign: 'center', color: '#F59E0B', fontSize: 13, marginBottom: 4 }}>
@@ -990,19 +1022,81 @@ export default function RecordScreen() {
             </>
           </TouchableOpacity>
           {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
+          {liveTranslateEnabled && (
           <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
-            <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15, marginBottom: 6 }}>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
+                <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15 }}>
+                  Source Language (What you will speak)
+                </Text>
+              </View>
+              <LanguageSelector
+                selectedLanguage={selectedSourceLanguage}
+                onSelectLanguage={setSelectedSourceLanguage}
+                disabled={isRecording || isProcessing}
+              />
+              {/* إضافة مؤشر للغة المصدر المحددة */}
+              {selectedSourceLanguage && selectedSourceLanguage.code !== 'auto' && (
+                <View style={{ 
+                  backgroundColor: '#E0F2FE', 
+                  padding: 8, 
+                  borderRadius: 6, 
+                  marginTop: 6,
+                  borderWidth: 1,
+                  borderColor: '#06B6D4'
+                }}>
+                  <Text style={{ color: '#0E7490', fontSize: 12, textAlign: 'center', fontWeight: '500' }}>
+                    ✅ Source language set to: {selectedSourceLanguage.name} ({selectedSourceLanguage.code})
+                  </Text>
+                </View>
+              )}
+            </View>
+          )}
+          {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
+          <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+              <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
+              <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15 }}>
               {liveTranslateEnabled ? 'Target Language for Live Translation' : 'Select Target Language'}
             </Text>
+            </View>
             <LanguageSelector
               selectedLanguage={selectedLanguage}
               onSelectLanguage={setSelectedLanguage}
               disabled={isRecording || isProcessing}
             />
-            {liveTranslateEnabled && (
-              <Text style={{ color: '#F59E0B', fontSize: 12, marginTop: 4, textAlign: 'center' }}>
-                Live translation will translate English speech to the selected language
+            {liveTranslateEnabled && selectedLanguage && (
+              <View style={{ 
+                backgroundColor: '#F0F9FF', 
+                padding: 12, 
+                borderRadius: 8, 
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: '#BFDBFE'
+              }}>
+                <Text style={{ color: '#1E40AF', fontSize: 13, textAlign: 'center', fontWeight: '500' }}>
+                  {selectedLanguage.code === 'auto' 
+                    ? '🌐 Live translation will automatically detect your speech language and translate to English'
+                    : selectedSourceLanguage && selectedSourceLanguage.code !== 'auto'
+                      ? `🌐 Live translation will translate from ${selectedSourceLanguage.name} to ${selectedLanguage.name}`
+                    : `🌐 Live translation will translate your speech to ${selectedLanguage.name}`
+                  }
               </Text>
+              </View>
+            )}
+            {liveTranslateEnabled && !selectedLanguage && (
+              <View style={{ 
+                backgroundColor: '#FEF3C7', 
+                padding: 12, 
+                borderRadius: 8, 
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: '#F59E0B'
+              }}>
+                <Text style={{ color: '#92400E', fontSize: 13, textAlign: 'center', fontWeight: '500' }}>
+                  ⚠️ Please select a target language for live translation
+                </Text>
+              </View>
             )}
           </View>
           {!hasAccess && !subscriptionLoading && (

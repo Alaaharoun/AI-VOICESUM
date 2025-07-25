@@ -303,7 +303,8 @@ type SubSku =
   | 'pro_monthly'
   | 'pro_yearly'
   | 'unlimited_monthly'
-  | 'unlimited_yearly';
+  | 'unlimited_yearly'
+  | 'transcription_1_hour';
 
 const PLAN_MAP: Record<SubSku, { basePlanId: string; offerId: string }> = {
   mini_monthly:      { basePlanId: 'mini-monthly',      offerId: 'mini-monthlyupdate' },
@@ -313,6 +314,7 @@ const PLAN_MAP: Record<SubSku, { basePlanId: string; offerId: string }> = {
   pro_yearly:        { basePlanId: 'pro-yearly',        offerId: 'pro-yearlyupdate' },
   unlimited_monthly: { basePlanId: 'unlimited-monthly', offerId: 'unlimited-monthlyupdate' },
   unlimited_yearly:  { basePlanId: 'unlimited-yearly',  offerId: 'unlimited-yearlyupdate' },
+  transcription_1_hour: { basePlanId: 'transcription-1-hour', offerId: 'transcription-1-hour-update' },
 };
 
 const PRODUCT_IDS: SubSku[] = Object.keys(PLAN_MAP) as SubSku[];
@@ -365,6 +367,7 @@ export default function SubscriptionScreen() {
   const purchaseUpdateRef = useRef<any>(null);
   const purchaseErrorRef = useRef<any>(null);
   const [pendingPurchase, setPendingPurchase] = useState<any>(null);
+  const [remainingMinutes, setRemainingMinutes] = useState<number | null>(null);
 
   // تحديث useEffect لجلب المنتجات
   useEffect(() => {
@@ -381,13 +384,19 @@ export default function SubscriptionScreen() {
       try {
         await RNIap.initConnection();
         await flushFailedPurchasesCachedAsPendingAndroid();
-        const products = await RNIap.getSubscriptions(PRODUCT_IDS);
+        // جلب الاشتراكات والمنتجات الفردية
+        const subscriptions = await RNIap.getSubscriptions(PRODUCT_IDS.filter(id => id !== 'transcription_1_hour'));
+        const individualProducts = await RNIap.getProducts(['transcription_1_hour']);
+        const products = [...subscriptions, ...individualProducts];
         
         // لوج مفصل لكل منتج وعروضه
         console.log(
-          '▶️ Loaded subscriptions:',
+          '▶️ Loaded products:',
           JSON.stringify(products.map((p: any) => ({
             id: p.productId,
+            price: p.price,
+            localizedPrice: p.localizedPrice,
+            type: p.subscriptionOfferDetails ? 'subscription' : 'product',
             offers: p.subscriptionOfferDetails?.map((o: any) => ({
               basePlanId: o.basePlanId,
               offerId: o.offerId,
@@ -398,7 +407,7 @@ export default function SubscriptionScreen() {
         );
         
         products.forEach((prod: any) => {
-          console.log('Product:', prod.productId);
+          console.log('Product:', prod.productId, 'Price:', prod.localizedPrice || prod.price, 'Type:', prod.subscriptionOfferDetails ? 'subscription' : 'product');
           if (prod.subscriptionOfferDetails) {
             prod.subscriptionOfferDetails.forEach((offer: any) => {
               console.log('  basePlanId:', offer.basePlanId, 'offerId:', offer.offerId, 'offerToken:', offer.offerToken);
@@ -452,10 +461,35 @@ export default function SubscriptionScreen() {
     const saveSubscription = async () => {
       if (!pendingPurchase || !user) return;
       try {
-        const productId = pendingPurchase.productId as SubSku;
+        const productId = pendingPurchase.productId as string;
         const purchaseToken = pendingPurchase.purchaseToken;
         const orderId = pendingPurchase.transactionId ?? pendingPurchase.orderId;
-        const planInfo = PLAN_MAP[productId];
+        if (productId === 'transcription_1_hour') {
+          // شراء ساعة تفريغ صوتي لمرة واحدة
+          console.log('🛒 Processing transcription_1_hour purchase for user:', user.id);
+          
+          // استخدام RPC function لإضافة الدقائق
+          const { data: rpcResult, error: rpcError } = await supabase.rpc('increment_transcription_minutes', { 
+            uid: user.id, 
+            minutes: 60 
+          });
+          
+          if (rpcError) {
+            console.error('RPC Error:', rpcError);
+            throw rpcError;
+          }
+          
+          console.log('✅ Successfully added 60 minutes. RPC result:', rpcResult);
+          
+          // تحديث الرصيد المحلي
+          setRemainingMinutes(prev => prev !== null ? prev + 60 : 60);
+          
+          showAlert('Success', '✅ 60 minutes added to your account successfully!');
+          router.replace('/(tabs)');
+          await finishTransaction(pendingPurchase);
+        } else {
+          // منطق الاشتراكات الشهرية/السنوية كما هو
+          const planInfo = PLAN_MAP[productId as SubSku];
         let expiresAt: Date | null = null;
         if (planInfo) {
           expiresAt = new Date();
@@ -465,7 +499,6 @@ export default function SubscriptionScreen() {
             expiresAt.setMonth(expiresAt.getMonth() + 1);
           }
         }
-        // upsert بدلاً من insert لتجنّب التكرار
         const { error: upsertError } = await supabase
           .from('user_subscriptions')
           .upsert({
@@ -481,9 +514,7 @@ export default function SubscriptionScreen() {
         await checkSubscription?.();
         router.replace('/(tabs)');
         await finishTransaction(pendingPurchase);
-        // ملاحظة: يجب أن تنفذ checkSubscription عند تشغيل التطبيق أو بشكل دوري:
-        // - RNIap.getAvailablePurchases() ثم مزامنة النتائج مع Supabase
-        // - إذا لم يعد الاشتراك موجوداً في Google Play، عطّل الامتيازات في Supabase
+        }
       } catch (e) {
         let msg = (typeof e === 'object' && e !== null && 'message' in e) ? (e as any).message : String(e);
         showAlert('Error', msg || 'Failed to save subscription');
@@ -519,6 +550,28 @@ export default function SubscriptionScreen() {
         setFreeTrialStatus('unknown');
       }
     })();
+  }, [user]);
+
+  // جلب الرصيد المتبقي
+  useEffect(() => {
+    const fetchCredits = async () => {
+      if (!user) return;
+      
+      const { data: creditsData, error: creditsError } = await supabase
+        .from('transcription_credits')
+        .select('total_minutes, used_minutes')
+        .eq('user_id', user.id)
+        .single();
+      
+      if (!creditsError && creditsData) {
+        const remaining = (creditsData.total_minutes || 0) - (creditsData.used_minutes || 0);
+        setRemainingMinutes(remaining);
+      } else {
+        setRemainingMinutes(null);
+      }
+    };
+    
+    fetchCredits();
   }, [user]);
 
   // دالة تفعيل التجربة المجانية
@@ -689,13 +742,34 @@ export default function SubscriptionScreen() {
             <View style={styles.headerContent}>
               <Crown size={48} color="#F59E0B" />
               <Text style={styles.title}>Choose the plan that fits your needs - with high-accuracy instant translation and smart AI summary for every session.</Text>
+            <Text style={{ fontSize: 14, color: '#6B7280', textAlign: 'center', marginTop: 8 }}>
+              📋 Monthly subscriptions OR 🎯 One-time credits for quick uploads
+            </Text>
+            {remainingMinutes !== null && (
+              <View style={{ backgroundColor: '#ECFDF5', padding: 12, borderRadius: 8, marginTop: 16 }}>
+                <Text style={{ color: '#10B981', fontWeight: 'bold', fontSize: 16, textAlign: 'center' }}>
+                  Remaining Credits: {remainingMinutes} minutes
+                </Text>
+              </View>
+            )}
             </View>
           </View>
 
           <View style={{backgroundColor:'#FEF3C7',borderRadius:12,padding:16,marginHorizontal:24,marginTop:16,marginBottom:8,alignItems:'center'}}>
             <Text style={{fontSize:18,fontWeight:'bold',color:'#92400E',marginBottom:4}}>Limited-Time Special Offer!</Text>
             <Text style={{color:'#92400E',fontSize:15,textAlign:'center',marginBottom:8}}>
-              استمتع بخصومات خاصة لفترة محدودة على جميع الخطط!
+              Enjoy special discounts for a limited time on all plans!
+            </Text>
+          </View>
+          
+          {/* Quick Purchase Notice */}
+          <View style={{backgroundColor:'#EFF6FF',borderRadius:12,padding:16,marginHorizontal:24,marginBottom:16,alignItems:'center',borderWidth:1,borderColor:'#3B82F6'}}>
+            <Text style={{fontSize:16,fontWeight:'bold',color:'#1E40AF',marginBottom:4}}>📁 Need Quick Upload Credits?</Text>
+            <Text style={{color:'#374151',fontSize:14,textAlign:'center',marginBottom:4}}>
+              Scroll down to find the "Quick Upload Credits" option for one-time purchases
+            </Text>
+            <Text style={{color:'#6B7280',fontSize:12,textAlign:'center',fontStyle:'italic'}}>
+              This option is specifically designed for users of the upload.tsx page
             </Text>
           </View>
 
@@ -823,6 +897,88 @@ export default function SubscriptionScreen() {
                 </View>
               );
             })}
+            {/* بطاقة شراء ساعة تفريغ صوتي */}
+            <View style={[
+              styles.planCard, 
+              { 
+                borderColor: '#F59E0B', 
+                borderWidth: 3, 
+                marginTop: 16,
+                backgroundColor: '#FEF3C7',
+                shadowColor: '#F59E0B',
+                shadowOpacity: 0.15,
+                elevation: 4
+              }
+            ]}> 
+              <View style={{ 
+                position: 'absolute', 
+                top: -8, 
+                left: 20, 
+                backgroundColor: '#F59E0B', 
+                paddingHorizontal: 12, 
+                paddingVertical: 4, 
+                borderRadius: 12 
+              }}>
+                <Text style={{ color: 'white', fontSize: 12, fontWeight: 'bold' }}>POPULAR</Text>
+              </View>
+              
+              <Text style={[styles.planTitle, { color: '#92400E', marginTop: 8 }]}>🎯 Quick Upload Credits</Text>
+              <Text style={{ color: '#6B7280', fontSize: 12, marginBottom: 8, textAlign: 'center', fontStyle: 'italic' }}>
+                Perfect for upload.tsx page users
+              </Text>
+              <Text style={{ fontWeight: 'bold', color: '#10B981', fontSize: 24, marginVertical: 8 }}>
+                {(() => {
+                  const product = products.find(p => p.productId === 'transcription_1_hour');
+                  if (!product) return 'Loading...';
+                  return product.localizedPrice || product.price || 'Price not available';
+                })()}
+              </Text>
+              <Text style={{ color: '#374151', fontSize: 16, marginBottom: 8, textAlign: 'center', fontWeight: '600' }}>
+                60 minutes of transcription time
+              </Text>
+              <Text style={{ color: '#6B7280', fontSize: 14, marginBottom: 12, textAlign: 'center' }}>
+                Perfect for quick file uploads and transcriptions
+              </Text>
+              
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Check size={18} color="#10B981" />
+                <Text style={{ marginLeft: 8, fontSize: 15, color: '#374151' }}>One-time purchase</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                <Check size={18} color="#10B981" />
+                <Text style={{ marginLeft: 8, fontSize: 15, color: '#374151' }}>No subscription required</Text>
+              </View>
+              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                <Check size={18} color="#10B981" />
+                <Text style={{ marginLeft: 8, fontSize: 15, color: '#374151' }}>Instant credit addition</Text>
+              </View>
+              
+              <TouchableOpacity
+                disabled={loading || !products.find(p => p.productId === 'transcription_1_hour')}
+                style={[
+                  styles.planButton, 
+                  { 
+                    backgroundColor: loading || !products.find(p => p.productId === 'transcription_1_hour') ? '#9CA3AF' : '#F59E0B', 
+                    marginTop: 8,
+                    paddingVertical: 12,
+                    borderRadius: 12
+                  }
+                ]}
+                onPress={() => buy('transcription_1_hour' as any)}
+              >
+                <Text style={[styles.planButtonText, { fontSize: 16, fontWeight: 'bold' }]}>
+                  {loading ? 'Processing...' : 
+                   !products.find(p => p.productId === 'transcription_1_hour') ? 'Product Unavailable' : 
+                   '🛒 Buy 60 Minutes Now'}
+                </Text>
+              </TouchableOpacity>
+              
+              {!products.find(p => p.productId === 'transcription_1_hour') && (
+                <Text style={{ color: '#EF4444', fontSize: 12, marginTop: 8, textAlign: 'center' }}>
+                  Product not available in your region or store
+                </Text>
+              )}
+            </View>
           </View>
 
           {/* FAQ Section */}
@@ -894,6 +1050,38 @@ export default function SubscriptionScreen() {
       showAlert('Error', 'You must be signed in.');
       return;
     }
+    
+    // إذا كان منتج فردي (transcription_1_hour)
+    if (productId === 'transcription_1_hour') {
+      // تحقق من توفر المنتج
+      const product = products.find(p => p.productId === 'transcription_1_hour');
+      if (!product) {
+        showAlert('Product Not Available', 'This product is not available in your region or store. Please try a subscription plan instead.');
+        return;
+      }
+      
+      setLoading(true);
+      try {
+        await RNIap.requestPurchase({
+          sku: productId,
+          obfuscatedAccountIdAndroid: user.id,
+        });
+        return;
+      } catch (err) {
+        let msg = '';
+        if (err && typeof err === 'object' && err !== null && 'message' in err) {
+          msg = (err as any).message;
+        } else {
+          msg = String(err);
+        }
+        Alert.alert('Purchase Failed', msg);
+        showAlert('Error', msg);
+        setLoading(false);
+        return;
+      }
+    }
+    
+    // إذا كان اشتراك
     const details = getOfferDetailsFor(products, productId);
     console.log('🛒 offer details for', productId, ':', details);
     

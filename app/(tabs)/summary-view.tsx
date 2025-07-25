@@ -119,8 +119,8 @@ export default function SummaryView() {
       
       if (result && result.trim().length > 0) {
         // أولاً: حفظ التلخيص في state
-        setAiSummary(result);
-        setSummary(result);
+      setAiSummary(result);
+      setSummary(result);
         console.log('Summary saved to state successfully');
         
         // ثانياً: حفظ في التاريخ (بدون انتظار)

@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Mic, FileText, User, Crown, Settings } from 'lucide-react-native';
+import { Mic, FileText, User, Crown, Settings, Upload } from 'lucide-react-native';
 import { useUserPermissions } from '@/hooks/useAuth';
 import { SummaryProvider } from '@/contexts/SummaryContext';
 
@@ -45,6 +45,15 @@ export default function TabLayout() {
             title: 'History',
             tabBarIcon: ({ size, color }) => (
               <FileText size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="upload"
+          options={{
+            title: 'Upload',
+            tabBarIcon: ({ size, color }) => (
+              <Upload size={size} color={color} />
             ),
           }}
         />

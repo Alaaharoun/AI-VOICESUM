@@ -3,6 +3,12 @@ import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
 
+interface UserPermissions {
+  isSuperadmin: boolean;
+  permissions: string[];
+  roles: string[];
+}
+
 interface AuthContextType {
   user: User | null;
   session: Session | null;
@@ -11,6 +17,7 @@ interface AuthContextType {
   signUp: (email: string, password: string) => Promise<{ error: any }>;
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<{ error: any }>;
+  userPermissions: UserPermissions | null;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -19,7 +26,53 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [user, setUser] = useState<User | null>(null);
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
+  const [userPermissions, setUserPermissions] = useState<UserPermissions | null>(null);
   const mountedRef = useRef(true);
+
+  // جلب صلاحيات المستخدم عند تغيير المستخدم
+  useEffect(() => {
+    let cancelled = false;
+    async function fetchPermissions(userId: string) {
+      try {
+        // تحقق من الأدمن
+        const { data: isSuperadmin, error: superadminError } = await supabase.rpc('is_superadmin');
+        if (cancelled) return;
+        // جلب الأدوار
+        const { data: userRoles, error: rolesError } = await supabase
+          .from('user_roles_view')
+          .select('role_name')
+          .eq('user_id', userId);
+        if (cancelled) return;
+        // جلب الصلاحيات
+        let permissionsList: string[] = [];
+        if (isSuperadmin) {
+          const { data: allPermissions, error: permissionsError } = await supabase
+            .from('permissions')
+            .select('name');
+          if (!permissionsError && allPermissions) {
+            permissionsList = (allPermissions as { name: string }[]).map(p => p.name);
+          }
+        } else {
+          permissionsList = ['basic_access'];
+        }
+        const roles = userRoles?.map(role => role.role_name) || [];
+        setUserPermissions({
+          isSuperadmin: isSuperadmin || false,
+          permissions: [...new Set(permissionsList)],
+          roles
+        });
+      } catch {
+        setUserPermissions({ isSuperadmin: false, permissions: [], roles: [] });
+      }
+    }
+    if (user) {
+      setUserPermissions(null); // reset while loading
+      fetchPermissions(user.id);
+    } else {
+      setUserPermissions(null);
+    }
+    return () => { cancelled = true; };
+  }, [user]);
 
   useEffect(() => {
     console.log('[AuthContext] Initializing auth context...');
@@ -183,6 +236,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signUp,
         signOut,
         deleteAccount,
+        userPermissions,
       }}
     >
       {children}

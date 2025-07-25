@@ -247,25 +247,42 @@ export default function HistoryScreen() {
   const { user } = useAuth();
   const { isSubscribed, hasFreeTrial, freeTrialExpired, loading: subscriptionLoading } = useSubscription();
   const { isSuperadmin, hasRole, loading: permissionsLoading } = useUserPermissions();
-  const isAdmin = isSuperadmin || hasRole('admin') || hasRole('superadmin');
+  const isAdmin = isSuperadmin || hasRole('admin') || hasRole('super_admin');
   const [recordings, setRecordings] = useState<Recording[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    console.log('Admin:', isAdmin);
+    console.log('Subscribed:', isSubscribed);
+    console.log('Free Trial:', hasFreeTrial);
+    console.log('User:', user);
+    console.log('Subscription loading:', subscriptionLoading);
+    console.log('Permissions loading:', permissionsLoading);
+
+    if (subscriptionLoading || permissionsLoading) return;
+
     if (isAdmin || isSubscribed || hasFreeTrial) {
       fetchRecordings();
     } else {
       setLoading(false);
     }
-  }, [user, isSubscribed, hasFreeTrial, isAdmin]);
+  }, [user, isSubscribed, hasFreeTrial, isAdmin, subscriptionLoading, permissionsLoading]);
 
   const fetchRecordings = async () => {
     try {
+      if (!user?.id) {
+        setLoading(false);
+        console.log('No user id, skipping fetch.');
+        return;
+      }
       const { data, error } = await supabase
         .from('recordings')
         .select('*')
-        .eq('user_id', user?.id)
+        .eq('user_id', user.id)
         .order('created_at', { ascending: false });
+
+      console.log('Recordings data:', data);
+      console.log('Supabase error:', error);
 
       if (error) {
         throw error;

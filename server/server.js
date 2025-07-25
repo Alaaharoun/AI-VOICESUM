@@ -535,12 +535,20 @@ function startWebSocketServer(server) {
     const recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
     recognizer.recognizing = (s, e) => {
       console.log('Partial result:', e.result.text);
-      ws.send(JSON.stringify({ type: 'partial', text: e.result.text }));
+      if (e.result.text && e.result.text.trim()) {
+        console.log('Sending partial transcription:', e.result.text);
+        ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
+      }
     };
     recognizer.recognized = (s, e) => {
       if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
         console.log('Final result:', e.result.text);
-        ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+        if (e.result.text && e.result.text.trim()) {
+          console.log('Sending final transcription:', e.result.text);
+          ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+        } else {
+          console.log('Empty final result, not sending');
+        }
       }
     };
     recognizer.canceled = (s, e) => {
@@ -553,15 +561,54 @@ function startWebSocketServer(server) {
     };
     recognizer.startContinuousRecognitionAsync();
     ws.on('message', (data) => {
-      console.log('Received audio chunk from client. Size:', data.length || data.byteLength);
-      // Handle both Buffer and ArrayBuffer
-      if (data instanceof Buffer) {
-        pushStream.write(data);
-      } else if (data instanceof ArrayBuffer) {
-        pushStream.write(Buffer.from(data));
-      } else {
-        // Convert to Buffer if needed
-        pushStream.write(Buffer.from(data));
+      try {
+        // Check if it's a JSON message (init, language_update, etc.)
+        if (typeof data === 'string') {
+          const message = JSON.parse(data);
+          console.log('Received JSON message:', message.type, message);
+          
+                     if (message.type === 'init') {
+            // Update speech recognition language based on client request
+            const language = message.language || 'ar-SA';
+            speechConfig.speechRecognitionLanguage = language;
+            console.log('Updated speech language to:', language);
+            ws.send(JSON.stringify({ type: 'status', message: 'Initialized with language: ' + language }));
+          } else if (message.type === 'language_update') {
+            // Update language during session
+            const language = message.sourceLanguage || 'ar-SA';
+            speechConfig.speechRecognitionLanguage = language;
+            console.log('Updated speech language to:', language);
+            ws.send(JSON.stringify({ type: 'status', message: 'Language updated to: ' + language }));
+          } else if (message.type === 'audio') {
+            // Handle audio data
+            const audioData = message.data;
+            if (audioData) {
+              const audioBuffer = Buffer.from(audioData, 'base64');
+              console.log('Received audio chunk from client. Size:', audioBuffer.length, 'SourceLang:', message.sourceLanguage, 'TargetLang:', message.targetLanguage);
+              pushStream.write(audioBuffer);
+            }
+          }
+        } else {
+          // Handle raw audio data (fallback)
+          console.log('Received raw audio chunk from client. Size:', data.length || data.byteLength);
+          if (data instanceof Buffer) {
+            pushStream.write(data);
+          } else if (data instanceof ArrayBuffer) {
+            pushStream.write(Buffer.from(data));
+          } else {
+            pushStream.write(Buffer.from(data));
+          }
+        }
+      } catch (error) {
+        console.error('Error processing WebSocket message:', error);
+        // Fallback to raw audio processing
+        if (data instanceof Buffer) {
+          pushStream.write(data);
+        } else if (data instanceof ArrayBuffer) {
+          pushStream.write(Buffer.from(data));
+        } else {
+          pushStream.write(Buffer.from(data));
+        }
       }
     });
     ws.on('close', () => {

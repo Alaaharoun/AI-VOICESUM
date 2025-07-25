@@ -105,7 +105,7 @@ AS $$
         FROM user_roles ur
         JOIN roles r ON ur.role_id = r.id
         WHERE ur.user_id = auth.uid() 
-        AND r.name = 'superadmin'
+        AND r.name = 'super_admin'
     );
 $$;
 
@@ -122,7 +122,7 @@ AS $$
         FROM user_roles ur
         JOIN roles r ON ur.role_id = r.id
         WHERE ur.user_id = check_user_id 
-        AND r.name = 'superadmin'
+        AND r.name = 'super_admin'
     );
 $$;
 

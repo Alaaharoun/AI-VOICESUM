@@ -107,7 +107,7 @@ export class SpeechService {
   }
 
   private static async pollForTranscriptResults(transcriptId: string, apiKey: string): Promise<string> {
-    const maxAttempts = 120; // 10 minutes max (5 second intervals)
+    const maxAttempts = 3600; // 60 minutes max (5 second intervals) - supports up to 1 hour files
     let attempts = 0;
 
     while (attempts < maxAttempts) {
@@ -648,7 +648,20 @@ export class SpeechService {
       // Use Google Translate API (free alternative)
       // إذا لم تحدد لغة مصدر، استخدم 'auto' ليكتشفها Google
       const sl = sourceLanguage || 'auto';
-      const response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${targetLanguage}&dt=t&q=${encodeURIComponent(text)}`, {
+      
+      // إضافة console.log مؤقت للتأكد من استقبال البيانات
+      console.log('🌐 Google Translate Debug:', {
+        sourceLanguage: sl,
+        targetLanguage,
+        textLength: text.length
+      });
+      
+      // إضافة محاولة إضافية للترجمة المباشرة مع إجبار اللغة المصدر
+      let response;
+      let data;
+      
+      // المحاولة الأولى: الترجمة المباشرة
+      response = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=${targetLanguage}&dt=t&q=${encodeURIComponent(text)}`, {
         method: 'GET',
       });
 
@@ -658,7 +671,7 @@ export class SpeechService {
         throw new Error('Failed to translate text');
       }
 
-      const data = await response.json();
+      data = await response.json();
       
       // Concatenate all translated sentences
       let translatedText = '';
@@ -670,6 +683,52 @@ export class SpeechService {
       } else {
         translatedText = String(data[0][0][0]);
       }
+      
+      // التحقق من جودة الترجمة - إذا كانت الترجمة تبدو كأنها باللغة الإنجليزية بدلاً من العربية
+      if (targetLanguage === 'ar' && sl !== 'auto' && sl !== 'en') {
+        // التحقق من أن الترجمة تحتوي على حروف عربية
+        const arabicRegex = /[\u0600-\u06FF\u0750-\u077F\u08A0-\u08FF\uFB50-\uFDFF\uFE70-\uFEFF]/;
+        if (!arabicRegex.test(translatedText)) {
+          console.log('⚠️ Translation may be incorrect, trying alternative approach...');
+          
+          // المحاولة الثانية: الترجمة عبر الإنجليزية كوسيط
+          const englishResponse = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sl}&tl=en&dt=t&q=${encodeURIComponent(text)}`, {
+            method: 'GET',
+          });
+          
+          if (englishResponse.ok) {
+            const englishData = await englishResponse.json();
+            let englishText = '';
+            if (Array.isArray(englishData) && Array.isArray(englishData[0])) {
+              englishText = englishData[0]
+                .map((item: any) => (typeof item[0] === 'string' ? item[0] : (item[0] ? String(item[0]) : '')))
+                .filter((s: string) => !!s)
+                .join('');
+            }
+            
+            // الترجمة من الإنجليزية إلى العربية
+            const arabicResponse = await fetch(`https://translate.googleapis.com/translate_a/single?client=gtx&sl=en&tl=ar&dt=t&q=${encodeURIComponent(englishText)}`, {
+              method: 'GET',
+            });
+            
+            if (arabicResponse.ok) {
+              const arabicData = await arabicResponse.json();
+              if (Array.isArray(arabicData) && Array.isArray(arabicData[0])) {
+                const arabicTranslation = arabicData[0]
+                  .map((item: any) => (typeof item[0] === 'string' ? item[0] : (item[0] ? String(item[0]) : '')))
+                  .filter((s: string) => !!s)
+                  .join('');
+                
+                if (arabicRegex.test(arabicTranslation)) {
+                  console.log('✅ Using alternative translation via English');
+                  return arabicTranslation;
+                }
+              }
+            }
+          }
+        }
+      }
+      
       return translatedText || text; // Return original text if translation is empty
     } catch (error) {
       console.error('Translation error:', error);
