@@ -70,6 +70,9 @@ export function SubscriptionManagement() {
   const [newSubType, setNewSubType] = useState('monthly');
   const [newSubMinutes, setNewSubMinutes] = useState('120');
   const [newSubDays, setNewSubDays] = useState('30');
+  
+  // Trial modal state
+  const [trialEmail, setTrialEmail] = useState('');
 
   const SUBS_PER_PAGE = 15;
 
@@ -434,8 +437,6 @@ export function SubscriptionManagement() {
   );
 
   const renderQuickTrialModal = () => {
-    const [trialEmail, setTrialEmail] = useState('');
-
     return (
       <Modal
         visible={showEditModal}

@@ -582,7 +582,7 @@ export function AdminPanel() {
         <View style={styles.envRow}>
           <Text style={styles.envKey}>Protected Keys:</Text>
           <Text style={styles.envValue}>{securityInfo.protectedKeys} keys secured</Text>
-        </View>
+          </View>
         <View style={styles.envRow}>
           <Text style={styles.envKey}>Last Security Check:</Text>
           <Text style={styles.envValue}>{securityInfo.lastSecurityCheck}</Text>

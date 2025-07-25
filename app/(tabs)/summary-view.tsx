@@ -94,30 +94,51 @@ export default function SummaryView() {
     }
     
     try {
-      console.log('Saving summary to history...');
+      console.log('📝 [Summary] Saving summary to history...');
+      
+      // Check if we already have this exact content saved
+      const { data: existingRecords, error: checkError } = await supabase
+        .from('recordings')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('transcription', effectiveTranscription || '')
+        .eq('translation', effectiveTranslation || '')
+        .eq('summary', summaryText)
+        .limit(1);
+      
+      if (checkError) {
+        console.error('Error checking existing records:', checkError);
+      }
+      
+      // Only save if we don't already have this exact content
+      if (!existingRecords || existingRecords.length === 0) {
       const { error } = await supabase.from('recordings').insert([
         {
           user_id: user.id,
-          transcription: effectiveTranscription,
-          translation: effectiveTranslation,
+            transcription: effectiveTranscription || '',
+            translation: effectiveTranslation || '',
           summary: summaryText,
           translationSummary: '',
-          target_language: effectiveTargetLanguage,
+            target_language: effectiveTargetLanguage || '',
+            duration: 0, // Summary generation doesn't have duration
           created_at: new Date().toISOString(),
         }
       ]);
       
       if (error) {
-        console.error('Supabase error:', error);
+          console.error('❌ [Summary] Supabase error:', error);
         throw error;
+        }
+        
+        console.log('✅ [Summary] Summary saved to history successfully');
+      } else {
+        console.log('📄 [Summary] Content already exists in history, skipping save');
       }
       
       setIsSaved(true);
-      console.log('Summary saved to history successfully');
-      // لا نعرض Alert هنا لتجنب إزعاج المستخدم
     } catch (e) {
       setIsSaved(false);
-      console.warn('Failed to save summary to history:', e);
+      console.warn('❌ [Summary] Failed to save summary to history:', e);
       // لا نعرض Alert هنا لتجنب إزعاج المستخدم
     }
   };
@@ -360,7 +381,12 @@ export default function SummaryView() {
                 {aiSummary && (
                   <TouchableOpacity
                     style={[styles.actionButton, { marginLeft: 4 }]} 
-                    onPress={() => saveSummaryToHistory(aiSummary)}
+                    onPress={async () => {
+                      await saveSummaryToHistory(aiSummary);
+                      if (isSaved) {
+                        Alert.alert('Success', 'Summary saved to history!');
+                      }
+                    }}
                     accessibilityLabel="Save summary to history"
                   >
                     <Save size={16} color={isSaved ? "#10B981" : "#2563EB"} />

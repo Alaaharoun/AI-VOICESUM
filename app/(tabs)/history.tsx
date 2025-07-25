@@ -20,6 +20,7 @@ interface Recording {
   transcription: string;
   summary: string;
   translation?: string;
+  translationSummary?: string;
   target_language?: string;
   duration: number;
   created_at: string;
@@ -241,6 +242,25 @@ const styles = StyleSheet.create({
     textAlign: 'center',
     lineHeight: 24,
   },
+  translationSummaryContainer: {
+    backgroundColor: '#EDE9FE',
+    padding: 12,
+    borderRadius: 8,
+    marginTop: 8,
+  },
+  translationSummaryLabel: {
+    fontSize: 12,
+    fontFamily: 'Inter-SemiBold',
+    color: '#7C3AED',
+    marginBottom: 4,
+  },
+  translationSummary: {
+    fontSize: 14,
+    fontFamily: 'Inter-Regular',
+    color: '#6B46C1',
+    lineHeight: 20,
+    fontStyle: 'italic',
+  },
 });
 
 export default function HistoryScreen() {
@@ -299,19 +319,51 @@ export default function HistoryScreen() {
 
   const deleteRecording = async (id: string) => {
     try {
+      if (!user?.id) {
+        throw new Error('User not authenticated');
+      }
+
+      console.log('🗑️ [History] Attempting to delete recording:', id);
+      
+      // Double-check that this recording belongs to the current user
+      const { data: recordingData, error: fetchError } = await supabase
+        .from('recordings')
+        .select('user_id')
+        .eq('id', id)
+        .single();
+
+      if (fetchError) {
+        console.error('❌ [History] Error fetching recording for verification:', fetchError);
+        throw new Error('Could not verify recording ownership');
+      }
+
+      if (recordingData.user_id !== user.id) {
+        console.error('❌ [History] User does not own this recording');
+        throw new Error('You can only delete your own recordings');
+      }
+
+      // Proceed with deletion
       const { error } = await supabase
         .from('recordings')
         .delete()
-        .eq('id', id);
+        .eq('id', id)
+        .eq('user_id', user.id); // Double security - ensure user owns the record
 
       if (error) {
+        console.error('❌ [History] Supabase deletion error:', error);
         throw error;
       }
 
+      // Update local state
       setRecordings(recordings.filter(r => r.id !== id));
+      console.log('✅ [History] Recording deleted successfully');
+      
+      // Show success message
+      Alert.alert('Success', 'Recording deleted successfully');
     } catch (error) {
-      console.error('Error deleting recording:', error);
-      Alert.alert('Error', 'Failed to delete recording');
+      console.error('❌ [History] Error deleting recording:', error);
+      const errorMessage = error instanceof Error ? error.message : 'Failed to delete recording';
+      Alert.alert('Error', errorMessage);
     }
   };
 
@@ -430,6 +482,17 @@ export default function HistoryScreen() {
           </Text>
           <Text style={styles.translation}>
             {item.translation}
+          </Text>
+        </View>
+      )}
+
+      {item.translationSummary && (
+        <View style={styles.translationSummaryContainer}>
+          <Text style={styles.translationSummaryLabel}>
+            Translation Summary:
+          </Text>
+          <Text style={styles.translationSummary}>
+            {item.translationSummary}
           </Text>
         </View>
       )}

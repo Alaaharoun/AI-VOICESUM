@@ -41,6 +41,7 @@ export default function UploadScreen() {
   const [speakingText, setSpeakingText] = useState<string | null>(null);
   const [remainingMinutes, setRemainingMinutes] = useState<number | null>(null);
   const [transcriptionStats, setTranscriptionStats] = useState<any>(null);
+  const [isSaved, setIsSaved] = useState(false);
   const router = useRouter();
 
   // التحقق من صلاحيات الأدمن - تحسين الأداء
@@ -75,6 +76,55 @@ export default function UploadScreen() {
     
     fetchCredits();
   }, [user, files, isAdmin]);
+
+  // Reset isSaved when data changes
+  useEffect(() => {
+    if (transcript || translation || aiSummary) {
+      setIsSaved(false);
+    }
+  }, [transcript, translation, aiSummary]);
+
+  // دالة لحفظ النتائج في history (جدول recordings)
+  const addToHistory = async (record: {
+    transcription?: string;
+    translation?: string;
+    summary?: string;
+    translationSummary?: string;
+    created_at: string;
+  }) => {
+    try {
+      if (!user) {
+        console.warn('No user available, skipping history save');
+        return;
+      }
+      
+      console.log('📝 [Upload] addToHistory called with:', { user_id: user.id, ...record });
+      const { error } = await supabase.from('recordings').insert([
+        {
+          user_id: user.id,
+          transcription: record.transcription || '',
+          translation: record.translation || '',
+          summary: record.summary || '',
+          translationSummary: record.translationSummary || '',
+          target_language: selectedLanguage?.name || '',
+          duration: files.reduce((sum, f) => sum + f.duration, 0),
+          created_at: record.created_at,
+        }
+      ]);
+      
+      if (error) {
+        console.error('❌ [Upload] Supabase error:', error);
+        throw error;
+      }
+      
+      console.log('✅ [Upload] Successfully saved to history');
+      setIsSaved(true);
+    } catch (e) {
+      console.warn('❌ [Upload] Failed to save to history', e);
+      setIsSaved(false);
+      // Don't throw error to avoid disrupting the flow
+    }
+  };
 
   // تحديث handlePickFile لدعم عدة ملفات وحساب المدة
   const handlePickFile = async () => {
@@ -115,7 +165,10 @@ export default function UploadScreen() {
         }
         setFiles(filesWithDuration);
         setTranscript('');
+        setTranslation('');
+        setAiSummary('');
         setProgress('');
+        setIsSaved(false);
       }
     } catch (err) {
       Alert.alert('Error', 'Failed to pick files.');
@@ -158,6 +211,9 @@ export default function UploadScreen() {
     setTranscript('');
     setTranslation('');
     setAiSummary('');
+    setIsSaved(false);
+    
+    let allTranscript = '';
     try {
       for (const file of files) {
         // 1. رفع الملف إلى AssemblyAI
@@ -200,8 +256,8 @@ export default function UploadScreen() {
             throw new Error(pollData.error || 'Transcription failed');
           }
         }
-        setProgress('');
-        setTranscript(prev => prev + (prev ? '\n\n' : '') + resultText);
+        
+        allTranscript += (allTranscript ? '\n\n' : '') + resultText;
         
         // خصم الدقائق فقط للمستخدمين العاديين (ليس الأدمن)
         if (!isAdmin) {
@@ -222,26 +278,18 @@ export default function UploadScreen() {
         }
       }
       
-      // بعد انتهاء التفريغ، ابدأ الترجمة فقط
-      if (transcript && selectedLanguage) {
-        // الترجمة - تحقق من طول النص
-        setTranslating(true);
-        try {
-          let textToTranslate = transcript;
-          // إذا كان النص طويل جداً، استخدم أول 5000 حرف فقط للترجمة
-          if (transcript.length > 5000) {
-            textToTranslate = transcript.substring(0, 5000) + '...';
-            Alert.alert('Notice', 'Text is very long. Only the first 5000 characters will be translated.');
-          }
-          const { SpeechService } = await import('@/services/speechService');
-          const translatedText = await SpeechService.translateText(textToTranslate, selectedLanguage.code);
-          setTranslation(translatedText);
-        } catch (error) {
-          console.error('Translation error:', error);
-        } finally {
-          setTranslating(false);
-        }
-      }
+      setProgress('');
+      setTranscript(allTranscript);
+      
+      // Auto-save transcription immediately
+      console.log('🔄 [Upload] Auto-saving transcription...');
+      await addToHistory({
+        transcription: allTranscript,
+        translation: '',
+        summary: '',
+        translationSummary: '',
+        created_at: new Date().toISOString(),
+      });
       
       setFiles([]);
     } catch (err) {
@@ -267,6 +315,17 @@ export default function UploadScreen() {
           const { SpeechService } = await import('@/services/speechService');
           const translatedText = await SpeechService.translateText(textToTranslate, selectedLanguage.code);
           setTranslation(translatedText);
+          
+          // Auto-save translation immediately
+          console.log('🔄 [Upload] Auto-saving translation...');
+          await addToHistory({
+            transcription: transcript,
+            translation: translatedText,
+            summary: aiSummary,
+            translationSummary: '',
+            created_at: new Date().toISOString(),
+          });
+          
         } catch (error) {
           console.error('Translation error:', error);
         } finally {
@@ -278,7 +337,7 @@ export default function UploadScreen() {
     };
     translate();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [transcript, selectedLanguage]);
+  }, [transcript, selectedLanguage?.code]); // Only depend on code, not the whole object
 
   const handleDownload = async (type: 'txt' | 'doc') => {
     if (!transcript) return;
@@ -417,6 +476,17 @@ export default function UploadScreen() {
       const { SpeechService } = await import('@/services/speechService');
       const summary = await SpeechService.summarizeText(textForSummary, selectedLanguage?.code);
       setAiSummary(summary);
+      
+      // Auto-save summary immediately
+      console.log('🔄 [Upload] Auto-saving summary...');
+      await addToHistory({
+        transcription: transcript,
+        translation: translation,
+        summary: summary,
+        translationSummary: '',
+        created_at: new Date().toISOString(),
+      });
+      
     } catch (error) {
       console.error('Summarization error:', error);
       Alert.alert('Error', 'Failed to generate summary. Please try again.');
@@ -432,7 +502,8 @@ export default function UploadScreen() {
       params: {
         transcription: transcript, // <-- تعديل الاسم هنا
         translation,
-        lang: selectedLanguage?.code || '',
+        targetLanguage: selectedLanguage?.name || '',
+        autoSummarize: 'true', // Auto-generate summary
       },
     });
   };
@@ -694,6 +765,35 @@ export default function UploadScreen() {
           disabled={loading}
         />
       </View>
+
+      {/* Manual Save Button */}
+      {(transcript || translation || aiSummary) && !isSaved && (
+        <TouchableOpacity
+          style={styles.saveButton}
+          onPress={async () => {
+            try {
+              await addToHistory({
+                transcription: transcript,
+                translation: translation,
+                summary: aiSummary,
+                translationSummary: '',
+                created_at: new Date().toISOString(),
+              });
+              Alert.alert('Success', 'Content saved to history!');
+            } catch (e) {
+              Alert.alert('Error', 'Failed to save to history');
+            }
+          }}
+        >
+          <Text style={styles.saveButtonText}>💾 Save to History</Text>
+        </TouchableOpacity>
+      )}
+
+      {isSaved && (transcript || translation || aiSummary) && (
+        <View style={styles.savedIndicator}>
+          <Text style={styles.savedText}>✅ Saved to History</Text>
+        </View>
+      )}
     </ScrollView>
   );
 }
@@ -943,5 +1043,35 @@ const styles = StyleSheet.create({
     fontSize: 12,
     textAlign: 'center',
     fontStyle: 'italic',
+  },
+  saveButton: {
+    backgroundColor: '#10B981',
+    paddingVertical: 12,
+    paddingHorizontal: 24,
+    borderRadius: 12,
+    marginTop: 16,
+    marginBottom: 8,
+    alignItems: 'center',
+    width: '100%',
+  },
+  saveButtonText: {
+    color: 'white',
+    fontWeight: 'bold',
+    fontSize: 16,
+  },
+  savedIndicator: {
+    backgroundColor: '#ECFDF5',
+    paddingVertical: 8,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    marginTop: 8,
+    alignItems: 'center',
+    borderWidth: 1,
+    borderColor: '#10B981',
+  },
+  savedText: {
+    color: '#059669',
+    fontWeight: '600',
+    fontSize: 14,
   },
 }); 

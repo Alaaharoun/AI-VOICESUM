@@ -454,6 +454,23 @@ export default function RecordScreen() {
   useEffect(() => {
     checkApiConfiguration();
   }, []);
+  
+  // اختبار بسيط للترجمة عند تحميل الصفحة
+  useEffect(() => {
+    const testTranslation = async () => {
+      try {
+        const { SpeechService } = await import('@/services/speechService');
+        console.log('🧪 Testing SpeechService.translateText...');
+        const testResult = await SpeechService.translateText('Hello world', 'ar');
+        console.log('✅ SpeechService test successful:', testResult);
+      } catch (error) {
+        console.error('❌ SpeechService test failed:', error);
+      }
+    };
+    
+    // تشغيل الاختبار بعد ثانيتين
+    setTimeout(testTranslation, 2000);
+  }, []);
 
   useEffect(() => {
     if (isRecording) {
@@ -597,15 +614,14 @@ export default function RecordScreen() {
       const targetLang = selectedLanguage.code === 'auto' ? 'en' : selectedLanguage.code;
       const langName = selectedLanguage.code === 'auto' ? 'English (Auto-detect)' : selectedLanguage.name;
       const sourceLang = selectedSourceLanguage?.code || 'auto';
-      const sourceLangName = selectedSourceLanguage?.name || 'Autodetect';
+      const sourceLangName = selectedSourceLanguage?.name || 'Auto Detect';
       
-      // إضافة console.log مؤقت للتأكد من تمرير البيانات
-      console.log('🚀 Navigation Debug:', {
-        sourceLang,
-        sourceLangName,
+      // Debug logging for language parameters
+      console.log('🚀 Navigation to Live Translation:', {
+        target: { code: targetLang, name: langName },
+        source: { code: sourceLang, name: sourceLangName },
         selectedSourceLanguage,
-        targetLang,
-        langName
+        selectedLanguage
       });
       
       router.push({
@@ -617,7 +633,7 @@ export default function RecordScreen() {
           sourceLanguageName: sourceLangName,
           autoStart: 'true',
         },
-      } as any);
+      });
       return;
     }
 
@@ -665,36 +681,58 @@ export default function RecordScreen() {
               console.log('Transcription completed:', transcription);
               // ترجمة النص تلقائياً إذا تم اختيار لغة هدف
               if (selectedLanguage && transcription) {
+                console.log('🎯 Translation requested for language:', selectedLanguage.name, '(', selectedLanguage.code, ')');
                 try {
                   const { SpeechService } = await import('@/services/speechService');
                   let translation;
                   
                   if (selectedLanguage.code === 'auto') {
                     // إذا تم اختيار الكشف التلقائي، ترجم إلى الإنجليزية
+                    console.log('🔄 Translating to English (auto-detect mode)');
                     translation = await SpeechService.translateText(transcription, 'en');
                   } else {
                     // إذا تم اختيار لغة محددة، ترجم إلى تلك اللغة
+                    console.log('🔄 Translating to:', selectedLanguage.name, '(', selectedLanguage.code, ')');
+                    
+                    // اختبار بسيط للتأكد من أن الخدمة تعمل
+                    if (!SpeechService || typeof SpeechService.translateText !== 'function') {
+                      throw new Error('SpeechService.translateText is not available');
+                    }
+                    
                     translation = await SpeechService.translateText(transcription, selectedLanguage.code);
                   }
                   
                   setCurrentTranslation(translation);
-                  console.log('Translation completed:', translation);
-                                // حفظ النتائج بعد الترجمة
-              console.log('🔄 Auto-saving transcription with translation...');
-              await addToHistory({
-                transcription,
-                translation,
-                summary: '',
-                translationSummary: '',
-                created_at: new Date().toISOString(),
-              });
-              // تعيين isSaved إلى true بعد الحفظ التلقائي
-              setIsSaved(true);
+                  console.log('✅ Translation completed:', translation);
+                  console.log('📝 Current translation state set to:', translation);
+                  
+                  // حفظ النتائج بعد الترجمة
+                  console.log('🔄 Auto-saving transcription with translation...');
+                  await addToHistory({
+                    transcription,
+                    translation,
+                    summary: '',
+                    translationSummary: '',
+                    created_at: new Date().toISOString(),
+                  });
+                  // تعيين isSaved إلى true بعد الحفظ التلقائي
+                  setIsSaved(true);
                 } catch (error) {
-                  console.error('Translation error:', error);
+                  console.error('❌ Translation error:', error);
+                  // في حالة فشل الترجمة، احفظ النص الأصلي فقط
+                  console.log('🔄 Auto-saving transcription without translation due to error...');
+                  await addToHistory({
+                    transcription,
+                    translation: '',
+                    summary: '',
+                    translationSummary: '',
+                    created_at: new Date().toISOString(),
+                  });
+                  setIsSaved(true);
                 }
               } else {
                 // إذا لم توجد ترجمة، احفظ فقط النص
+                console.log('⚠️ No translation: selectedLanguage =', selectedLanguage, 'transcription =', transcription ? 'exists' : 'empty');
                 console.log('🔄 Auto-saving transcription without translation...');
                 await addToHistory({
                   transcription,
@@ -837,20 +875,66 @@ export default function RecordScreen() {
     created_at: string;
   }) => {
     try {
-      console.log('📝 addToHistory called with:', { user_id: user?.id, ...record });
-      const { error } = await supabase.from('recordings').insert([
-        {
-          user_id: user?.id,
-          ...record
-        }
-      ]);
-      if (error) {
-        console.error('❌ Supabase error:', error);
-        throw error;
+      if (!user?.id) {
+        console.warn('No user available, skipping history save');
+        return;
       }
-      console.log('✅ Successfully saved to history');
+
+      const transcriptionText = record.transcription || '';
+      const translationText = record.translation || '';
+      
+      // Don't save if both transcription and translation are empty
+      if (!transcriptionText.trim() && !translationText.trim()) {
+        console.warn('Both transcription and translation are empty, skipping save');
+        return;
+      }
+
+      console.log('📝 [Index] addToHistory called with:', { 
+        user_id: user.id, 
+        transcription_length: transcriptionText.length,
+        translation_length: translationText.length,
+        has_summary: !!record.summary
+      });
+      
+      // Check for duplicates before inserting
+      const { data: existingRecords, error: checkError } = await supabase
+        .from('recordings')
+        .select('id')
+        .eq('user_id', user.id)
+        .eq('transcription', transcriptionText)
+        .eq('translation', translationText)
+        .limit(1);
+      
+      if (checkError) {
+        console.error('Error checking for duplicates:', checkError);
+      }
+      
+      // Only save if we don't have this exact content already
+      if (!existingRecords || existingRecords.length === 0) {
+        const { error } = await supabase.from('recordings').insert([
+          {
+            user_id: user.id,
+            transcription: transcriptionText,
+            translation: translationText,
+            summary: record.summary || '',
+            translationSummary: record.translationSummary || '',
+            target_language: selectedLanguage?.name || '',
+            duration: recordingDuration || 0,
+            created_at: record.created_at,
+          }
+        ]);
+        
+        if (error) {
+          console.error('❌ [Index] Supabase error:', error);
+          throw error;
+        }
+        
+        console.log('✅ [Index] Successfully saved to history');
+      } else {
+        console.log('📄 [Index] Content already exists, skipping duplicate save');
+      }
     } catch (e) {
-      console.warn('❌ Failed to save to history', e);
+      console.warn('❌ [Index] Failed to save to history', e);
       throw e;
     }
   };
@@ -1021,41 +1105,43 @@ export default function RecordScreen() {
               </Text>
             </>
           </TouchableOpacity>
-          {/* Language Selector for Source Language - Always visible */}
-          <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
-              <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
-                <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
-                <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15 }}>
-                  Source Language (What you will speak)
-                </Text>
-              </View>
-              <LanguageSelector
-                selectedLanguage={selectedSourceLanguage}
-                onSelectLanguage={setSelectedSourceLanguage}
-                disabled={isRecording || isProcessing}
-              />
-              {/* إضافة مؤشر للغة المصدر المحددة */}
-              {selectedSourceLanguage && selectedSourceLanguage.code !== 'auto' && (
-                <View style={{ 
-                  backgroundColor: '#E0F2FE', 
-                  padding: 8, 
-                  borderRadius: 6, 
-                  marginTop: 6,
-                  borderWidth: 1,
-                  borderColor: '#06B6D4'
-                }}>
-                  <Text style={{ color: '#0E7490', fontSize: 12, textAlign: 'center', fontWeight: '500' }}>
-                    ✅ Source language set to: {selectedSourceLanguage.name} ({selectedSourceLanguage.code})
+          {/* Language Selector for Source Language - Only visible when live translation is enabled */}
+          {liveTranslateEnabled && (
+            <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
+                <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
+                  <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
+                  <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15 }}>
+                    Source Language (What you will speak)
                   </Text>
                 </View>
-              )}
-            </View>
+                <LanguageSelector
+                  selectedLanguage={selectedSourceLanguage}
+                  onSelectLanguage={setSelectedSourceLanguage}
+                  disabled={isRecording || isProcessing}
+                />
+                {/* إضافة مؤشر للغة المصدر المحددة */}
+                {selectedSourceLanguage && selectedSourceLanguage.code !== 'auto' && (
+                  <View style={{ 
+                    backgroundColor: '#E0F2FE', 
+                    padding: 8, 
+                    borderRadius: 6, 
+                    marginTop: 6,
+                    borderWidth: 1,
+                    borderColor: '#06B6D4'
+                  }}>
+                    <Text style={{ color: '#0E7490', fontSize: 12, textAlign: 'center', fontWeight: '500' }}>
+                      ✅ Source language set to: {selectedSourceLanguage.name} ({selectedSourceLanguage.code})
+                    </Text>
+                  </View>
+                )}
+              </View>
+          )}
           {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
           <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
               <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
               <Text style={{ color: '#374151', fontWeight: 'bold', fontSize: 15 }}>
-              {liveTranslateEnabled ? 'Target Language for Live Translation' : 'Select Target Language'}
+              {liveTranslateEnabled ? 'Target Language for Live Translation' : 'Select Target Language for Translation'}
             </Text>
             </View>
             <LanguageSelector
@@ -1063,6 +1149,22 @@ export default function RecordScreen() {
               onSelectLanguage={setSelectedLanguage}
               disabled={isRecording || isProcessing}
             />
+            {/* Show translation status for regular recording mode */}
+            {!liveTranslateEnabled && selectedLanguage && (
+              <View style={{ 
+                backgroundColor: '#ECFDF5', 
+                padding: 12, 
+                borderRadius: 8, 
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: '#10B981'
+              }}>
+                <Text style={{ color: '#047857', fontSize: 13, textAlign: 'center', fontWeight: '500' }}>
+                  ✅ Translation enabled: Your recording will be translated to {selectedLanguage.name} ({selectedLanguage.flag})
+                </Text>
+              </View>
+            )}
+            {/* Show translation status for live translation mode */}
             {liveTranslateEnabled && selectedLanguage && (
               <View style={{ 
                 backgroundColor: '#F0F9FF', 
@@ -1096,6 +1198,21 @@ export default function RecordScreen() {
                 </Text>
               </View>
             )}
+            {/* Show message when no language is selected for regular recording */}
+            {!liveTranslateEnabled && !selectedLanguage && (
+              <View style={{ 
+                backgroundColor: '#FEF3C7', 
+                padding: 12, 
+                borderRadius: 8, 
+                marginTop: 8,
+                borderWidth: 1,
+                borderColor: '#F59E0B'
+              }}>
+                <Text style={{ color: '#92400E', fontSize: 13, textAlign: 'center', fontWeight: '500' }}>
+                  💡 Select a language above to enable translation for your recordings
+                </Text>
+              </View>
+            )}
           </View>
           {!hasAccess && !subscriptionLoading && (
             <Text style={{ color: '#DC2626', textAlign: 'center', marginTop: 12 }}>
@@ -1113,9 +1230,11 @@ export default function RecordScreen() {
                 <Text style={styles.recordingHint}>
                   {isRealTimeMode 
                     ? 'Speak and see translation live!'
-                    : Platform.OS === 'web' 
-                      ? 'Speak into your microphone' 
-                      : 'Speak clearly into your device'
+                    : selectedLanguage
+                      ? `Speak clearly - will translate to ${selectedLanguage.name}`
+                      : Platform.OS === 'web' 
+                        ? 'Speak into your microphone' 
+                        : 'Speak clearly into your device'
                   }
                 </Text>
               </View>
@@ -1125,42 +1244,71 @@ export default function RecordScreen() {
           {isProcessing && (
             <View style={styles.processingStatus}>
               <Sparkles size={20} color="#2563EB" />
-              <Text style={styles.processingText}>Processing your audio...</Text>
+              <Text style={styles.processingText}>
+                {selectedLanguage 
+                  ? `Processing audio and translating to ${selectedLanguage.name}...`
+                  : 'Processing your audio...'
+                }
+              </Text>
+              {selectedLanguage && (
+                <Text style={{ fontSize: 12, color: '#6B7280', marginTop: 4, textAlign: 'center' }}>
+                  🌐 Translation in progress...
+                </Text>
+              )}
             </View>
           )}
         </View>
 
         {(currentTranscription || isProcessing || isRealTimeMode) && (
-          <TranscriptionCard
-            transcription={currentTranscription}
-            summary={currentSummary}
-            translation={currentTranslation}
-            translationSummary={currentTranslationSummary}
-            targetLanguage={selectedLanguage}
-            isProcessing={isProcessing || isGeneratingSummary || isGeneratingTranslationSummary}
-            onGenerateSummary={handleOpenSummaryView}
-            isRealTime={isRealTimeMode}
-          />
+          <>
+            {console.log('🎯 Rendering TranscriptionCard with:', {
+              transcription: currentTranscription ? 'exists' : 'empty',
+              translation: currentTranslation ? 'exists' : 'empty',
+              targetLanguage: selectedLanguage?.name || 'none',
+              isProcessing
+            })}
+            <TranscriptionCard
+              transcription={currentTranscription}
+              summary={currentSummary}
+              translation={currentTranslation}
+              translationSummary={currentTranslationSummary}
+              targetLanguage={selectedLanguage}
+              isProcessing={isProcessing || isGeneratingSummary || isGeneratingTranslationSummary}
+              onGenerateSummary={handleOpenSummaryView}
+              isRealTime={isRealTimeMode}
+            />
+          </>
         )}
 
         {hasAccess && !currentTranscription && !isProcessing && apiStatus === 'ready' && (
           <View style={styles.instructions}>
             <Text style={styles.instructionsTitle}>How to use:</Text>
             <Text style={styles.instructionsText}>
-              1. Tap the microphone button to start recording
+              1. Select a target language above for translation (optional)
             </Text>
             <Text style={styles.instructionsText}>
-              2. Speak clearly into your device
+              2. Tap the microphone button to start recording
             </Text>
             <Text style={styles.instructionsText}>
-              3. Tap again to stop and get your transcription
+              3. Speak clearly into your device
             </Text>
             <Text style={styles.instructionsText}>
-              4. Download your transcription or generate an AI summary
+              4. Tap again to stop and get your transcription
             </Text>
-            {isRealTimeMode && (
+            <Text style={styles.instructionsText}>
+              5. {selectedLanguage ? 'View your transcription and translation' : 'View your transcription'}
+            </Text>
+            <Text style={styles.instructionsText}>
+              6. Download your content or generate an AI summary
+            </Text>
+            {!liveTranslateEnabled && selectedLanguage && (
               <Text style={styles.instructionsText}>
-                5. Enable real-time translation to see translations as you speak!
+                7. 💡 Translation will be automatically generated to {selectedLanguage.name}
+              </Text>
+            )}
+            {liveTranslateEnabled && (
+              <Text style={styles.instructionsText}>
+                7. 🌐 Live translation mode: See translations as you speak!
               </Text>
             )}
           </View>
