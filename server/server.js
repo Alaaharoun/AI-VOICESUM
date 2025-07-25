@@ -536,14 +536,24 @@ function startWebSocketServer(server) {
   console.log('WebSocket server attached to main HTTP server');
 
   wsServer.on('connection', (ws) => {
-    console.log('New WS client connected');
-    const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
-    const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
-    if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
-      ws.send(JSON.stringify({ type: 'error', error: 'Azure Speech credentials missing!' }));
-      ws.close();
-      return;
-    }
+    console.log('[WebSocket] 🔗 New client connected');
+    
+    try {
+      const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
+      const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
+      
+      console.log('[WebSocket] 🔑 Checking Azure credentials...');
+      console.log('[WebSocket] Key present:', !!AZURE_SPEECH_KEY);
+      console.log('[WebSocket] Region present:', !!AZURE_SPEECH_REGION);
+      
+      if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+        console.log('[WebSocket] ❌ Azure credentials missing!');
+        ws.send(JSON.stringify({ type: 'error', error: 'Azure Speech credentials missing!' }));
+        ws.close();
+        return;
+      }
+      
+      console.log('[WebSocket] ✅ Azure credentials OK, proceeding...');
     
     // إعداد جلسة Azure Speech جديدة لكل عميل
     let pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
@@ -792,11 +802,21 @@ function startWebSocketServer(server) {
         pushStream.close();
         recognizer.stopContinuousRecognitionAsync();
         recognizer.close();
-        console.log('Session cleaned up completely');
+        console.log('[WebSocket] 🧹 Session cleaned up completely');
       } catch (error) {
-        console.error('Error during session cleanup:', error);
+        console.error('[WebSocket] ❌ Error during session cleanup:', error);
       }
     });
+    
+    } catch (error) {
+      console.error('[WebSocket] 💥 Fatal error in WebSocket handler:', error);
+      try {
+        ws.send(JSON.stringify({ type: 'error', error: 'Server error: ' + error.message }));
+        ws.close();
+      } catch (sendError) {
+        console.error('[WebSocket] ❌ Failed to send error message:', sendError);
+      }
+    }
   });
 }
 
