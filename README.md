@@ -1,171 +1,159 @@
-# AI Voice Translation & Transcription App
+# Live Translation App
 
-## Overview
+A real-time speech-to-text and translation application built with React Native and Expo.
 
-This project is a **full-featured cross-platform voice transcription and translation app** built with React Native (Expo), Supabase, and AssemblyAI.  
-It enables users to record audio, transcribe speech, translate in real-time, and manage their usage/subscription—all with a modern, user-friendly interface and a robust admin panel.
+## 🚀 Features
 
----
+- **Real-time Speech Recognition**: Convert speech to text in real-time
+- **Multi-language Translation**: Support for 50+ languages
+- **Cross-platform**: Works on iOS, Android, and Web
+- **WebSocket Communication**: Real-time audio streaming to server
+- **Azure Speech Services**: Powered by Microsoft Azure Speech SDK
+- **Smart Audio Management**: Optimized audio chunk handling
+- **Connection Management**: Automatic WebSocket timeout and reconnect
 
-## Features
+## 🔧 Recent Fixes & Improvements
 
-### 🎤 **Audio Transcription & Translation**
-- Record audio and get instant, accurate transcriptions.
-- Translate transcriptions to 14+ languages.
-- **Real-time translation**: See translations live as you speak (web, mobile coming soon).
+### WebSocket Connection
+- ✅ Fixed WebSocket connection timing issues
+- ✅ Added automatic timeout management (1 minute)
+- ✅ Implemented reconnect functionality
+- ✅ Optimized audio chunk handling
 
-### 🏆 **Premium Subscription System**
-- Free and premium plans with usage limits.
-- In-app subscription management (activate, deactivate, upgrade).
-- Usage tracking (minutes/hours used, daily limits).
+### Audio Processing
+- ✅ Fixed "Buffer is not defined" error in browser
+- ✅ Improved audio service initialization
+- ✅ Added chunk size validation (skip silence)
+- ✅ Enhanced MediaRecorder timing (200ms intervals)
 
-#### Subscription Plans
-| Plan ID | Plan Name | Price | Daily Limit | Features |
-|---------|-----------|-------|-------------|----------|
-| `free` | Free Plan | $0 | 10 minutes | Basic transcription, 14+ languages |
-| `basic` | Basic Plan | $4.99/month | 60 minutes | Enhanced transcription, priority processing |
-| `premium` | Premium Plan | $9.99/month | 180 minutes | Advanced features, unlimited summaries |
-| `pro` | Pro Plan | $19.99/month | 480 minutes | Professional features, API access |
+### Platform Compatibility
+- ✅ Fixed Web Audio API initialization issues
+- ✅ Improved mobile vs web platform handling
+- ✅ Added proper cleanup mechanisms
 
-### 🕹️ **Modern UI/UX**
-- Clean, mobile-first design.
-- Multi-language support (Arabic & English, auto-detects device language).
-- Dark/light mode support.
+## 🛠️ Technical Stack
 
-### 📊 **Admin Panel**
-- Secret, protected admin page (PIN + Supabase role check).
-- View system stats: total users, subscribers, recordings, usage hours.
-- Search, view, and manage all users (with pagination for large datasets).
-- Grant/revoke admin rights, manage subscriptions.
-- Edit app-wide settings (e.g., Rate Us/Share App links) live from the admin panel.
+- **Frontend**: React Native, Expo
+- **Backend**: Node.js, WebSocket
+- **Speech Services**: Microsoft Azure Speech SDK
+- **Translation**: Google Translate API
+- **Deployment**: Render.com
 
-### 🔗 **Dynamic App Links**
-- "Rate Us" and "Share App" links are editable by admins and update instantly for all users.
+## 📱 Supported Platforms
 
-### 🛡️ **Security**
-- Supabase Auth for secure login and role management.
-- Row-level security and custom SQL functions for admin/superadmin logic.
+- ✅ iOS
+- ✅ Android  
+- ✅ Web Browser
 
-### 📝 **History & Summaries**
-- Save and view past transcriptions.
-- AI-powered summary of transcriptions.
+## 🌐 Server Connection
 
-### 📱 **Platform Support**
-- Android, iOS, and Web (PWA-ready).
+The app connects to the live server at: `https://ai-voicesum.onrender.com`
 
----
+- **WebSocket Endpoint**: `wss://ai-voicesum.onrender.com/ws`
+- **Health Check**: `https://ai-voicesum.onrender.com/health`
 
-## Project Structure
+## 🚀 Getting Started
 
-```
-project/
-  app/                # Main app screens and navigation
-    (tabs)/           # Tabbed pages (profile, history, live translation, etc.)
-    (auth)/           # Auth screens (sign-in, sign-up)
-    components/       # Reusable UI components (AdminPanel, RecordButton, etc.)
-    contexts/         # React context providers (Auth, Subscription)
-    hooks/            # Custom React hooks (audio, auth, etc.)
-    lib/              # Supabase client and helpers
-    locales/          # i18n translation files
-    services/         # Audio and speech processing logic
-    supabase/         # Database migrations and SQL functions
-  assets/             # Images and icons
-  package.json        # Dependencies and scripts
-  ...
-```
+### Prerequisites
+- Node.js (v16 or higher)
+- Expo CLI
+- React Native development environment
 
----
+### Installation
 
-## Tech Stack
-
-- **Frontend:** React Native (Expo), TypeScript, Expo Router
-- **Backend:** Supabase (Postgres, Auth, Storage, Edge Functions)
-- **Speech/AI:** AssemblyAI (for transcription & summarization)
-- **Other:** i18n-js, Lucide icons, Expo modules
-
----
-
-## Setup & Installation
-
-### 1. **Clone the Repository**
+1. Clone the repository:
 ```bash
-git clone <your-repo-url>
-cd <project-root>
+git clone https://github.com/Alaaharoun/AI-VOICESUM.git
+cd AI-VOICESUM
 ```
 
-### 2. **Install Dependencies**
+2. Install dependencies:
 ```bash
 npm install
-# or
-yarn install
 ```
 
-### 3. **Configure Environment**
-- Copy your Supabase project URL and anon key.
-- Set them in your `.env` or `app.json` (see `lib/supabase.ts` for usage).
-- Add your AssemblyAI API key.
-
-### 4. **Run Database Migrations**
-- Go to `project/supabase/migrations/`.
-- Apply all `.sql` files in order to your Supabase SQL editor.
-- This will set up all tables, roles, functions, and policies.
-
-### 5. **Start the App**
+3. Start the development server:
 ```bash
-npm run dev
-# or
-yarn dev
+npx expo start
 ```
-- For Android: `npm run android`
-- For iOS: `npm run ios`
-- For Web: `npm run build:web`
+
+4. Run on your preferred platform:
+- **Web**: Press `w` in the terminal
+- **iOS**: Press `i` in the terminal (requires iOS Simulator)
+- **Android**: Press `a` in the terminal (requires Android Emulator)
+
+## 📋 Usage
+
+1. **Select Target Language**: Choose your desired translation language
+2. **Toggle Real-time Mode**: Enable for instant translation or disable for batch processing
+3. **Start Recording**: Tap the "Start Recording" button
+4. **Speak**: Your speech will be transcribed and translated in real-time
+5. **View Results**: See both original and translated text
+
+## 🔧 Configuration
+
+### Environment Variables
+Create a `.env` file in the root directory:
+
+```env
+EXPO_PUBLIC_SUPABASE_URL=your_supabase_url
+EXPO_PUBLIC_SUPABASE_ANON_KEY=your_supabase_anon_key
+AZURE_SPEECH_KEY=your_azure_speech_key
+AZURE_SPEECH_REGION=your_azure_region
+GOOGLE_TRANSLATE_API_KEY=your_google_translate_key
+```
+
+## 🐛 Troubleshooting
+
+### Common Issues
+
+1. **"Web Audio API not initialized"**
+   - Solution: The app now automatically initializes audio on first interaction
+
+2. **"Buffer is not defined"**
+   - Solution: Fixed with proper Uint8Array conversion for browser compatibility
+
+3. **WebSocket Connection Issues**
+   - Solution: Added automatic reconnect and timeout management
+
+4. **Audio Chunks Not Sending**
+   - Solution: Improved chunk validation and WebSocket readiness checks
+
+## 📊 Performance Optimizations
+
+- **Audio Chunk Filtering**: Skip chunks smaller than 1000 bytes (silence)
+- **WebSocket Timeout**: Automatic connection management
+- **Memory Management**: Proper cleanup of audio resources
+- **Platform-specific Logic**: Optimized for each platform's capabilities
+
+## 🤝 Contributing
+
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Commit your changes (`git commit -m 'Add amazing feature'`)
+4. Push to the branch (`git push origin feature/amazing-feature`)
+5. Open a Pull Request
+
+## 📄 License
+
+This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
+
+## 🆘 Support
+
+For support and questions:
+- Create an issue on GitHub
+- Check the troubleshooting section above
+- Review the console logs for detailed error information
+
+## 🔄 Recent Updates
+
+### Version 5.1.2 (Latest)
+- ✅ Fixed WebSocket connection timing
+- ✅ Added automatic timeout management
+- ✅ Improved audio chunk handling
+- ✅ Fixed browser compatibility issues
+- ✅ Added reconnect functionality
 
 ---
 
-## Admin Access
-
-- The admin panel is hidden and only accessible via a secret gesture (e.g., tapping the version label 5 times).
-- Admins must enter a PIN and have the correct Supabase role.
-- Superadmins can manage all users, subscriptions, and app settings.
-
----
-
-## Customization
-
-- **Languages:** Add/edit translations in `locales/`.
-- **App Links:** Change "Rate Us" and "Share App" links from the admin panel.
-- **Subscription Plans:** Adjust logic in Supabase and the subscription UI.
-
----
-
-## Real-Time Translation
-
-See [`REAL_TIME_TRANSLATION.md`](./REAL_TIME_TRANSLATION.md) for full details on how live translation works and how to use it.
-
----
-
-## Database & Security
-
-- All sensitive actions are protected by Supabase RLS and custom SQL functions.
-- See [`MIGRATION_GUIDE.md`](./MIGRATION_GUIDE.md) for advanced migration and superadmin setup.
-
----
-
-## Extending & Selling
-
-- The codebase is modular and well-documented.
-- Buyers can easily:
-  - Change branding, icons, and colors.
-  - Add new features or integrations.
-  - Deploy to their own Supabase/AssemblyAI accounts.
-  - Manage users and settings without code changes.
-
----
-
-## Support
-
-For any questions or setup help, contact the original developer or open an issue.
-
----
-
-**Enjoy your new AI-powered voice translation app!** 
+**Built with ❤️ using React Native and Azure Speech Services** 
