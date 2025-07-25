@@ -1174,16 +1174,16 @@ export default function LiveTranslationScreen() {
     <View style={styles.container}>
       <Text style={styles.title}>Live Translation</Text>
       
-      {/* Source Language selector */}
-      <View style={styles.languageSelector}>
-                 <Text style={styles.sectionLabel}>From (Source Language):</Text>
-        <LanguageSelector
-          selectedLanguage={selectedSourceLanguage}
-          onSelectLanguage={setSelectedSourceLanguage}
-          disabled={false}
-        />
-      </View>
-
+      {/* Source Language Display */}
+      {selectedSourceLanguage && (
+        <View style={styles.sourceLanguageDisplay}>
+          <Text style={styles.sourceLanguageLabel}>Source Language:</Text>
+          <Text style={styles.sourceLanguageText}>
+            {selectedSourceLanguage.flag} {selectedSourceLanguage.name}
+          </Text>
+        </View>
+      )}
+      
              {/* Target Language selector */}
        <View style={styles.languageSelector}>
          <Text style={styles.sectionLabel}>To (Target Language):</Text>
@@ -1628,5 +1628,27 @@ const styles = StyleSheet.create({
     color: '#fff',
     fontSize: 16,
     fontWeight: 'bold',
+  },
+  // Source Language Display styles
+  sourceLanguageDisplay: {
+    backgroundColor: '#e8f5e8',
+    padding: 12,
+    borderRadius: 8,
+    marginBottom: 15,
+    borderLeftWidth: 4,
+    borderLeftColor: '#4caf50',
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'space-between',
+  },
+  sourceLanguageLabel: {
+    fontSize: 14,
+    fontWeight: 'bold',
+    color: '#2e7d32',
+  },
+  sourceLanguageText: {
+    fontSize: 16,
+    fontWeight: '600',
+    color: '#1b5e20',
   },
 }); 

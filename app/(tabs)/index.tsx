@@ -1021,8 +1021,7 @@ export default function RecordScreen() {
               </Text>
             </>
           </TouchableOpacity>
-          {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
-          {liveTranslateEnabled && (
+          {/* Language Selector for Source Language - Always visible */}
           <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
               <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
                 <Languages size={16} color="#6B7280" style={{ marginRight: 6 }} />
@@ -1051,7 +1050,6 @@ export default function RecordScreen() {
                 </View>
               )}
             </View>
-          )}
           {/* Language Selector يظهر دائمًا مع نص توضيحي مختلف */}
           <View style={{ width: '90%', alignSelf: 'center', marginBottom: 18 }}>
             <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 6 }}>
