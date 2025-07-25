@@ -296,20 +296,20 @@ class WebAudioService implements AudioService {
           this.audioChunks.push(event.data);
           
           if (this.dataCallback && typeof this.dataCallback === 'function') {
-            // تحويل Blob إلى base64
-            const reader = new FileReader();
-            reader.onload = () => {
-              const result = reader.result as string;
-              const base64Data = result.split(',')[1];
+          // تحويل Blob إلى base64
+          const reader = new FileReader();
+          reader.onload = () => {
+            const result = reader.result as string;
+            const base64Data = result.split(',')[1];
               this.dataCallback!({
-                data: base64Data,
-                size: base64Data.length
-              });
-            };
-            reader.onerror = (error) => {
-              Logger.error('FileReader error:', error);
-            };
-            reader.readAsDataURL(event.data);
+              data: base64Data,
+              size: base64Data.length
+            });
+          };
+          reader.onerror = (error) => {
+            Logger.error('FileReader error:', error);
+          };
+          reader.readAsDataURL(event.data);
           }
         }
       };

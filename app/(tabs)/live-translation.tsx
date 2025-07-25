@@ -76,6 +76,7 @@ export default function LiveTranslationScreen() {
 
   // Helper function to convert language codes to Azure format
   const convertToAzureLanguage = (langCode: string): string => {
+    // فقط اللغات المدعومة من Azure Speech Service
     const azureLanguageMap: { [key: string]: string } = {
       'ar': 'ar-SA', 'en': 'en-US', 'es': 'es-ES', 'fr': 'fr-FR', 'de': 'de-DE',
       'it': 'it-IT', 'pt': 'pt-BR', 'ru': 'ru-RU', 'ja': 'ja-JP', 'ko': 'ko-KR',
@@ -84,17 +85,17 @@ export default function LiveTranslationScreen() {
       'hu': 'hu-HU', 'ro': 'ro-RO', 'bg': 'bg-BG', 'hr': 'hr-HR', 'sl': 'sl-SI',
       'et': 'et-EE', 'lv': 'lv-LV', 'lt': 'lt-LT', 'el': 'el-GR', 'he': 'he-IL',
       'th': 'th-TH', 'vi': 'vi-VN', 'id': 'id-ID', 'ms': 'ms-MY', 'fil': 'fil-PH',
-      'hi': 'hi-IN', 'bn': 'bn-IN', 'ur': 'ur-PK', 'fa': 'fa-IR', 'uk': 'uk-UA',
-      'ca': 'ca-ES', 'eu': 'eu-ES', 'gl': 'gl-ES', 'cy': 'cy-GB', 'ga': 'ga-IE',
-      'mt': 'mt-MT', 'sq': 'sq-AL', 'mk': 'mk-MK', 'sr': 'sr-RS', 'bs': 'bs-BA',
-      'me': 'me-ME', 'az': 'az-AZ', 'ka': 'ka-GE', 'hy': 'hy-AM', 'kk': 'kk-KZ',
-      'ky': 'ky-KG', 'uz': 'uz-UZ', 'tg': 'tg-TJ', 'mn': 'mn-MN', 'ne': 'ne-NP',
-      'si': 'si-LK', 'my': 'my-MM', 'km': 'km-KH', 'lo': 'lo-LA', 'am': 'am-ET',
-      'sw': 'sw-KE', 'zu': 'zu-ZA', 'af': 'af-ZA', 'is': 'is-IS', 'fo': 'fo-FO',
-      'lb': 'lb-LU', 'fy': 'fy-NL', 'gd': 'gd-GB', 'kw': 'kw-GB', 'br': 'br-FR',
-      'oc': 'oc-FR', 'co': 'co-FR'
+      'hi': 'hi-IN', 'bn': 'bn-IN', 'ur': 'ur-PK', 'fa': 'fa-IR', 'uk': 'uk-UA'
     };
-    return azureLanguageMap[langCode] || 'ar-SA';
+    
+    const azureCode = azureLanguageMap[langCode];
+    if (!azureCode) {
+      Logger.warn(`Unsupported language code: ${langCode}, defaulting to ar-SA`);
+      return 'ar-SA';
+    }
+    
+    Logger.info(`Language conversion: ${langCode} → ${azureCode}`);
+    return azureCode;
   };
 
   // Initialize audio service
