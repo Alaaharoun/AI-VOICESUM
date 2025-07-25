@@ -55,6 +55,7 @@ export default function LiveTranslationScreen() {
   const isRealTimeMode = true; // Always enabled
   const [realTimeTranscription, setRealTimeTranscription] = useState<string>('');
   const [realTimeTranslation, setRealTimeTranslation] = useState<string>('');
+  const [showSummaryButton, setShowSummaryButton] = useState(false);
 
   // Refs
   const audioServiceRef = useRef<any>(null);
@@ -748,6 +749,7 @@ export default function LiveTranslationScreen() {
     
     try {
       Logger.info('Starting audio streaming...');
+      setShowSummaryButton(false); // Hide summary button when starting new recording
       
       // التحقق من جاهزية خدمة الصوت
       if (!isReady) {
@@ -989,13 +991,13 @@ export default function LiveTranslationScreen() {
       
       Logger.info('Audio streaming stopped successfully. Final buffer cleared only once at stop.');
       
-      // Auto-navigate to summary page if we have transcriptions
+      // Show summary button if we have transcriptions
       setTimeout(() => {
         if (transcriptions.length > 0 || realTimeTranscription) {
-          Logger.info('Auto-navigating to summary page');
-          router.push('/summary-view');
+          Logger.info('Showing AI Summary button');
+          setShowSummaryButton(true);
         }
-      }, 1500); // Wait 1.5 seconds for any final transcriptions
+      }, 1000); // Wait 1 second for any final transcriptions
       
     } catch (error) {
       Logger.error('Failed to stop streaming:', error);
@@ -1141,11 +1143,22 @@ export default function LiveTranslationScreen() {
   };
 
   // Real-time mode is now always enabled, no toggle needed
+  
+  const navigateToSummary = () => {
+    Logger.info('User chose to navigate to summary page');
+    router.push('/summary-view');
+  };
+
+  const dismissSummaryButton = () => {
+    setShowSummaryButton(false);
+    Logger.info('Summary button dismissed by user');
+  };
 
   const clearTranscriptions = () => {
     setTranscriptions([]);
     setRealTimeTranscription('');
     setRealTimeTranslation('');
+    setShowSummaryButton(false); // Hide summary button when clearing
     
     // تنظيف AsyncStorage أيضاً - فقط في الموبايل
     if (Platform.OS !== 'web') {
@@ -1250,6 +1263,18 @@ export default function LiveTranslationScreen() {
             </TouchableOpacity>
           )}
       </View>
+      
+      {/* AI Summary button - shows after recording ends */}
+      {showSummaryButton && !isRecording && (
+        <View style={styles.summaryButtonContainer}>
+          <TouchableOpacity style={styles.summaryButton} onPress={navigateToSummary}>
+            <Text style={styles.summaryButtonText}>🤖 AI Summary</Text>
+          </TouchableOpacity>
+          <TouchableOpacity style={styles.dismissButton} onPress={dismissSummaryButton}>
+            <Text style={styles.dismissButtonText}>✕</Text>
+          </TouchableOpacity>
+        </View>
+      )}
       
       {/* Reconnect button */}
       {connectionStatus === 'disconnected' && !isRecording && (
@@ -1559,5 +1584,49 @@ const styles = StyleSheet.create({
     fontSize: 14,
     color: '#333',
     lineHeight: 20,
+  },
+  // AI Summary button styles
+  summaryButtonContainer: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    justifyContent: 'center',
+    marginVertical: 15,
+    paddingHorizontal: 20,
+  },
+  summaryButton: {
+    backgroundColor: '#4caf50',
+    padding: 15,
+    borderRadius: 25,
+    alignItems: 'center',
+    flex: 1,
+    marginRight: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  summaryButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
+  },
+  dismissButton: {
+    backgroundColor: '#ff9800',
+    width: 40,
+    height: 40,
+    borderRadius: 20,
+    alignItems: 'center',
+    justifyContent: 'center',
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.2,
+    shadowRadius: 4,
+    elevation: 4,
+  },
+  dismissButtonText: {
+    color: '#fff',
+    fontSize: 16,
+    fontWeight: 'bold',
   },
 }); 
