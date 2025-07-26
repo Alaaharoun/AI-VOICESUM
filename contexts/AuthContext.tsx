@@ -18,6 +18,8 @@ interface AuthContextType {
   signOut: () => Promise<void>;
   deleteAccount: () => Promise<{ error: any }>;
   userPermissions: UserPermissions | null;
+  serverConnectionStatus: 'disconnected' | 'connecting' | 'connected';
+  initializeServerConnection: () => Promise<void>;
 }
 
 const AuthContext = createContext<AuthContextType | undefined>(undefined);
@@ -27,7 +29,9 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const [session, setSession] = useState<Session | null>(null);
   const [loading, setLoading] = useState(true);
   const [userPermissions, setUserPermissions] = useState<UserPermissions | null>(null);
+  const [serverConnectionStatus, setServerConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
   const mountedRef = useRef(true);
+  const wsRef = useRef<WebSocket | null>(null);
 
   // جلب صلاحيات المستخدم عند تغيير المستخدم
   useEffect(() => {
@@ -112,6 +116,14 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setSession(session);
         setUser(session?.user ?? null);
         setLoading(false);
+        
+        // الاتصال التلقائي بالسيرفر عند تسجيل الدخول
+        if (session?.user && _event === 'SIGNED_IN') {
+          console.log('[AuthContext] User signed in, initializing server connection...');
+          setTimeout(() => {
+            initializeServerConnection();
+          }, 1000); // انتظار ثانية واحدة للتأكد من اكتمال تسجيل الدخول
+        }
       }
     });
 
@@ -247,6 +259,61 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     }
   };
 
+  // دالة لتهيئة الاتصال بالسيرفر
+  const initializeServerConnection = async () => {
+    try {
+      console.log('[AuthContext] Initializing server connection...');
+      setServerConnectionStatus('connecting');
+      
+      // إغلاق أي اتصال موجود
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
+      
+      // إنشاء اتصال جديد
+      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+      
+      ws.onopen = () => {
+        console.log('[AuthContext] Server connection established');
+        setServerConnectionStatus('connected');
+        
+        // إرسال رسالة تهيئة بسيطة
+        const initMessage = {
+          type: 'init',
+          language: 'ar-SA',
+          targetLanguage: 'en-US',
+          clientSideTranslation: true,
+          realTimeMode: true,
+          autoDetection: true,
+          audioConfig: {
+            sampleRate: 16000,
+            channels: 1,
+            bitsPerSample: 16,
+            encoding: 'pcm_s16le'
+          }
+        };
+        ws.send(JSON.stringify(initMessage));
+      };
+      
+      ws.onerror = (error) => {
+        console.error('[AuthContext] Server connection error:', error);
+        setServerConnectionStatus('disconnected');
+      };
+      
+      ws.onclose = (event) => {
+        console.log('[AuthContext] Server connection closed:', event.code, event.reason);
+        setServerConnectionStatus('disconnected');
+      };
+      
+      wsRef.current = ws;
+      
+    } catch (error) {
+      console.error('[AuthContext] Failed to initialize server connection:', error);
+      setServerConnectionStatus('disconnected');
+    }
+  };
+
   return (
     <AuthContext.Provider
       value={{
@@ -258,6 +325,8 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         signOut,
         deleteAccount,
         userPermissions,
+        serverConnectionStatus,
+        initializeServerConnection,
       }}
     >
       {children}

@@ -682,7 +682,7 @@ export default function ProfileScreen() {
               onPress={() => router.push('/(tabs)/live-translation')}
             >
               <Info size={20} color="#2563EB" />
-              <Text style={[styles.settingText, { color: '#2563EB' }]}>Enable Live Translate</Text>
+              <Text style={[styles.settingText, { color: '#2563EB' }]}>Live Translation</Text>
             </TouchableOpacity>
           )}
 
@@ -729,6 +729,15 @@ export default function ProfileScreen() {
           >
             <Info size={20} color="#2563EB" />
             <Text style={[styles.settingText, { color: '#2563EB' }]}>Share App</Text>
+          </TouchableOpacity>
+
+          {/* History Button */}
+          <TouchableOpacity
+            style={[styles.settingItem, { backgroundColor: '#E0F2FE', marginTop: 8 }]}
+            onPress={() => router.push('/(tabs)/history')}
+          >
+            <Info size={20} color="#2563EB" />
+            <Text style={[styles.settingText, { color: '#2563EB' }]}>History</Text>
           </TouchableOpacity>
 
           {/* App Version Display */}

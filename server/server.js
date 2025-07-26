@@ -556,7 +556,8 @@ function startWebSocketServer(server) {
       console.log('[WebSocket] ✅ Azure credentials OK, proceeding...');
     
     // إعداد جلسة Azure Speech جديدة لكل عميل
-    let pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
+    // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
+    let pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
     let audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
     let speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
     speechConfig.speechRecognitionLanguage = 'ar-SA'; // Default language
@@ -586,8 +587,41 @@ function startWebSocketServer(server) {
       }
     };
     recognizer.canceled = (s, e) => {
-      ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
-      recognizer.close();
+      console.log('[Azure Speech] ❌ Recognition canceled:', e.errorDetails);
+      console.log('[Azure Speech] ❌ Cancel reason:', e.reason);
+      console.log('[Azure Speech] ❌ Error code:', e.errorCode);
+      
+      // تحسين رسائل الخطأ لتكون أكثر وضوحاً
+      let errorMessage = e.errorDetails;
+      let errorType = 'general';
+      
+      if (e.reason === speechsdk.CancellationReason.Error) {
+        if (e.errorCode === 2) {
+          errorType = 'quota_exceeded';
+          errorMessage = 'Recognition canceled: Quota exceeded. Cid: websocket error code: 1007';
+        } else if (e.errorCode === 1007) {
+          errorType = 'format_error';
+          errorMessage = 'Recognition canceled: Invalid audio format. Cid: websocket error code: 1007';
+        } else {
+          errorType = 'azure_error';
+          errorMessage = `Recognition canceled: ${e.errorDetails}. Error code: ${e.errorCode}`;
+        }
+      } else if (e.reason === speechsdk.CancellationReason.NoMatch) {
+        errorType = 'no_match';
+        errorMessage = 'Recognition canceled: No speech detected';
+      } else {
+        errorType = 'cancelled';
+        errorMessage = `Recognition canceled: ${e.errorDetails}`;
+      }
+      
+      console.log(`[Azure Speech] ❌ Error type: ${errorType}`);
+      ws.send(JSON.stringify({ 
+        type: 'error', 
+        error: errorMessage,
+        reason: e.reason,
+        errorCode: e.errorCode,
+        errorType: errorType
+      }));
     };
     recognizer.sessionStopped = (s, e) => {
       ws.send(JSON.stringify({ type: 'done' }));
@@ -612,16 +646,35 @@ function startWebSocketServer(server) {
               console.log('[Azure] ⚠️ No previous session to cleanup:', error.message);
             }
             
-            // Update speech recognition language based on client request
-            const rawLanguage = message.language || 'ar-SA';
-            const language = validateAzureLanguage(rawLanguage);
-            console.log('[Azure] 🔧 Initializing with language:', rawLanguage, '→', language);
+            // Handle auto detection or specific language
+            const rawLanguage = message.language;
+            const autoDetection = message.autoDetection || false;
+            
+            let language;
+            if (autoDetection || !rawLanguage) {
+              // Use auto detection - Azure will automatically detect from 10+ languages
+              language = null;
+              console.log('[Azure] 🔧 Initializing with AUTO DETECTION (no specific language)');
+            } else {
+              // Use specific language
+              language = validateAzureLanguage(rawLanguage);
+              console.log('[Azure] 🔧 Initializing with specific language:', rawLanguage, '→', language);
+            }
             
             // إنشاء جلسة جديدة مع اللغة الصحيحة
-            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
+            // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
+            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
             audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-            speechConfig.speechRecognitionLanguage = language;
+            
+            // Set language only if not using auto detection
+            if (language) {
+              speechConfig.speechRecognitionLanguage = language;
+            } else {
+              // For auto detection, don't set a specific language
+              // Azure will automatically detect from supported languages
+              console.log('[Azure] 🎯 Auto detection enabled - Azure will detect language automatically');
+            }
             
             // تحسينات Azure لاستقبال chunks كبيرة
             speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
@@ -664,8 +717,13 @@ function startWebSocketServer(server) {
             // بدء التعرف الجديد
             recognizer.startContinuousRecognitionAsync(
               () => {
-                console.log('[Azure Speech] ✅ Recognition started successfully with language:', language);
-                ws.send(JSON.stringify({ type: 'status', message: 'Initialized with language: ' + language }));
+                if (language) {
+                  console.log('[Azure Speech] ✅ Recognition started successfully with language:', language);
+                  ws.send(JSON.stringify({ type: 'status', message: 'Initialized with language: ' + language }));
+                } else {
+                  console.log('[Azure Speech] ✅ Recognition started successfully with AUTO DETECTION');
+                  ws.send(JSON.stringify({ type: 'status', message: 'Initialized with AUTO DETECTION - Azure will detect language automatically' }));
+                }
               },
               (error) => {
                 console.log('[Azure Speech] ❌ Failed to start recognition:', error);
@@ -683,16 +741,34 @@ function startWebSocketServer(server) {
               console.log('[Azure] ⚠️ No session to cleanup for language update:', error.message);
             }
             
-            // Update language during session
-            const rawLanguage = message.sourceLanguage || 'ar-SA';
-            const language = validateAzureLanguage(rawLanguage);
-            console.log('[Azure] 🔧 Updating language from:', rawLanguage, '→', language);
+            // Handle auto detection or specific language update
+            const rawLanguage = message.sourceLanguage;
+            const autoDetection = message.autoDetection || false;
+            
+            let language;
+            if (autoDetection || !rawLanguage) {
+              // Use auto detection
+              language = null;
+              console.log('[Azure] 🔧 Updating to AUTO DETECTION (no specific language)');
+            } else {
+              // Use specific language
+              language = validateAzureLanguage(rawLanguage);
+              console.log('[Azure] 🔧 Updating language from:', rawLanguage, '→', language);
+            }
             
             // إنشاء جلسة جديدة مع اللغة المحدثة
-            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(48000, 16, 1));
+            // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
+            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
             audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-            speechConfig.speechRecognitionLanguage = language;
+            
+            // Set language only if not using auto detection
+            if (language) {
+              speechConfig.speechRecognitionLanguage = language;
+            } else {
+              // For auto detection, don't set a specific language
+              console.log('[Azure] 🎯 Auto detection enabled for language update - Azure will detect language automatically');
+            }
             
             // تحسينات Azure لاستقبال chunks كبيرة
             speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");

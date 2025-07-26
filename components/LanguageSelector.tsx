@@ -10,7 +10,6 @@ import {
 } from 'react-native';
 import { ChevronDown, Languages, Check, Globe } from 'lucide-react-native';
 import { SpeechService } from '@/services/speechService';
-import AsyncStorage from '@react-native-async-storage/async-storage';
 
 export type Language = {
   code: string;
@@ -22,14 +21,16 @@ interface LanguageSelectorProps {
   selectedLanguage: Language | null;
   onSelectLanguage: (language: Language) => void;
   disabled?: boolean;
+  title?: string; // إضافة عنوان مخصص للنافذة المنبثقة
+  subtitle?: string; // إضافة نص فرعي مخصص
 }
-
-const STORAGE_KEY = 'selected_translation_language';
 
 export function LanguageSelector({
   selectedLanguage,
   onSelectLanguage,
   disabled = false,
+  title = 'Select Translation Language',
+  subtitle = 'Choose the language you want to translate to',
 }: LanguageSelectorProps) {
   const [isModalVisible, setIsModalVisible] = useState(false);
   const languages = SpeechService.getAvailableLanguages();
@@ -49,36 +50,26 @@ export function LanguageSelector({
     { code: 'de', name: 'German', flag: '🇩🇪' },
   ];
 
-  // تحميل اللغة المحفوظة عند بدء المكون
+  // إعادة تحميل اللغة عند تغيير selectedLanguage من الخارج
   useEffect(() => {
-    loadSavedLanguage();
-  }, []);
-
-  const loadSavedLanguage = async () => {
-    try {
-      const savedLanguageCode = await AsyncStorage.getItem(STORAGE_KEY);
-      if (savedLanguageCode && !selectedLanguage) {
-        const savedLanguage = allLanguages.find(lang => lang.code === savedLanguageCode);
-        if (savedLanguage) {
-          onSelectLanguage(savedLanguage);
-        }
-      }
-    } catch (error) {
-      console.warn('Failed to load saved language:', error);
+    if (selectedLanguage) {
+      console.log(`[LanguageSelector] External language change detected: ${selectedLanguage.name} (${selectedLanguage.code})`);
     }
-  };
+  }, [selectedLanguage]);
 
   const handleSelectLanguage = async (language: Language) => {
     try {
-      // حفظ الاختيار في AsyncStorage
-      await AsyncStorage.setItem(STORAGE_KEY, language.code);
+      console.log(`[LanguageSelector] Selecting language: ${language.name} (${language.code})`);
+      
+      // تحديث اللغة المحددة عبر Context
       onSelectLanguage(language);
+      
+      // إغلاق النافذة المنبثقة
       setIsModalVisible(false);
+      
+      console.log(`[LanguageSelector] ✅ Language selection completed successfully`);
     } catch (error) {
-      console.warn('Failed to save language selection:', error);
-      // حتى لو فشل الحفظ، استمر في اختيار اللغة
-    onSelectLanguage(language);
-    setIsModalVisible(false);
+      console.warn('Failed to select language:', error);
     }
   };
 
@@ -94,7 +85,7 @@ export function LanguageSelector({
         <Text style={styles.flag}>{item.flag}</Text>
         <Text style={styles.languageName}>{item.name}</Text>
         {item.code === 'auto' && (
-          <Text style={styles.autoDetectText}> (Auto-detect source language)</Text>
+          <Text style={styles.autoDetectText}> (Auto-detect {selectedLanguage?.code === 'auto' ? 'source' : 'target'} language)</Text>
         )}
       </View>
       {selectedLanguage?.code === item.code && (
@@ -133,20 +124,27 @@ export function LanguageSelector({
         visible={isModalVisible}
         transparent
         animationType="fade"
-        onRequestClose={() => setIsModalVisible(false)}
+        onRequestClose={() => {
+          console.log('[LanguageSelector] Modal closed by back button');
+          setIsModalVisible(false);
+        }}
       >
         <Pressable 
           style={styles.modalOverlay}
-          onPress={() => setIsModalVisible(false)}
+          onPress={() => {
+            console.log('[LanguageSelector] Modal closed by overlay press');
+            setIsModalVisible(false);
+          }}
         >
           <View style={styles.modalContent}>
-            <View style={styles.modalHeader}>
-              <Globe size={24} color="#2563EB" style={{ marginBottom: 8 }} />
-              <Text style={styles.modalTitle}>Select Translation Language</Text>
-              <Text style={styles.modalSubtitle}>
-                Choose the language you want to translate to
-              </Text>
-            </View>
+            <Pressable onPress={(e) => e.stopPropagation()}>
+              <View style={styles.modalHeader}>
+                <Globe size={24} color="#2563EB" style={{ marginBottom: 8 }} />
+                <Text style={styles.modalTitle}>{title}</Text>
+                <Text style={styles.modalSubtitle}>
+                  {subtitle}
+                </Text>
+              </View>
             <FlatList
               data={allLanguages}
               renderItem={renderLanguageItem}
@@ -182,6 +180,7 @@ export function LanguageSelector({
                 </View>
               )}
             />
+            </Pressable>
           </View>
         </Pressable>
       </Modal>

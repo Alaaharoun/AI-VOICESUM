@@ -2,14 +2,17 @@
 // لا تقم بتصدير أو مشاركة أي دوال أو كائنات من هذه المكتبة إلى صفحات أو مكونات أخرى لتفادي الكراش في باقي التطبيق.
 
 import React, { useState, useEffect, useRef } from 'react';
-import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Alert } from 'react-native';
+import { View, Text, TouchableOpacity, ScrollView, StyleSheet, Platform, Alert, Pressable } from 'react-native';
+import Clipboard from '@react-native-clipboard/clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
-import { LanguageSelector, Language } from '../../components/LanguageSelector';
+import { LanguageSelector } from '../../components/LanguageSelector';
 import { SpeechService } from '../../services/speechService';
+import { useLanguage, Language } from '@/contexts/LanguageContext';
 import { getAudioService } from '../../services/audioService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
+import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 
 interface TranscriptionItem {
   id: string;
@@ -36,7 +39,7 @@ function base64ToUint8Array(base64: string): Uint8Array {
 }
 
 export default function LiveTranslationScreen() {
-  const { user } = useAuth();
+  const { user, serverConnectionStatus, initializeServerConnection } = useAuth();
   const { targetLanguage, languageName, sourceLanguage, sourceLanguageName } = useLocalSearchParams<{
     targetLanguage: string;
     languageName: string;
@@ -44,21 +47,38 @@ export default function LiveTranslationScreen() {
     sourceLanguageName: string;
   }>();
 
-  // State management
-  const [selectedSourceLanguage, setSelectedSourceLanguage] = useState<Language | null>(null);
-  const [selectedTargetLanguage, setSelectedTargetLanguage] = useState<Language | null>(null);
+  // Use shared language context - this is the source of truth
+  const { 
+    selectedSourceLanguage, 
+    selectedTargetLanguage, 
+    setSelectedSourceLanguage, 
+    setSelectedTargetLanguage 
+  } = useLanguage();
+
+  // State management (other states)
   const [transcriptions, setTranscriptions] = useState<TranscriptionItem[]>([]);
   const [isRecording, setIsRecording] = useState(false);
   const [isReady, setIsReady] = useState(false);
   const [isInitializing, setIsInitializing] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [connectionStatus, setConnectionStatus] = useState<'disconnected' | 'connecting' | 'connected'>('disconnected');
+  // استخدام حالة الاتصال من AuthContext بدلاً من الحالة المحلية
+  const connectionStatus = serverConnectionStatus;
+  
+  // CRASH PREVENTION: Add state to prevent multiple simultaneous operations
+  const [isStartingRecording, setIsStartingRecording] = useState(false);
+  const [isStoppingRecording, setIsStoppingRecording] = useState(false);
   
   // Real-time translation state (always enabled now)
   const isRealTimeMode = true; // Always enabled
   const [realTimeTranscription, setRealTimeTranscription] = useState<string>('');
   const [realTimeTranslation, setRealTimeTranslation] = useState<string>('');
   const [showSummaryButton, setShowSummaryButton] = useState(false);
+  
+  // Current session display state - keeps the latest transcription/translation visible
+  const [currentSessionText, setCurrentSessionText] = useState<{
+    original: string;
+    translation: string;
+  }>({ original: '', translation: '' });
 
   // Refs
   const audioServiceRef = useRef<any>(null);
@@ -71,25 +91,40 @@ export default function LiveTranslationScreen() {
   const chunkBufferTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null); // timeout لتجميع الـchunks
   const maxBufferTimeRef = useRef<number>(10000); // أقصى وقت للتجميع (10 ثوانٍ للاختبار)
   const scrollViewRef = useRef<ScrollView>(null); // ref for auto-scroll
+  const translationScrollViewRef = useRef<ScrollView>(null); // ref for translation auto-scroll
+  const isConnectingRef = useRef<boolean>(false); // منع الاتصالات المتعددة
+  const isTranslatingRef = useRef<Set<string>>(new Set()); // منع الترجمة المتعددة لنفس النص
 
-  // Initialize languages
+  // Add a ref to track the last Azure transcription text
+  const lastAzureTextRef = useRef<string>('');
+
+  // Add a ref to track the current accumulated transcription
+  const currentAccumulatedTextRef = useRef<string>('');
+
+  // Initialize languages from route params if provided, otherwise use context values
   useEffect(() => {
     const languages = SpeechService.getAvailableLanguages();
     
-    // Initialize target language
-    const targetLang = languages.find(lang => lang.code === targetLanguage) || languages[0];
-    setSelectedTargetLanguage(targetLang);
+    // Only update context if we have new values from navigation params
+    if (targetLanguage && (!selectedTargetLanguage || selectedTargetLanguage.code !== targetLanguage)) {
+      const targetLang = languages.find(lang => lang.code === targetLanguage) || languages[0];
+      setSelectedTargetLanguage(targetLang);
+      Logger.info('🎯 Updated target language from params:', targetLang);
+    }
     
-    // Initialize source language (default to auto-detect)
-    const sourceLang = languages.find(lang => lang.code === sourceLanguage) || { code: 'auto', name: 'Auto Detect', flag: '🌐' };
-    setSelectedSourceLanguage(sourceLang);
-  }, [targetLanguage, sourceLanguage]);
+    if (sourceLanguage && (!selectedSourceLanguage || selectedSourceLanguage.code !== sourceLanguage)) {
+      const sourceLang = languages.find(lang => lang.code === sourceLanguage) || { code: 'auto', name: 'Auto Detect', flag: '🌐' };
+      setSelectedSourceLanguage(sourceLang);
+      Logger.info('🎯 Updated source language from params:', sourceLang);
+    }
+  }, [targetLanguage, sourceLanguage, selectedTargetLanguage, selectedSourceLanguage, setSelectedTargetLanguage, setSelectedSourceLanguage]);
 
   // Auto-scroll to bottom when new transcriptions are added
   useEffect(() => {
-    if (transcriptions.length > 0 && scrollViewRef.current) {
+    if (transcriptions.length > 0) {
       setTimeout(() => {
         scrollViewRef.current?.scrollToEnd({ animated: true });
+        translationScrollViewRef.current?.scrollToEnd({ animated: true });
       }, 100);
     }
   }, [transcriptions]);
@@ -127,7 +162,7 @@ export default function LiveTranslationScreen() {
     return azureCode;
   };
 
-  // Initialize audio service
+  // Initialize component - only clear old data, no audio service initialization
   useEffect(() => {
     const clearOldData = async () => {
       // تنظيف AsyncStorage من أي بيانات قديمة - فقط في الموبايل
@@ -148,41 +183,50 @@ export default function LiveTranslationScreen() {
     setRealTimeTranscription('');
     setRealTimeTranslation('');
     
-    // لا نقوم بتنظيف خدمة الصوت هنا لتجنب مشاكل التهيئة
-    Logger.info('App started without audio service cleanup');
+    Logger.info('App started - clearing old data only');
     
     // تنظيف AsyncStorage - فقط في الموبايل
     clearOldData();
     
     Logger.info('Cleared all old data on app start');
     
-    // تهيئة الصوت تلقائياً عند تحميل الصفحة للجميع
-    initAll();
+    // تهيئة الصوت تلقائياً عند تحميل الصفحة
+    const initializeAudioOnLoad = async () => {
+      try {
+        Logger.info('🎵 Auto-initializing audio service on page load...');
+        await initAll();
+        Logger.info('✅ Audio service auto-initialized successfully');
+      } catch (error) {
+        Logger.error('❌ Failed to auto-initialize audio service:', error);
+        // لا نضع error هنا لأن المستخدم قد لا يحتاج للصوت فوراً
+      }
+    };
     
-    // Cleanup on unmount
+    // تهيئة الصوت بعد ثانيتين من تحميل الصفحة
+    const audioInitTimer = setTimeout(initializeAudioOnLoad, 2000);
+    
+    // Cleanup on unmount only
     return () => {
+      Logger.info('🔄 Component unmounting, performing cleanup...');
+      clearTimeout(audioInitTimer);
       cleanup();
     };
   }, []);
 
   const initAll = async () => {
+    // CRASH PREVENTION: Prevent multiple simultaneous initializations
+    if (isInitializing) {
+      Logger.warn('⚠️ Audio service initialization already in progress');
+      return;
+    }
+    
     try {
       setIsInitializing(true);
       setError(null);
       
-      // تنظيف AsyncStorage قبل التهيئة - فقط في الموبايل
-      if (Platform.OS !== 'web') {
-        try {
-          await AsyncStorage.removeItem('audio_cache');
-          await AsyncStorage.removeItem('transcription_cache');
-          await AsyncStorage.removeItem('translation_cache');
-          Logger.info('Cleared AsyncStorage before initialization');
-        } catch (error) {
-          Logger.error('Failed to clear AsyncStorage before initialization:', error);
-        }
-      }
+      Logger.info('🎵 Initializing audio service...');
       
-      // إنشاء خدمة صوت جديدة بدون تنظيف سابق
+      // إنشاء خدمة صوت جديدة
       const audioService = getAudioService();
       
       // Configure audio service for Azure Speech SDK compatibility
@@ -197,36 +241,78 @@ export default function LiveTranslationScreen() {
       audioServiceRef.current = audioService;
       
       setIsReady(true);
-      Logger.info('Audio service initialized successfully with Azure-compatible settings:', audioConfig);
+      Logger.info('✅ Audio service initialized successfully with Azure-compatible settings:', audioConfig);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      Logger.error('Failed to initialize audio service:', errorMessage);
+      Logger.error('❌ Failed to initialize audio service:', errorMessage);
       setError(`فشل في تهيئة الصوت: ${errorMessage}`);
+      throw error; // إعادة رمي الخطأ لمعالجته في startStreaming
     } finally {
       setIsInitializing(false);
     }
   };
 
   const cleanup = () => {
+    Logger.info('🧹 Starting comprehensive cleanup...');
+    
+    // CRASH PREVENTION: Reset all operation flags
+    setIsStartingRecording(false);
+    setIsStoppingRecording(false);
+    setIsInitializing(false);
+    
+    // إعادة تعيين حالة الاتصال
+    isConnectingRef.current = false;
+    
+    // Clear translation flags
+    isTranslatingRef.current.clear();
+    
+    // إيقاف خدمة الصوت
     if (audioServiceRef.current && isReady) {
-      audioServiceRef.current.stop();
+      try {
+        audioServiceRef.current.stop();
+        Logger.info('✅ Audio service stopped');
+      } catch (error) {
+        Logger.error('❌ Error stopping audio service:', error);
+      }
     }
+    
+    // إغلاق WebSocket بشكل صحيح مع status code مناسب
     if (wsRef.current) {
-      wsRef.current.close();
+      try {
+        const ws = wsRef.current;
+        if (ws.readyState === WebSocket.OPEN || ws.readyState === WebSocket.CONNECTING) {
+          ws.close(1000, 'Client cleanup - preventing parallel connections');
+          Logger.info('✅ WebSocket closed with proper status code');
+        }
+        wsRef.current = null;
+      } catch (error) {
+        Logger.error('❌ Error closing WebSocket:', error);
+      }
     }
+    
+    // تنظيف جميع المؤقتات
     if (translationTimeoutRef.current) {
       clearTimeout(translationTimeoutRef.current);
+      translationTimeoutRef.current = null;
     }
     if (wsTimeoutRef.current) {
       clearTimeout(wsTimeoutRef.current);
+      wsTimeoutRef.current = null;
     }
     if (chunkBufferTimeoutRef.current) {
       clearTimeout(chunkBufferTimeoutRef.current);
+      chunkBufferTimeoutRef.current = null;
     }
+    
     // تنظيف البيانات المؤقتة
     setTranscriptions([]);
     setRealTimeTranscription('');
     setRealTimeTranslation('');
+    
+    // تنظيف المراجع
+    pendingChunksRef.current = [];
+    chunkBufferRef.current = [];
+    isConnectingRef.current = false;
     
     // تنظيف AsyncStorage - فقط في الموبايل
     if (Platform.OS !== 'web') {
@@ -235,7 +321,7 @@ export default function LiveTranslationScreen() {
       AsyncStorage.removeItem('translation_cache').catch(() => {});
     }
     
-    Logger.info('Complete cleanup performed');
+    Logger.info('✅ Complete cleanup performed - all connections closed');
   };
 
   // دالة لإدارة timeout الـWebSocket
@@ -260,40 +346,62 @@ export default function LiveTranslationScreen() {
   // دالة لتجميع وإرسال الـchunks
   const sendBufferedChunks = () => {
     Logger.info(`[sendBufferedChunks] Called with ${chunkBufferRef.current.length} chunks in buffer`);
-    
     if (chunkBufferRef.current.length === 0) {
       Logger.warn(`[sendBufferedChunks] No chunks to send`);
       return;
     }
-    
-    // دمج جميع الـchunks في chunk واحد كبير
     const totalSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     const combinedChunk = new Uint8Array(totalSize);
-    
     let offset = 0;
-    chunkBufferRef.current.forEach((chunk, index) => {
-      Logger.info(`[sendBufferedChunks] Combining chunk ${index + 1}: ${chunk.byteLength} bytes at offset ${offset}`);
+    chunkBufferRef.current.forEach((chunk) => {
       combinedChunk.set(chunk, offset);
       offset += chunk.byteLength;
     });
     
-    // Validate the combined chunk for Azure Speech SDK
-    const durationSeconds = totalSize / (16000 * 2); // 16kHz, 16-bit = 2 bytes per sample
-    Logger.info(`[sendBufferedChunks] 🚀 SENDING COMBINED CHUNK:
-      - Total size: ${combinedChunk.byteLength} bytes
-      - From ${chunkBufferRef.current.length} chunks
-      - Estimated duration: ${durationSeconds.toFixed(2)}s
-      - Sample rate validation: ${totalSize % 2 === 0 ? '✅ Valid' : '❌ Invalid (not 16-bit aligned)'}`);
+    // Validate the combined chunk before sending
+    if (combinedChunk.byteLength === 0) {
+      Logger.warn(`[sendBufferedChunks] Combined chunk is empty, skipping send`);
+      chunkBufferRef.current = [];
+      return;
+    }
     
-    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+    // Validate audio format (16-bit samples should be even number of bytes)
+    if (combinedChunk.byteLength % 2 !== 0) {
+      Logger.warn(`[sendBufferedChunks] ⚠️ Audio chunk size not aligned to 16-bit samples: ${combinedChunk.byteLength} bytes`);
+      // Pad with zero if needed
+      const paddedChunk = new Uint8Array(combinedChunk.byteLength + 1);
+      paddedChunk.set(combinedChunk);
+      // Use the padded chunk for sending
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && paddedChunk.byteLength > 0) {
+        try {
+          wsRef.current.send(paddedChunk);
+          manageWebSocketTimeout();
+          Logger.info(`[sendBufferedChunks] ✅ Padded chunk sent successfully to Azure Speech SDK (${paddedChunk.byteLength} bytes)`);
+        } catch (sendError) {
+          Logger.error(`[sendBufferedChunks] ❌ Failed to send padded chunk:`, sendError);
+          pendingChunksRef.current.push(paddedChunk);
+        }
+      } else {
+        pendingChunksRef.current.push(paddedChunk);
+        const wsState = wsRef.current?.readyState;
+        const wsStateText = wsState === 0 ? 'CONNECTING' : wsState === 1 ? 'OPEN' : wsState === 2 ? 'CLOSING' : wsState === 3 ? 'CLOSED' : 'UNKNOWN';
+        Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), padded chunk stored in pending queue`);
+      }
+      chunkBufferRef.current = [];
+      Logger.info(`[sendBufferedChunks] Buffer cleared`);
+      return;
+    }
+    
+    // Only send if WebSocket is open and data is valid
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN && combinedChunk.byteLength > 0) {
       try {
+        // Send the Uint8Array directly, not the buffer
         wsRef.current.send(combinedChunk);
         manageWebSocketTimeout();
-        Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully to Azure Speech SDK`);
+        Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully to Azure Speech SDK (${combinedChunk.byteLength} bytes)`);
       } catch (sendError) {
         Logger.error(`[sendBufferedChunks] ❌ Failed to send chunk:`, sendError);
         pendingChunksRef.current.push(combinedChunk);
-        Logger.warn(`[sendBufferedChunks] ⚠️ Chunk stored in pending queue due to send error`);
       }
     } else {
       pendingChunksRef.current.push(combinedChunk);
@@ -301,35 +409,64 @@ export default function LiveTranslationScreen() {
       const wsStateText = wsState === 0 ? 'CONNECTING' : wsState === 1 ? 'OPEN' : wsState === 2 ? 'CLOSING' : wsState === 3 ? 'CLOSED' : 'UNKNOWN';
       Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), combined chunk stored in pending queue`);
     }
-    
-    // تفريغ الـbuffer
     chunkBufferRef.current = [];
     Logger.info(`[sendBufferedChunks] Buffer cleared`);
   };
 
   // Initialize WebSocket connection
   const initializeWebSocket = async () => {
+    // CRASH PREVENTION: Additional safeguard for WebSocket initialization
+    if (isConnectingRef.current || isStartingRecording || isStoppingRecording) {
+      Logger.warn('⚠️ WebSocket initialization blocked: Connection in progress or recording operation active');
+      return;
+    }
+    
     try {
-      setConnectionStatus('connecting');
-      
-      // تنظيف AsyncStorage قبل الاتصال - فقط في الموبايل
-      if (Platform.OS !== 'web') {
-        try {
-          await AsyncStorage.removeItem('audio_cache');
-          await AsyncStorage.removeItem('transcription_cache');
-          await AsyncStorage.removeItem('translation_cache');
-          Logger.info('Cleared AsyncStorage before WebSocket connection');
-        } catch (error) {
-          Logger.error('Failed to clear AsyncStorage before WebSocket connection:', error);
-        }
+      // منع الاتصالات المتعددة المتزامنة
+      if (isConnectingRef.current) {
+        Logger.warn('⚠️ Connection already in progress, skipping to prevent parallel connections');
+        return;
       }
       
+      // إذا كان الاتصال مفتوح بالفعل، لا نحتاج لإنشاء جديد
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        Logger.info('✅ WebSocket already connected, skipping initialization');
+        return;
+      }
+      
+      // إغلاق أي اتصال موجود قبل إنشاء جديد
+      if (wsRef.current) {
+        Logger.info('🔄 Closing existing WebSocket before creating new one');
+        try {
+          if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) {
+            wsRef.current.close(1000, 'Creating new connection');
+          }
+          wsRef.current = null;
+        } catch (error) {
+          Logger.error('❌ Error closing existing WebSocket:', error);
+        }
+        
+        // انتظار قصير للتأكد من إغلاق الاتصال
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // تنظيف البيانات المؤقتة فقط (بدون AsyncStorage)
+      pendingChunksRef.current = [];
+      chunkBufferRef.current = [];
+      if (chunkBufferTimeoutRef.current) {
+        clearTimeout(chunkBufferTimeoutRef.current);
+        chunkBufferTimeoutRef.current = null;
+      }
+      
+      isConnectingRef.current = true;
+      
+      Logger.info('🚀 Creating new WebSocket connection to prevent parallel requests...');
       // استخدام السيرفر على Render
       const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
       
       ws.onopen = () => {
-        Logger.info('WebSocket connected');
-        setConnectionStatus('connected');
+        Logger.info('✅ WebSocket connected successfully');
+        isConnectingRef.current = false; // إعادة تعيين حالة الاتصال
         setError(null);
         
         // بدء إدارة الـtimeout
@@ -345,14 +482,13 @@ export default function LiveTranslationScreen() {
           pendingChunksRef.current = []; // تفريغ القائمة
         }
         
-        // تنظيف AsyncStorage عند فتح الاتصال - فقط في الموبايل
-        if (Platform.OS !== 'web') {
-          AsyncStorage.removeItem('audio_cache').catch(() => {});
-          AsyncStorage.removeItem('transcription_cache').catch(() => {});
-          AsyncStorage.removeItem('translation_cache').catch(() => {});
-          
-          Logger.info('WebSocket opened and cache cleared');
-        }
+        // تم حذف تنظيف AsyncStorage هنا
+        // if (Platform.OS !== 'web') {
+        //   AsyncStorage.removeItem('audio_cache').catch(() => {});
+        //   AsyncStorage.removeItem('transcription_cache').catch(() => {});
+        //   AsyncStorage.removeItem('translation_cache').catch(() => {});
+        //   Logger.info('WebSocket opened and cache cleared');
+        // }
         
         // Validate and prepare language codes
         const supportedLanguages = SpeechService.getAvailableLanguages().map(lang => lang.code);
@@ -361,8 +497,8 @@ export default function LiveTranslationScreen() {
         const sourceLang = selectedSourceLanguage?.code || 'auto';
         const targetLang = selectedTargetLanguage?.code || 'en';
         
-        // For Azure, convert to Azure format or use default for auto detection
-        const azureSourceLang = sourceLang === 'auto' ? 'en-US' : convertToAzureLanguage(sourceLang);
+        // For Azure, convert to Azure format or use auto detection
+        const azureSourceLang = sourceLang === 'auto' ? null : convertToAzureLanguage(sourceLang);
         const azureTargetLang = convertToAzureLanguage(targetLang);
         
         // Validate target language only (source is auto)
@@ -377,7 +513,7 @@ export default function LiveTranslationScreen() {
         // Send initialization message with simplified configuration
         const initMessage = {
           type: 'init',
-          language: azureSourceLang, // Use default English for Azure when auto is selected
+          language: azureSourceLang, // null for auto detection, specific language code otherwise
           targetLanguage: azureTargetLang,
           clientSideTranslation: true,
           realTimeMode: isRealTimeMode,
@@ -405,53 +541,42 @@ export default function LiveTranslationScreen() {
           
           if (data.type === 'transcription' || data.type === 'final') {
             if (data.text && data.text.trim()) {
-              // تجنب إضافة نفس النص مرتين
-              const isDuplicate = transcriptions.some(item => 
-                item.originalText === data.text
-              );
-              
-              if (isDuplicate) {
-                Logger.warn('Skipping duplicate transcription:', data.text);
-                return;
-              }
-              
-              Logger.info('Processing transcription:', data.text);
+              Logger.info(`Processing ${data.type} transcription:`, data.text);
               
               if (isRealTimeMode) {
-                // NEW: Update real-time transcription
-                setRealTimeTranscription(data.text);
-                
-                // تجنب إضافة نفس النص في التاريخ إذا كان موجوداً
-                const isDuplicate = transcriptions.some(item => 
-                  item.originalText === data.text
-                );
-                
-                if (!isDuplicate) {
-                  // إضافة النص الجديد إلى التاريخ
-                  const newItem: TranscriptionItem = {
-                    id: Date.now().toString(),
-                    originalText: data.text,
-                    translatedText: '',
-                    timestamp: new Date()
-                  };
-                  setTranscriptions(prev => [...prev, newItem]);
-                }
-                
-                // Also translate in real-time mode
-                try {
-                  Logger.info('Real-time translating:', data.text, 'to:', selectedTargetLanguage?.code);
-                  const translatedText = await SpeechService.translateText(
-                    data.text, 
-                    selectedTargetLanguage?.code || 'ar',
-                    selectedSourceLanguage?.code
-                  );
+                // Handle real-time mode - update immediately
+                if (data.type === 'transcription') {
+                  // Partial result - update real-time display immediately
+                  appendNewTranscriptionSegment(data.text);
                   
-                  Logger.info('Real-time translation result:', translatedText);
-                  setRealTimeTranslation(translatedText);
-                } catch (translationError) {
-                  Logger.error('Real-time translation failed:', translationError);
-                  setRealTimeTranslation(data.text); // Fallback to original
+                  // Update current session text with the accumulated transcription
+                  setCurrentSessionText(current => ({
+                    ...current,
+                    original: currentAccumulatedTextRef.current
+                  }));
+                  
+                  // Trigger live translation for partial results too
+                  translatePartialText(data.text);
+                  
+                } else if (data.type === 'final') {
+                  // Final result - update transcription and translate
+                  appendNewTranscriptionSegment(data.text);
+                  
+                  // Update current session text with the accumulated transcription
+                  setCurrentSessionText(current => ({
+                    ...current,
+                    original: currentAccumulatedTextRef.current
+                  }));
+                  
+                  // Translate the final result
+                  translateFinalText(data.text);
                 }
+                
+                // Add to history only for final results to avoid duplicates
+                if (data.type === 'final') {
+                  addToHistoryIfNew(data.text);
+                }
+                
               } else {
                 // Traditional mode: add to transcriptions list
                 const newItem: TranscriptionItem = {
@@ -481,6 +606,9 @@ export default function LiveTranslationScreen() {
                         : item
                     )
                   );
+                  
+                  // Scroll to bottom to show new translation
+                  scrollToBottom();
                 } catch (translationError) {
                   Logger.error('Translation failed:', translationError);
                   
@@ -492,6 +620,9 @@ export default function LiveTranslationScreen() {
                         : item
                     )
                   );
+                  
+                  // Scroll to bottom to show fallback text
+                  scrollToBottom();
                 }
               }
             } else {
@@ -503,7 +634,51 @@ export default function LiveTranslationScreen() {
           } else if (data.type === 'error') {
             Logger.error('Server error:', data.error);
             Logger.error('Full error details:', data);
-            setError(`خطأ في السيرفر: ${data.error}`);
+            
+            // تحسين معالجة الأخطاء - تحقق أكثر دقة من نوع الخطأ
+            const errorMessage = data.error || '';
+            const errorCode = data.errorCode || 0;
+            const reason = data.reason || 0;
+            
+            // تحقق من نوع الخطأ بدقة أكبر
+            if (errorMessage.includes('Quota exceeded') && errorCode === 2) {
+              // هذا خطأ Quota exceeded حقيقي من Azure
+              setError('Azure Speech Service quota exceeded. Please wait a few minutes before trying again, or upgrade your Azure subscription.');
+              Logger.warn('⚠️ Confirmed Azure quota exceeded error');
+              
+              // Stop recording immediately when quota is exceeded
+              if (isRecording) {
+                Logger.warn('Stopping recording due to quota exceeded error');
+                stopStreaming();
+              }
+              // Close WebSocket connection to prevent further quota usage
+              if (wsRef.current) {
+                wsRef.current.close(1000, 'Quota exceeded');
+              }
+            } else if (errorMessage.includes('websocket error code: 1007') || errorCode === 1007) {
+              // هذا خطأ في تنسيق البيانات، وليس Quota exceeded
+              setError('Connection error: Invalid audio format. Please try again.');
+              Logger.warn('⚠️ WebSocket 1007 error - audio format issue, not quota');
+              
+              // For 1007 errors, try to reconnect once
+              if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+                Logger.info('Attempting to reconnect after 1007 error...');
+                wsRef.current.close(1000, 'Reconnecting after 1007 error');
+                setTimeout(() => {
+                  if (isRecording && !isConnectingRef.current) {
+                    initializeWebSocket();
+                  }
+                }, 2000);
+              }
+            } else if (errorMessage.includes('Recognition canceled') && reason === 0) {
+              // هذا خطأ في التعرف على الكلام، وليس Quota exceeded
+              setError('Speech recognition failed. Please try speaking more clearly.');
+              Logger.warn('⚠️ Recognition canceled - speech issue, not quota');
+            } else {
+              // خطأ عام آخر
+              setError(`خطأ في السيرفر: ${errorMessage}`);
+              Logger.warn('⚠️ General server error:', errorMessage);
+            }
           }
         } catch (error) {
           Logger.error('Failed to parse WebSocket message:', error);
@@ -511,79 +686,118 @@ export default function LiveTranslationScreen() {
       };
       
       ws.onerror = (error) => {
-        Logger.error('WebSocket error event:', error);
+        Logger.error('❌ WebSocket error event:', error);
         Logger.error('WebSocket error details:', {
           readyState: ws.readyState,
           url: ws.url,
           protocol: ws.protocol
         });
-        setConnectionStatus('disconnected');
-        setError('فشل في الاتصال بالخادم');
+        isConnectingRef.current = false; // إعادة تعيين حالة الاتصال
+        setError('فشل في الاتصال بالخادم - Concurrent connections may be exceeded');
       };
       
       ws.onclose = (event) => {
-        Logger.info('WebSocket disconnected', event.code, event.reason);
-        setConnectionStatus('disconnected');
+        Logger.info('🔌 WebSocket disconnected', event.code, event.reason);
+        isConnectingRef.current = false; // إعادة تعيين حالة الاتصال
         
-        // إذا كان الانقطاع غير متوقع، أعد الاتصال
-        if (event.code !== 1000 && isRecording) {
-          Logger.info('Attempting to reconnect...');
+        // Handle different close codes
+        if (event.code === 1011) {
+          Logger.warn('⚠️ Server terminated connection - likely due to concurrent limit or quota exceeded');
+          setError('Server connection limit reached or quota exceeded. Please wait before reconnecting.');
+          // Don't attempt to reconnect for quota/concurrent limit issues
+        } else if (event.code === 1000 && event.reason === 'Quota exceeded') {
+          Logger.warn('⚠️ Connection closed due to quota exceeded');
+          setError('Azure Speech Service quota exceeded. Please wait a few minutes before trying again.');
+          // Don't attempt to reconnect for quota issues
+        } else if (event.code === 1007) {
+          Logger.warn('⚠️ Connection closed due to invalid data format (1007)');
+          setError('Audio format error. Please try again.');
+          // Don't attempt to reconnect for format issues
+        } else if (event.code === 1000 && event.reason === 'Reconnecting after 1007 error') {
+          Logger.info('🔄 Connection closed for 1007 error reconnection');
+          // This will be handled by the setTimeout in the error handler
+        } else if (event.code !== 1000 && isRecording && !isConnectingRef.current) {
+          Logger.info('🔄 Attempting to reconnect after unexpected disconnect...');
           setTimeout(() => {
-            if (isRecording) {
+            if (isRecording && !isConnectingRef.current) {
               initializeWebSocket();
             }
-          }, 2000);
+          }, 3000); // زيادة وقت الانتظار لتجنب الاتصالات السريعة
         }
       };
       
       wsRef.current = ws;
     } catch (error) {
-      Logger.error('Failed to initialize WebSocket:', error);
-      setConnectionStatus('disconnected');
+      Logger.error('❌ Failed to initialize WebSocket:', error);
+      isConnectingRef.current = false; // إعادة تعيين حالة الاتصال في حالة الخطأ
+      setError('Failed to connect - please check your internet connection');
       throw error;
     }
   };
 
   const startStreaming = async () => {
-    if (isRecording) {
-      Logger.warn('Already recording');
+    // CRASH PREVENTION: Multiple safeguards to prevent race conditions
+    if (isRecording || isStartingRecording || isStoppingRecording) {
+      Logger.warn('⚠️ Operation blocked: Already recording, starting, or stopping');
       return;
     }
     
+    // CRASH PREVENTION: Set flag immediately to prevent multiple calls
+    setIsStartingRecording(true);
+    
     try {
-      Logger.info('Starting audio streaming...');
+      Logger.info('🎙️ Starting audio streaming...');
       setShowSummaryButton(false); // Hide summary button when starting new recording
       
-      // التحقق من جاهزية خدمة الصوت
-      if (!isReady) {
-        Logger.warn('Audio service not ready, waiting for initialization...');
-        setError('جاري تهيئة الصوت، يرجى الانتظار...');
-        return;
+      // 1. تأكد أن السيرفر متصل
+      if (connectionStatus !== 'connected') {
+        Logger.info('Server not connected, initializing connection...');
+        await initializeServerConnection();
+        // انتظار قصير للتأكد من الاتصال
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
-      // لا نقوم بتنظيف خدمة الصوت هنا لتجنب مشاكل التهيئة
-      Logger.info('Starting audio streaming without cleanup');
-      
-      // تنظيف AsyncStorage أيضاً - فقط في الموبايل أو بعد التهيئة
-      if (Platform.OS !== 'web' || isReady) {
+      // 2. إذا لم يكن AudioService جاهزًا، هيئه
+      if (!isReady) {
+        Logger.info('Audio service not ready, initializing...');
+        setIsInitializing(true);
         try {
-          await AsyncStorage.removeItem('audio_cache');
-          await AsyncStorage.removeItem('transcription_cache');
-          await AsyncStorage.removeItem('translation_cache');
-          Logger.info('Cleared AsyncStorage before starting new recording');
+          await initAll();
         } catch (error) {
-          Logger.error('Failed to clear AsyncStorage:', error);
+          Logger.error('Failed to initialize audio service:', error);
+          setError('فشل في تهيئة الصوت. يرجى المحاولة مرة أخرى.');
+          setIsInitializing(false);
+          return;
         }
       }
       
-      // Initialize WebSocket connection
-      await initializeWebSocket();
+      // 3. إنشاء WebSocket connection إذا لم يكن موجوداً
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        Logger.info('Creating WebSocket connection...');
+        await initializeWebSocket();
+        // انتظار قصير للتأكد من الاتصال
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      // CRASH PREVENTION: Ensure audio service exists and is ready
+      if (!audioServiceRef.current) {
+        Logger.error('❌ Audio service not available');
+        setError('Audio service not available. Please try again.');
+        return;
+      }
       
       // إزالة المستمعين القديمة لتجنب التراكم
       audioServiceRef.current.removeAllListeners();
       
-      // Start audio recording with fresh data
-      await audioServiceRef.current.start();
+      // CRASH PREVENTION: Safe audio start with error handling
+      try {
+        await audioServiceRef.current.start();
+        Logger.info('✅ Audio recording started successfully');
+      } catch (audioError) {
+        Logger.error('❌ Failed to start audio recording:', audioError);
+        setError('Failed to start audio recording. Please check microphone permissions.');
+        return;
+      }
       
       // Set up audio data callback
       audioServiceRef.current.onData((chunk: any) => {
@@ -669,24 +883,88 @@ export default function LiveTranslationScreen() {
         Logger.info('[startStreaming] ⏰ Cleared any existing buffer timeout');
       }
       
-      // NEW: Clear real-time data when starting
+      // NEW: Clear real-time data when starting (but keep current session text)
       if (isRealTimeMode) {
         setRealTimeTranscription('');
         setRealTimeTranslation('');
-        Logger.info('[startStreaming] 🔴 Real-time mode: Cleared real-time data for new recording');
+        lastAzureTextRef.current = ''; // Clear the last Azure text reference for new session
+        currentAccumulatedTextRef.current = ''; // Clear the accumulated text reference for new session
+        Logger.info('[startStreaming] 🔴 Real-time mode: Cleared real-time data for new recording (keeping current session text)');
       }
       
       Logger.info(`[startStreaming] ✅ Live streaming started successfully (Real-time mode: ${isRealTimeMode})`);
     } catch (error) {
       const errorMessage = error instanceof Error ? error.message : 'Unknown error';
       Logger.error('Failed to start streaming:', errorMessage);
-      setError(`فشل في بدء التسجيل: ${errorMessage}`);
+      
+      // تحسين معالجة الأخطاء في startStreaming
+      if (errorMessage.includes('Quota exceeded') && errorMessage.includes('errorCode: 2')) {
+        // خطأ Quota exceeded مؤكد
+        setError('Azure Speech Service quota exceeded. Please wait a few minutes before trying again.');
+        Logger.warn('⚠️ Confirmed quota exceeded error in startStreaming');
+      } else if (errorMessage.includes('websocket error code: 1007')) {
+        // خطأ في تنسيق البيانات
+        setError('Audio format error. Please try again.');
+        Logger.warn('⚠️ Audio format error (1007) in startStreaming');
+      } else if (errorMessage.includes('Recognition canceled')) {
+        // خطأ في التعرف على الكلام
+        setError('Speech recognition failed. Please try speaking more clearly.');
+        Logger.warn('⚠️ Recognition canceled in startStreaming');
+      } else {
+        setError(`فشل في بدء التسجيل: ${errorMessage}`);
+        Logger.warn('⚠️ General error in startStreaming:', errorMessage);
+      }
+      
       setIsRecording(false);
-      setConnectionStatus('disconnected');
+    } finally {
+      // CRASH PREVENTION: Always reset the starting flag
+      setIsStartingRecording(false);
+    }
+  };
+
+  // Helper function for retrying startStreaming
+  const startStreamingWithRetry = async (retryCount = 0) => {
+    if (retryCount === 0) {
+      // First attempt - call the main function
+      await startStreaming();
+    } else {
+      // Retry attempt
+      Logger.info(`🔄 Retry attempt ${retryCount} for startStreaming`);
+      try {
+        // Clear any existing connections
+        if (wsRef.current) {
+          wsRef.current.close(1000, 'Retry attempt');
+        }
+        
+        // Wait a bit before retrying
+        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // Retry the streaming
+        await startStreaming();
+      } catch (error) {
+        Logger.error(`Retry attempt ${retryCount} failed:`, error);
+        if (retryCount < 2) {
+          const retryDelay = Math.pow(2, retryCount) * 1000;
+          setTimeout(() => {
+            if (!isRecording && !isStartingRecording) {
+              startStreamingWithRetry(retryCount + 1);
+            }
+          }, retryDelay);
+        }
+      }
     }
   };
 
   const stopStreaming = async () => {
+    // CRASH PREVENTION: Multiple safeguards to prevent race conditions
+    if (!isRecording || isStoppingRecording || isStartingRecording) {
+      Logger.warn('⚠️ Stop operation blocked: Not recording, already stopping, or starting');
+      return;
+    }
+    
+    // CRASH PREVENTION: Set flag immediately to prevent multiple calls
+    setIsStoppingRecording(true);
+    
     try {
       Logger.info('Stopping audio streaming...');
       
@@ -696,9 +974,15 @@ export default function LiveTranslationScreen() {
         sendBufferedChunks();
       }
       
+      // CRASH PREVENTION: Safe audio stop with error handling
       if (audioServiceRef.current && isReady) {
-        await audioServiceRef.current.stop();
-        Logger.info('Audio service stopped');
+        try {
+          await audioServiceRef.current.stop();
+          Logger.info('✅ Audio service stopped successfully');
+        } catch (audioError) {
+          Logger.error('❌ Error stopping audio service:', audioError);
+          // Don't throw error to avoid disrupting the flow
+        }
       }
       
       // تنظيف الـbuffer بعد الإرسال
@@ -745,14 +1029,11 @@ export default function LiveTranslationScreen() {
           if (wsRef.current) {
             Logger.info('Closing WebSocket connection after 1 minute timeout');
             wsRef.current.close();
-            setConnectionStatus('disconnected');
           }
         }, 60000); // دقيقة واحدة
-      } else {
-        setConnectionStatus('disconnected');
       }
       
-      // NEW: Save real-time transcription to history if exists
+      // NEW: Save real-time transcription to history if exists and update current session
       if (isRealTimeMode && realTimeTranscription) {
         // تجنب إضافة نفس النص مرتين
         const isDuplicate = transcriptions.some(item => 
@@ -769,6 +1050,14 @@ export default function LiveTranslationScreen() {
           };
           setTranscriptions(prev => [...prev, newItem]);
         }
+        
+        // Update current session text with the final transcription/translation
+        setCurrentSessionText({
+          original: realTimeTranscription,
+          translation: realTimeTranslation
+        });
+        
+        // Clear real-time text for next recording session
         setRealTimeTranscription('');
         setRealTimeTranslation('');
       }
@@ -826,26 +1115,27 @@ export default function LiveTranslationScreen() {
       
     } catch (error) {
       Logger.error('Failed to stop streaming:', error);
+    } finally {
+      // CRASH PREVENTION: Always reset the stopping flag
+      setIsStoppingRecording(false);
     }
   };
 
-  const handleTargetLanguageChange = async (newTargetLanguage: Language) => {
+  const handleTargetLanguageChange = (newTargetLanguage: Language) => {
+    // Update shared context - this will sync back to the main app
     setSelectedTargetLanguage(newTargetLanguage);
+    Logger.info('🔄 Target language changed and synced to main app:', newTargetLanguage);
     
     // تنظيف AsyncStorage عند تغيير اللغة - فقط في الموبايل
     if (Platform.OS !== 'web') {
-      try {
-        await AsyncStorage.removeItem('audio_cache');
-        await AsyncStorage.removeItem('transcription_cache');
-        await AsyncStorage.removeItem('translation_cache');
-        Logger.info('Cleared AsyncStorage on language change');
-      } catch (error) {
-        Logger.error('Failed to clear AsyncStorage on language change:', error);
-      }
+      AsyncStorage.removeItem('audio_cache').catch(() => {});
+      AsyncStorage.removeItem('transcription_cache').catch(() => {});
+      AsyncStorage.removeItem('translation_cache').catch(() => {});
+      Logger.info('Cleared AsyncStorage on language change');
     }
     
     // Retranslate existing transcriptions
-    const retranslated = await Promise.all(
+    Promise.all(
       transcriptions.map(async (item) => {
         try {
           const newTranslatedText = await SpeechService.translateText(
@@ -859,23 +1149,22 @@ export default function LiveTranslationScreen() {
           return item;
         }
       })
-    );
-    setTranscriptions(retranslated);
+    ).then(retranslated => {
+      setTranscriptions(retranslated);
+    });
     
     // NEW: Retranslate real-time content
     if (isRealTimeMode && realTimeTranscription) {
-      try {
-        Logger.info('Retranslating real-time content to:', newTargetLanguage.code);
-        const newTranslatedText = await SpeechService.translateText(
-          realTimeTranscription,
-          newTargetLanguage.code,
-          selectedSourceLanguage?.code
-        );
+      SpeechService.translateText(
+        realTimeTranscription,
+        newTargetLanguage.code,
+        selectedSourceLanguage?.code
+      ).then(newTranslatedText => {
         Logger.info('Real-time retranslation result:', newTranslatedText);
         setRealTimeTranslation(newTranslatedText);
-      } catch (error) {
+      }).catch(error => {
         Logger.error('Failed to retranslate real-time content:', error);
-      }
+      });
     }
     
     // Notify server of language update
@@ -999,6 +1288,7 @@ export default function LiveTranslationScreen() {
     setTranscriptions([]);
     setRealTimeTranscription('');
     setRealTimeTranslation('');
+    setCurrentSessionText({ original: '', translation: '' });
     setShowSummaryButton(false); // Hide summary button when clearing
     
     // تنظيف AsyncStorage أيضاً - فقط في الموبايل
@@ -1008,154 +1298,642 @@ export default function LiveTranslationScreen() {
       AsyncStorage.removeItem('translation_cache').catch(() => {});
     }
     
-    Logger.info('Cleared all transcriptions and cache');
+    Logger.info('Cleared all transcriptions, current session text, and cache');
+  };
+
+  // Function to scroll both columns to bottom smoothly
+  const scrollToBottom = () => {
+    setTimeout(() => {
+      scrollViewRef.current?.scrollToEnd({ animated: true });
+      translationScrollViewRef.current?.scrollToEnd({ animated: true });
+    }, 100);
+  };
+
+  // Test function to manually test the translation pipeline
+  const testTranslation = async () => {
+    try {
+      Logger.info('🧪 Testing translation pipeline...');
+      const testText = 'Hello, this is a test message';
+      
+      // Add test transcription
+      const testItem: TranscriptionItem = {
+        id: Date.now().toString(),
+        originalText: testText,
+        translatedText: '',
+        timestamp: new Date()
+      };
+      
+      setTranscriptions(prev => [...prev, testItem]);
+      
+      // Test translation
+      const translatedText = await SpeechService.translateText(
+        testText,
+        selectedTargetLanguage?.code || 'ar',
+        selectedSourceLanguage?.code
+      );
+      
+      Logger.info('🧪 Test translation result:', translatedText);
+      
+      // Update the test item
+      setTranscriptions(prev => 
+        prev.map(item => 
+          item.id === testItem.id 
+            ? { ...item, translatedText } 
+            : item
+        )
+      );
+      
+      Logger.info('✅ Test translation completed successfully');
+    } catch (error) {
+      Logger.error('❌ Test translation failed:', error);
+      setError(`Test translation failed: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
+  };
+
+  // Helper to append only new segments to the transcription
+  function appendNewTranscriptionSegment(newText: string) {
+    // Remove leading/trailing whitespace
+    newText = newText.trim();
+    if (!newText) return;
+
+    // If the new text is a prefix of the last, ignore (no new content)
+    if (lastAzureTextRef.current && newText.startsWith(lastAzureTextRef.current)) {
+      // Only append the new segment
+      const newSegment = newText.slice(lastAzureTextRef.current.length).trim();
+      if (newSegment) {
+        const accumulatedText = currentAccumulatedTextRef.current ? currentAccumulatedTextRef.current + ' ' + newSegment : newSegment;
+        setRealTimeTranscription(accumulatedText);
+        currentAccumulatedTextRef.current = accumulatedText;
+        lastAzureTextRef.current = newText;
+      }
+      return;
+    }
+    // If the new text is shorter (Azure reset), just append as new
+    if (newText.length < lastAzureTextRef.current.length) {
+      const accumulatedText = currentAccumulatedTextRef.current ? currentAccumulatedTextRef.current + '\n' + newText : newText;
+      setRealTimeTranscription(accumulatedText);
+      currentAccumulatedTextRef.current = accumulatedText;
+      lastAzureTextRef.current = newText;
+      return;
+    }
+    // If the new text is different, append only the new part
+    if (lastAzureTextRef.current && newText !== lastAzureTextRef.current) {
+      const diff = newText.replace(lastAzureTextRef.current, '').trim();
+      if (diff) {
+        const accumulatedText = currentAccumulatedTextRef.current ? currentAccumulatedTextRef.current + ' ' + diff : diff;
+        setRealTimeTranscription(accumulatedText);
+        currentAccumulatedTextRef.current = accumulatedText;
+      }
+      lastAzureTextRef.current = newText;
+      return;
+    }
+    // First time or fallback
+    setRealTimeTranscription(newText);
+    currentAccumulatedTextRef.current = newText;
+    lastAzureTextRef.current = newText;
+  }
+
+  // Helper to translate partial text for live updates
+  const translatePartialText = async (text: string) => {
+    try {
+      // Prevent duplicate translation requests
+      if (isTranslatingRef.current.has(text)) {
+        Logger.warn('Partial translation already in progress for:', text);
+        return;
+      }
+      
+      isTranslatingRef.current.add(text);
+      Logger.info('Translating partial text:', text, 'to:', selectedTargetLanguage?.code);
+      
+      const translatedText = await SpeechService.translateText(
+        text, 
+        selectedTargetLanguage?.code || 'ar',
+        selectedSourceLanguage?.code
+      );
+      
+      Logger.info('Partial translation result:', translatedText);
+      
+      // Update real-time translation
+      setRealTimeTranslation(translatedText);
+      
+      // Update current session translation by accumulating
+      setCurrentSessionText(current => {
+        const currentTranslation = current.translation || '';
+        const newTranslation = currentTranslation ? currentTranslation + ' ' + translatedText : translatedText;
+        return {
+          ...current,
+          translation: newTranslation
+        };
+      });
+      
+      // Scroll to bottom to show new translation
+      scrollToBottom();
+      
+    } catch (translationError) {
+      Logger.error('Partial translation failed:', translationError);
+      
+      // Show translating indicator on error
+      setRealTimeTranslation('Translating...');
+      
+    } finally {
+      // Remove from translating set
+      isTranslatingRef.current.delete(text);
+    }
+  };
+
+  // Helper to translate final text and update UI
+  const translateFinalText = async (text: string) => {
+    try {
+      // Prevent duplicate translation requests
+      if (isTranslatingRef.current.has(text)) {
+        Logger.warn('Translation already in progress for:', text);
+        return;
+      }
+      
+      isTranslatingRef.current.add(text);
+      Logger.info('Translating final text:', text, 'to:', selectedTargetLanguage?.code);
+      
+      const translatedText = await SpeechService.translateText(
+        text, 
+        selectedTargetLanguage?.code || 'ar',
+        selectedSourceLanguage?.code
+      );
+      
+      Logger.info('Final translation result:', translatedText);
+      
+      // Update real-time translation
+      setRealTimeTranslation(translatedText);
+      
+      // Update current session translation by accumulating
+      setCurrentSessionText(current => {
+        const currentTranslation = current.translation || '';
+        const newTranslation = currentTranslation ? currentTranslation + ' ' + translatedText : translatedText;
+        return {
+          ...current,
+          translation: newTranslation
+        };
+      });
+      
+      // Scroll to bottom to show new translation
+      scrollToBottom();
+      
+    } catch (translationError) {
+      Logger.error('Final translation failed:', translationError);
+      
+      // Fallback to original text
+      setRealTimeTranslation(text);
+      
+      // Update current session translation with fallback
+      setCurrentSessionText(current => {
+        const currentTranslation = current.translation || '';
+        const newTranslation = currentTranslation ? currentTranslation + ' ' + text : text;
+        return {
+          ...current,
+          translation: newTranslation
+        };
+      });
+      
+      // Scroll to bottom to show fallback text
+      scrollToBottom();
+    } finally {
+      // Remove from translating set
+      isTranslatingRef.current.delete(text);
+    }
+  };
+
+  // Helper to add new transcription to history without duplicates
+  const addToHistoryIfNew = (text: string) => {
+    // The accumulation is now handled by appendNewTranscriptionSegment
+    // This function is called for final results to ensure the current session is properly updated
+    setCurrentSessionText(current => ({
+      ...current,
+      original: currentAccumulatedTextRef.current
+    }));
+    
+    Logger.info('Updated current session with accumulated transcription:', currentAccumulatedTextRef.current);
   };
 
   return (
-    <View style={styles.container}>
-      <Text style={styles.title}>Live Translation</Text>
-      
-      {/* Source Language Display */}
-      {selectedSourceLanguage && (
-        <View style={styles.sourceLanguageDisplay}>
-          <Text style={styles.sourceLanguageLabel}>Source Language:</Text>
-          <Text style={styles.sourceLanguageText}>
-            {selectedSourceLanguage.flag} {selectedSourceLanguage.name}
-          </Text>
-        </View>
-      )}
-      
-      {/* Target Language selector */}
-      <View style={styles.languageSelector}>
-        <Text style={styles.sectionLabel}>To (Target Language):</Text>
-        <LanguageSelector
-          selectedLanguage={selectedTargetLanguage}
-          onSelectLanguage={handleTargetLanguageChange}
-          disabled={false}
-        />
-      </View>
-      
-      {/* Live Translation Display - Old Style Design */}
-      <View style={styles.translationDisplay}>
-        <View style={styles.translationCard}>
-          {/* Live real-time section when recording */}
-          {isRecording && (
-            <View style={styles.liveSection}>
-              <View style={styles.horizontalContainer}>
-                <View style={[styles.originalBox, styles.leftBox]}>
-                  <Text style={styles.boxTitle}>Original</Text>
-                  <Text style={styles.liveText}>{realTimeTranscription || 'Listening...'}</Text>
-                </View>
-                <View style={[styles.translationBox, styles.rightBox]}>
-                  <Text style={styles.boxTitle}>Translation</Text>
-                  <Text style={styles.liveText}>{realTimeTranslation || 'Translating...'}</Text>
-                </View>
-              </View>
+    <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}> {/* Main container */}
+      {/* Header */}
+      <View style={{ backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 2, borderBottomWidth: 1, borderBottomColor: '#E5E7EB', paddingHorizontal: 16, paddingVertical: 16 }}> 
+        <Text style={{ fontSize: 20, fontWeight: '600', color: '#111827', textAlign: 'center' }}>Live Translation</Text>
+        {/* Language Selection */}
+        <View style={{ marginTop: 16 }}> 
+          <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}> 
+            <View style={{ flex: 1, minWidth: 180 }}>
+              <LanguageSelector
+                selectedLanguage={selectedSourceLanguage}
+                onSelectLanguage={setSelectedSourceLanguage}
+                disabled={isRecording}
+                title="Select Source Language"
+                subtitle="Choose the language you will speak"
+              />
             </View>
-          )}
-          
-          {/* Historical transcriptions */}
-          <ScrollView ref={scrollViewRef} style={styles.historyContainer}>
-            {transcriptions.length === 0 && !isRecording ? (
-              <Text style={styles.emptyText}>
-                Start recording to see live translation!
+            <View style={{ flex: 1, minWidth: 180 }}>
+              <LanguageSelector
+                selectedLanguage={selectedTargetLanguage}
+                onSelectLanguage={handleTargetLanguageChange}
+                disabled={isRecording}
+                title="Select Target Language"
+                subtitle="Choose the language you want to translate to"
+              />
+            </View>
+          </View>
+          {/* Live Connection Status Indicator */}
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'center', marginTop: 12 }}> 
+            <View style={{ flexDirection: 'row', alignItems: 'center', backgroundColor: connectionStatus === 'connected' ? '#ECFDF5' : '#FEF2F2', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 999, borderWidth: 1, borderColor: connectionStatus === 'connected' ? '#10B981' : '#EF4444' }}> 
+              <View style={{ width: 8, height: 8, backgroundColor: connectionStatus === 'connected' ? '#10B981' : '#EF4444', borderRadius: 4, marginRight: 8 }} />
+              <Text style={{ fontWeight: '500', color: connectionStatus === 'connected' ? '#10B981' : '#EF4444', fontSize: 14 }}>
+                {connectionStatus === 'connected' ? 'Live' : 'Offline'}
               </Text>
+            </View>
+            {connectionStatus !== 'connected' && (
+              <TouchableOpacity
+                onPress={initializeServerConnection}
+                style={{ marginLeft: 12, backgroundColor: '#3B82F6', paddingHorizontal: 12, paddingVertical: 8, borderRadius: 8 }}
+              >
+                <Text style={{ color: '#fff', fontWeight: '500', fontSize: 14 }}>Reconnect</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        </View>
+      </View>
+
+      {/* Two-Column Layout */}
+      <View style={{ flex: 1, flexDirection: 'row' }}> 
+        {/* Left Column - Original Text */}
+        <View style={{ 
+          backgroundColor: '#F3F4F6', 
+          borderRightWidth: 1, 
+          borderRightColor: '#D1D5DB', 
+          flex: 1, 
+          width: '50%',
+          minHeight: 250,
+        }}> 
+          <View style={{ 
+            backgroundColor: '#E5E7EB', 
+            paddingHorizontal: 16, 
+            paddingVertical: 12, 
+            borderBottomWidth: 1, 
+            borderBottomColor: '#D1D5DB',
+            borderTopLeftRadius: 0,
+            borderTopRightRadius: 0
+          }}> 
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}> 
+              <Icon name="volume-high" size={18} color="#6B7280" />
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#374151', textTransform: 'uppercase', marginLeft: 8 }}>Original</Text>
+              <Text style={{ fontSize: 12, color: '#6B7280', marginLeft: 8 }}>({selectedSourceLanguage?.name || 'Auto-detect'})</Text>
+            </View>
+          </View>
+          <ScrollView 
+            ref={scrollViewRef}
+            style={{ flex: 1, padding: 16 }} 
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}
+            showsVerticalScrollIndicator={true}
+          > 
+            {transcriptions.length === 0 && !isRecording && !currentSessionText.original ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', height: 200 }}> 
+                <Icon name="microphone" size={48} color="#9CA3AF" style={{ marginBottom: 16 }} />
+                <Text style={{ fontSize: 16, color: '#6B7280', textAlign: 'center' }}>Start recording to see original text</Text>
+              </View>
             ) : (
-              transcriptions.map((item) => (
-                <View key={item.id} style={styles.historyItem}>
-                  <View style={styles.horizontalContainer}>
-                    <View style={[styles.originalBox, styles.leftBox]}>
-                      <Text style={styles.boxTitle}>Original</Text>
-                      <Text style={styles.historyText}>{item.originalText}</Text>
+              <View style={{ 
+                backgroundColor: '#fff', 
+                borderRadius: 12, 
+                padding: 12, 
+                shadowColor: '#000', 
+                shadowOpacity: 0.06, 
+                shadowRadius: 2, 
+                borderWidth: 1, 
+                borderColor: '#E5E7EB', 
+                minHeight: 250 
+              }}>
+                {/* Current Session Text - Main Content Area */}
+                {(currentSessionText.original || realTimeTranscription) && (
+                  <View style={{ 
+                    backgroundColor: '#F8FAFC', 
+                    padding: 16, 
+                    borderRadius: 8, 
+                    marginBottom: currentSessionText.original && transcriptions.length > 0 ? 16 : 0,
+                    borderLeftWidth: 4,
+                    borderLeftColor: '#3B82F6'
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      <View style={{ width: 8, height: 8, backgroundColor: isRecording ? '#EF4444' : '#10B981', borderRadius: 4, marginRight: 8 }} />
+                      <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
+                        {isRecording ? 'LIVE TRANSCRIPTION' : 'CURRENT SESSION'}
+                      </Text>
+                      {(currentSessionText.original || realTimeTranscription) && (
+                        <TouchableOpacity
+                          onPress={() => Clipboard.setString(currentSessionText.original || realTimeTranscription || '')}
+                          style={{ marginLeft: 'auto', padding: 4, borderRadius: 4 }}
+                        >
+                          <Icon name="content-copy" size={16} color="#6B7280" />
+                        </TouchableOpacity>
+                      )}
                     </View>
-                    <View style={[styles.translationBox, styles.rightBox]}>
-                      <Text style={styles.boxTitle}>Translation</Text>
-                      <Text style={styles.historyText}>{item.translatedText}</Text>
-                    </View>
+                    <Text style={{ 
+                      color: '#111827', 
+                      fontSize: 16, 
+                      lineHeight: 24, 
+                      fontWeight: '500',
+                      textAlign: selectedSourceLanguage?.code === 'ar' ? 'right' : 'left',
+                      writingDirection: selectedSourceLanguage?.code === 'ar' ? 'rtl' : 'ltr',
+                      minHeight: 100
+                    }}>
+                      {currentSessionText.original || realTimeTranscription}
+                    </Text>
                   </View>
-                </View>
-              ))
+                )}
+                
+                {/* Previous Sessions - Only show if there are previous sessions and no current session */}
+                {transcriptions.length > 0 && !currentSessionText.original && !realTimeTranscription && (
+                  <>
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#6B7280', marginBottom: 8 }}>Previous Sessions:</Text>
+                    </View>
+                    {transcriptions.map((block, index) => (
+                      <View key={`original-${block.id}`} style={{ marginBottom: index < transcriptions.length - 1 ? 16 : 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                          <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '500' }}>
+                            {new Date(block.timestamp).toLocaleTimeString()}
+                          </Text>
+                          <TouchableOpacity
+                            onPress={() => Clipboard.setString(block.originalText)}
+                            style={{ marginLeft: 'auto', padding: 4, borderRadius: 4 }}
+                          >
+                            <Icon name="content-copy" size={16} color="#6B7280" />
+                          </TouchableOpacity>
+                        </View>
+                        <Text style={{ 
+                          color: '#111827', 
+                          fontSize: 14, 
+                          lineHeight: 20, 
+                          fontWeight: '500',
+                          textAlign: selectedSourceLanguage?.code === 'ar' ? 'right' : 'left',
+                          writingDirection: selectedSourceLanguage?.code === 'ar' ? 'rtl' : 'ltr'
+                        }}>
+                          {block.originalText}
+                        </Text>
+                        {index < transcriptions.length - 1 && (
+                          <View style={{ height: 1, backgroundColor: '#E5E7EB', marginTop: 16 }} />
+                        )}
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
+            )}
+          </ScrollView>
+        </View>
+        {/* Right Column - Translation */}
+        <View style={{ 
+          backgroundColor: '#fff', 
+          borderLeftWidth: 1, 
+          borderLeftColor: '#D1D5DB', 
+          flex: 1, 
+          width: '50%',
+          minHeight: 300,
+        }}> 
+          <View style={{ backgroundColor: '#EFF6FF', paddingHorizontal: 16, paddingVertical: 12, borderBottomWidth: 1, borderBottomColor: '#BFDBFE' }}> 
+            <View style={{ flexDirection: 'row', alignItems: 'center' }}> 
+              <Icon name="translate" size={18} color="#2563EB" />
+              <Text style={{ fontSize: 14, fontWeight: 'bold', color: '#2563EB', textTransform: 'uppercase', marginLeft: 8 }}>Translation</Text>
+              <Text style={{ fontSize: 12, color: '#2563EB', marginLeft: 8 }}>({selectedTargetLanguage?.name || ''})</Text>
+            </View>
+          </View>
+          <ScrollView 
+            ref={translationScrollViewRef}
+            style={{ flex: 1, padding: 16 }} 
+            contentContainerStyle={{ flexGrow: 1, paddingBottom: 20 }}
+            showsVerticalScrollIndicator={true}
+          > 
+            {transcriptions.length === 0 && !isRecording && !currentSessionText.original ? (
+              <View style={{ flex: 1, alignItems: 'center', justifyContent: 'center', height: 200 }}> 
+                <Icon name="message-text-outline" size={48} color="#9CA3AF" style={{ marginBottom: 16 }} />
+                <Text style={{ fontSize: 16, color: '#6B7280', textAlign: 'center' }}>Translations will appear here</Text>
+              </View>
+            ) : (
+              <View style={{ 
+                backgroundColor: '#EFF6FF', 
+                borderRadius: 12, 
+                padding: 12, 
+                shadowColor: '#000', 
+                shadowOpacity: 0.06, 
+                shadowRadius: 2, 
+                borderWidth: 1, 
+                borderColor: '#BFDBFE', 
+                minHeight: 250 
+              }}>
+                {/* Current Session Translation - Main Content Area */}
+                {(currentSessionText.translation || realTimeTranslation) && (
+                  <View style={{ 
+                    backgroundColor: '#F0FDF4', 
+                    padding: 16, 
+                    borderRadius: 8, 
+                    marginBottom: currentSessionText.translation && transcriptions.length > 0 ? 16 : 0,
+                    borderLeftWidth: 4,
+                    borderLeftColor: '#10B981'
+                  }}>
+                    <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+                      <View style={{ width: 8, height: 8, backgroundColor: isRecording ? '#EF4444' : '#10B981', borderRadius: 4, marginRight: 8 }} />
+                      <Text style={{ fontSize: 12, color: '#6B7280', fontWeight: '600' }}>
+                        {isRecording ? 'LIVE TRANSLATION' : 'CURRENT SESSION'}
+                      </Text>
+                      {(currentSessionText.translation || realTimeTranslation) && (
+                        <TouchableOpacity
+                          onPress={() => Clipboard.setString(currentSessionText.translation || realTimeTranslation || '')}
+                          style={{ marginLeft: 'auto', padding: 4, borderRadius: 4 }}
+                        >
+                          <Icon name="content-copy" size={16} color="#2563EB" />
+                        </TouchableOpacity>
+                      )}
+                    </View>
+                    <Text style={{ 
+                      color: '#111827', 
+                      fontSize: 16, 
+                      lineHeight: 24, 
+                      fontWeight: '500',
+                      textAlign: selectedTargetLanguage?.code === 'ar' ? 'right' : 'left',
+                      writingDirection: selectedTargetLanguage?.code === 'ar' ? 'rtl' : 'ltr',
+                      minHeight: 100
+                    }}>
+                      {currentSessionText.translation || realTimeTranslation}
+                    </Text>
+                  </View>
+                )}
+                
+                {/* Previous Sessions - Only show if there are previous sessions and no current session */}
+                {transcriptions.length > 0 && !currentSessionText.translation && !realTimeTranslation && (
+                  <>
+                    <View style={{ marginBottom: 12 }}>
+                      <Text style={{ fontSize: 14, fontWeight: '600', color: '#6B7280', marginBottom: 8 }}>Previous Sessions:</Text>
+                    </View>
+                    {transcriptions.map((block, index) => (
+                      <View key={`translation-${block.id}`} style={{ marginBottom: index < transcriptions.length - 1 ? 16 : 0 }}>
+                        <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 8 }}>
+                          <Text style={{ fontSize: 12, color: '#2563EB', fontWeight: '500' }}>
+                            {new Date(block.timestamp).toLocaleTimeString()}
+                          </Text>
+                          {block.translatedText && (
+                            <TouchableOpacity
+                              onPress={() => Clipboard.setString(block.translatedText)}
+                              style={{ marginLeft: 'auto', padding: 4, borderRadius: 4 }}
+                            >
+                              <Icon name="content-copy" size={16} color="#2563EB" />
+                            </TouchableOpacity>
+                          )}
+                        </View>
+                        {!block.translatedText ? (
+                          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'flex-start', minHeight: 50 }}>
+                            <Icon name="sync" size={20} color="#3B82F6" style={{ marginRight: 8 }} />
+                            <Text style={{ color: '#3B82F6', fontSize: 14, fontStyle: 'italic' }}>Translating...</Text>
+                          </View>
+                        ) : (
+                          <Text
+                            style={[
+                              { 
+                                color: '#111827', 
+                                fontSize: 14, 
+                                lineHeight: 20, 
+                                fontWeight: '500',
+                                textAlign: selectedTargetLanguage?.code === 'ar' ? 'right' : 'left',
+                                writingDirection: selectedTargetLanguage?.code === 'ar' ? 'rtl' : 'ltr'
+                              }
+                            ]}
+                          >
+                            {block.translatedText}
+                          </Text>
+                        )}
+                        {index < transcriptions.length - 1 && (
+                          <View style={{ height: 1, backgroundColor: '#BFDBFE', marginTop: 16 }} />
+                        )}
+                      </View>
+                    ))}
+                  </>
+                )}
+              </View>
             )}
           </ScrollView>
         </View>
       </View>
-      
-      {/* Error display */}
-      {error && (
-        <View style={styles.errorContainer}>
-          <Text style={styles.errorText}>{error}</Text>
+
+      {/* Recording Button */}
+      <View style={{ position: 'absolute', left: '50%', bottom: 80, zIndex: 10, transform: [{ translateX: -32 }] }} pointerEvents="box-none">
+        <TouchableOpacity
+          onPress={isRecording ? stopStreaming : startStreaming}
+          disabled={isStartingRecording || isStoppingRecording || isInitializing}
+          style={{
+            width: 64, height: 64, borderRadius: 32, alignItems: 'center', justifyContent: 'center',
+            backgroundColor: isRecording ? '#EF4444' : '#2563EB',
+            shadowColor: '#000', shadowOffset: { width: 0, height: 4 }, shadowOpacity: 0.2, shadowRadius: 8,
+            borderWidth: isRecording ? 4 : 0, borderColor: isRecording ? '#F87171' : undefined,
+            opacity: (isStartingRecording || isStoppingRecording || isInitializing) ? 0.5 : 1
+          }}
+        >
+          <Icon 
+            name={isStartingRecording || isStoppingRecording ? "sync" : "microphone"} 
+            size={32} 
+            color="#fff" 
+            style={[
+              isRecording ? { opacity: 0.8 } : {},
+              (isStartingRecording || isStoppingRecording) ? { transform: [{ rotate: '360deg' }] } : {}
+            ]} 
+          />
+        </TouchableOpacity>
+      </View>
+
+      {/* AI Summary Button */}
+      {showSummaryButton && !isRecording && (
+        <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB', padding: 16, zIndex: 20 }}> 
+          <TouchableOpacity
+            style={{
+              width: '100%',
+              backgroundColor: '#7C3AED', // fallback for gradient
+              paddingVertical: 16,
+              borderRadius: 12,
+              flexDirection: 'row',
+              alignItems: 'center',
+              justifyContent: 'center',
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.15,
+              shadowRadius: 6,
+            }}
+            onPress={navigateToSummary}
+          >
+            <Text style={{ fontSize: 22, marginRight: 8 }}>🤖</Text>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 18 }}>AI Summary</Text>
+          </TouchableOpacity>
         </View>
       )}
 
-      {/* Action buttons */}
-      <View style={styles.buttonContainer}>
-        <TouchableOpacity
-          style={[
-            styles.recordButton,
-            (isInitializing || !selectedTargetLanguage || !isReady) && styles.disabledButton
-          ]}
-          onPress={isRecording ? stopStreaming : startStreaming}
-          disabled={isInitializing || !selectedTargetLanguage || !isReady}
-        >
-          <Text style={styles.recordButtonText}>
-            {isRecording ? 'Stop Live Streaming' : 'Start Live Streaming'}
-          </Text>
-        </TouchableOpacity>
-        
-        {transcriptions.length > 0 && (
-          <TouchableOpacity style={styles.clearButton} onPress={clearTranscriptions}>
-            <Text style={styles.clearButtonText}>Clear All</Text>
-          </TouchableOpacity>
-        )}
-      </View>
-      
-      {/* AI Summary button - shows after recording ends */}
-      {showSummaryButton && !isRecording && (
-        <View style={styles.summaryButtonContainer}>
-          <TouchableOpacity style={styles.summaryButton} onPress={navigateToSummary}>
-            <Text style={styles.summaryButtonText}>🤖 AI Summary</Text>
-          </TouchableOpacity>
-          <TouchableOpacity style={styles.dismissButton} onPress={dismissSummaryButton}>
-            <Text style={styles.dismissButtonText}>✕</Text>
-          </TouchableOpacity>
+      {/* Status Indicator */}
+      {isRecording && (
+        <View style={{ position: 'absolute', top: 80, left: '50%', backgroundColor: '#EF4444', paddingHorizontal: 16, paddingVertical: 8, borderRadius: 999, zIndex: 20, transform: [{ translateX: -80 }] }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center' }}> 
+            <View style={{ width: 8, height: 8, backgroundColor: '#fff', borderRadius: 4, marginRight: 8 }} />
+            <Text style={{ color: '#fff', fontWeight: '500' }}>Recording...</Text>
+          </View>
         </View>
       )}
-      
-      {/* Reconnect button */}
-      {connectionStatus === 'disconnected' && !isRecording && (
-        <View style={styles.reconnectContainer}>
-          <TouchableOpacity 
-            style={styles.reconnectButton} 
-            onPress={initializeWebSocket}
+
+      {/* Test Translation Button (for debugging) */}
+      {!isRecording && (
+        <View style={{ position: 'absolute', top: 80, right: 16, zIndex: 20 }}>
+          <TouchableOpacity
+            onPress={testTranslation}
+            style={{
+              backgroundColor: '#10B981',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 8,
+              shadowColor: '#000',
+              shadowOffset: { width: 0, height: 2 },
+              shadowOpacity: 0.1,
+              shadowRadius: 4,
+            }}
           >
-            <Text style={styles.reconnectButtonText}>
-              {Platform.OS === 'web' ? 'Reconnect' : 'إعادة الاتصال'}
-            </Text>
+            <Text style={{ color: '#fff', fontSize: 12, fontWeight: '600' }}>🧪 Test</Text>
           </TouchableOpacity>
         </View>
       )}
-      
-      {/* Status message for initialization */}
-      {!isReady && !isInitializing && (
-        <View style={styles.statusContainer}>
-          <Text style={styles.statusText}>
-            {Platform.OS === 'web' 
-              ? 'Initializing microphone access...' 
-              : 'جاري تهيئة الصوت...'
-            }
-          </Text>
-        </View>
-      )}
-      
-      {/* Status message while initializing */}
-      {isInitializing && (
-        <View style={styles.statusContainer}>
-          <Text style={styles.statusText}>
-            {Platform.OS === 'web' 
-              ? 'Setting up audio service...' 
-              : 'جاري إعداد خدمة الصوت...'
-            }
-          </Text>
+
+      {/* Error Display */}
+      {error && (
+        <View style={{ position: 'absolute', top: 120, left: 16, right: 16, backgroundColor: '#FEE2E2', borderWidth: 1, borderColor: '#FCA5A5', borderRadius: 8, padding: 12, zIndex: 30 }}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' }}>
+            <View style={{ flex: 1 }}>
+              <Text style={{ color: '#DC2626', fontSize: 14, fontWeight: '500' }}>{error}</Text>
+              {error.includes('Quota exceeded') && (
+                <Text style={{ color: '#DC2626', fontSize: 12, marginTop: 4 }}>
+                  💡 Tip: Wait 5-10 minutes before trying again, or check your Azure Speech Service subscription limits.
+                </Text>
+              )}
+              {!error.includes('Quota exceeded') && !isRecording && (
+                <TouchableOpacity 
+                  onPress={() => {
+                    setError(null);
+                    startStreamingWithRetry();
+                  }}
+                  style={{ 
+                    backgroundColor: '#DC2626', 
+                    paddingHorizontal: 12, 
+                    paddingVertical: 6, 
+                    borderRadius: 6, 
+                    marginTop: 8,
+                    alignSelf: 'flex-start'
+                  }}
+                >
+                  <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>🔄 Retry</Text>
+                </TouchableOpacity>
+              )}
+            </View>
+            <TouchableOpacity onPress={() => setError(null)} style={{ marginLeft: 8 }}>
+              <Icon name="close" size={20} color="#DC2626" />
+            </TouchableOpacity>
+          </View>
         </View>
       )}
     </View>
@@ -1166,16 +1944,59 @@ const styles = StyleSheet.create({
   container: {
     flex: 1,
     backgroundColor: '#f5f5f5',
-    padding: 20,
+    padding: 10,
   },
   title: {
-    fontSize: 24,
+    fontSize: 20,
     fontWeight: 'bold',
-    marginBottom: 20,
+    marginBottom: 10,
     textAlign: 'center',
   },
+  languageSection: {
+    marginBottom: 10,
+  },
   languageSelector: {
-    marginBottom: 20,
+    marginBottom: 8,
+  },
+  connectionStatusContainer: {
+    width: 80,
+    alignItems: 'center',
+  },
+  statusIndicator: {
+    paddingHorizontal: 8,
+    paddingVertical: 4,
+    borderRadius: 12,
+    minWidth: 60,
+    alignItems: 'center',
+  },
+  connectingIndicator: {
+    backgroundColor: '#fff3e0',
+    borderWidth: 1,
+    borderColor: '#ff9800',
+  },
+  connectedIndicator: {
+    backgroundColor: '#e8f5e8',
+    borderWidth: 1,
+    borderColor: '#4caf50',
+  },
+  disconnectedIndicator: {
+    backgroundColor: '#ffebee',
+    borderWidth: 1,
+    borderColor: '#f44336',
+  },
+  statusIndicatorText: {
+    fontSize: 12,
+    fontWeight: 'bold',
+    textAlign: 'center',
+  },
+  connectingIndicatorText: {
+    color: '#e65100',
+  },
+  connectedIndicatorText: {
+    color: '#2e7d32',
+  },
+  disconnectedIndicatorText: {
+    color: '#c62828',
   },
   emptyText: {
     fontSize: 16,
@@ -1198,7 +2019,7 @@ const styles = StyleSheet.create({
   buttonContainer: {
     flexDirection: 'row',
     justifyContent: 'space-around',
-    marginTop: 20,
+    marginTop: 10,
   },
   recordButton: {
     backgroundColor: '#4caf50',
@@ -1242,6 +2063,7 @@ const styles = StyleSheet.create({
     fontSize: 14,
     textAlign: 'center',
   },
+
   reconnectContainer: {
     marginTop: 10,
     alignItems: 'center',
@@ -1258,6 +2080,20 @@ const styles = StyleSheet.create({
     fontSize: 14,
     fontWeight: 'bold',
   },
+  connectionWarningContainer: {
+    backgroundColor: '#fff3cd',
+    padding: 12,
+    margin: 10,
+    borderRadius: 8,
+    borderLeftWidth: 4,
+    borderLeftColor: '#ffc107',
+  },
+  connectionWarningText: {
+    color: '#856404',
+    fontSize: 14,
+    textAlign: 'center',
+    fontWeight: '500',
+  },
   sectionLabel: {
     fontSize: 12,
     fontWeight: 'bold',
@@ -1267,19 +2103,25 @@ const styles = StyleSheet.create({
   // New styles for improved design
   translationDisplay: {
     flex: 1,
-    marginVertical: 10,
+    marginVertical: 5,
+  },
+  translationDisplayRecording: {
+    flex: 1.2, // زيادة المساحة عندما يكون التسجيل مفعلاً
   },
   translationCard: {
     backgroundColor: '#fff',
     borderRadius: 12,
-    padding: 15,
-    margin: 10,
+    padding: 8,
+    margin: 3,
     shadowColor: '#000',
-    shadowOffset: { width: 0, height: 2 },
-    shadowOpacity: 0.1,
-    shadowRadius: 4,
-    elevation: 3,
-    minHeight: 200,
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+    minHeight: 450, // زيادة الارتفاع الإجمالي للبطاقة
+  },
+  translationCardRecording: {
+    minHeight: 550, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
   },
   liveSection: {
     marginBottom: 15,
@@ -1378,28 +2220,7 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: 'bold',
   },
-  // Source Language Display styles
-  sourceLanguageDisplay: {
-    backgroundColor: '#e8f5e8',
-    padding: 12,
-    borderRadius: 8,
-    marginBottom: 15,
-    borderLeftWidth: 4,
-    borderLeftColor: '#4caf50',
-    flexDirection: 'row',
-    alignItems: 'center',
-    justifyContent: 'space-between',
-  },
-  sourceLanguageLabel: {
-    fontSize: 14,
-    fontWeight: 'bold',
-    color: '#2e7d32',
-  },
-  sourceLanguageText: {
-    fontSize: 16,
-    fontWeight: '600',
-    color: '#1b5e20',
-  },
+
   // Horizontal layout styles
   horizontalContainer: {
     flexDirection: 'row',
@@ -1414,4 +2235,170 @@ const styles = StyleSheet.create({
     flex: 1,
     marginLeft: 8,
   },
+  // New unified styles for single view
+  mainContainer: {
+    flex: 1,
+    padding: 3,
+  },
+  liveMainSection: {
+    marginBottom: 10,
+    paddingBottom: 5,
+    borderBottomWidth: 1,
+    borderBottomColor: '#4caf50',
+    backgroundColor: '#f8f9fa',
+    borderRadius: 15,
+    marginHorizontal: 2,
+    padding: 8,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 2 },
+    shadowOpacity: 0.08,
+    shadowRadius: 6,
+    elevation: 3,
+    minHeight: 400, // زيادة الارتفاع عندما يكون التسجيل مفعلاً
+  },
+  liveMainSectionRecording: {
+    minHeight: 500, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
+    padding: 15, // زيادة التباعد الداخلي
+  },
+  liveContainer: {
+    backgroundColor: '#fff',
+    borderRadius: 12,
+    padding: 20,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 3 },
+    shadowOpacity: 0.15,
+    shadowRadius: 6,
+    elevation: 5,
+  },
+  originalMainBox: {
+    backgroundColor: '#f8f9fa',
+    padding: 20,
+    borderRadius: 12,
+    marginBottom: 15,
+    borderLeftWidth: 6,
+    borderLeftColor: '#2196f3',
+    minHeight: 100,
+  },
+  translationMainBox: {
+    backgroundColor: '#f0f8ff',
+    padding: 20,
+    borderRadius: 12,
+    borderLeftWidth: 6,
+    borderLeftColor: '#4caf50',
+    minHeight: 100,
+  },
+  mainBoxTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    marginBottom: 10,
+    textTransform: 'uppercase',
+  },
+  liveMainText: {
+    fontSize: 18,
+    color: '#333',
+    lineHeight: 26,
+    fontWeight: '600',
+    minHeight: 50,
+  },
+  historySection: {
+    marginTop: 20,
+    paddingTop: 15,
+    borderTopWidth: 1,
+    borderTopColor: '#e0e0e0',
+  },
+  historySectionTitle: {
+    fontSize: 18,
+    fontWeight: 'bold',
+    color: '#666',
+    marginBottom: 15,
+    textAlign: 'center',
+  },
+  historyMainItem: {
+    backgroundColor: '#fafafa',
+    borderRadius: 12,
+    padding: 15,
+    marginBottom: 15,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.1,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  historyMainText: {
+    fontSize: 16,
+    color: '#333',
+    lineHeight: 22,
+    minHeight: 40,
+  },
+
+  sideBySideContainer: {
+    flexDirection: 'row',
+    justifyContent: 'space-between',
+    paddingHorizontal: 2,
+    marginBottom: 5,
+    minHeight: 350, // زيادة الارتفاع للعمودين
+  },
+  sideBySideContainerRecording: {
+    minHeight: 450, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
+  },
+  originalColumn: {
+    flex: 1,
+    backgroundColor: '#e8f4fd',
+    borderRadius: 12,
+    padding: 10,
+    marginRight: 3,
+    minHeight: 350, // زيادة الارتفاع
+    borderWidth: 1,
+    borderColor: '#90caf9',
+    shadowColor: '#2196f3',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  originalColumnRecording: {
+    minHeight: 450, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
+    padding: 15, // زيادة التباعد الداخلي
+  },
+  translationColumn: {
+    flex: 1,
+    backgroundColor: '#f3e5f5',
+    borderRadius: 12,
+    padding: 10,
+    marginLeft: 3,
+    minHeight: 350, // زيادة الارتفاع
+    borderWidth: 1,
+    borderColor: '#ce93d8',
+    shadowColor: '#9c27b0',
+    shadowOffset: { width: 0, height: 1 },
+    shadowOpacity: 0.08,
+    shadowRadius: 3,
+    elevation: 2,
+  },
+  translationColumnRecording: {
+    minHeight: 450, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
+    padding: 15, // زيادة التباعد الداخلي
+  },
+  columnTitle: {
+    fontSize: 16,
+    fontWeight: 'bold',
+    color: '#333',
+    textAlign: 'center',
+    marginBottom: 15,
+    textTransform: 'uppercase',
+  },
+  liveStreamingText: {
+    fontSize: 16,
+    color: '#1976d2',
+    lineHeight: 24,
+    textAlign: 'left',
+    minHeight: 300, // زيادة الارتفاع للنص
+    fontWeight: '500',
+  },
+  liveStreamingTextRecording: {
+    minHeight: 400, // زيادة أكبر للارتفاع عندما يكون التسجيل مفعلاً
+    fontSize: 18, // زيادة حجم الخط قليلاً
+  },
+
 }); 

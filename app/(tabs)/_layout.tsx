@@ -1,5 +1,5 @@
 import { Tabs } from 'expo-router';
-import { Mic, FileText, User, Crown, Settings, Upload } from 'lucide-react-native';
+import { Mic, FileText, User, Crown, Settings, Upload, Languages, BookOpen } from 'lucide-react-native';
 import { useUserPermissions } from '@/hooks/useAuth';
 import { SummaryProvider } from '@/contexts/SummaryContext';
 
@@ -40,11 +40,11 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="history"
+          name="live-translation"
           options={{
-            title: 'History',
+            title: 'Live Translation',
             tabBarIcon: ({ size, color }) => (
-              <FileText size={size} color={color} />
+              <Languages size={size} color={color} />
             ),
           }}
         />
@@ -67,7 +67,16 @@ export default function TabLayout() {
           }}
         />
         <Tabs.Screen
-          name="live-translation"
+          name="summary-view"
+          options={{
+            title: 'Summary',
+            tabBarIcon: ({ size, color }) => (
+              <BookOpen size={size} color={color} />
+            ),
+          }}
+        />
+        <Tabs.Screen
+          name="history"
           options={{
             href: null,
           }}
