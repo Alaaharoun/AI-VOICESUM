@@ -42,3 +42,42 @@ yarn-error.*
 credentials.json
 
 android/app/my-release-key.keystore
+
+# SECURITY: Files containing exposed API keys - CRITICAL!
+# Android Studio workspace files containing API keys
+android/.idea/
+android/app/build/
+android/app/.cxx/
+android/app/build/intermediates/
+android/app/build/outputs/
+
+# Public HTML files with exposed keys
+public/simple-delete-account.html
+public/delete-account.html
+
+# IDE files that might contain sensitive data
+.idea/
+*.iml
+*.ipr
+*.iws
+
+# Build files that might contain API keys
+*.map
+*.bundle
+build/
+dist/
+
+# Temporary files
+*.tmp
+*.temp
+*.log
+
+# OS generated files
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# Backup files
+*.bak
+*.backup
+backup/
