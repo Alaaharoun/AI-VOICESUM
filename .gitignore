@@ -81,3 +81,6 @@ Desktop.ini
 *.bak
 *.backup
 backup/
+
+# SECURITY: Admin credentials and sensitive configuration
+constants/database.ts

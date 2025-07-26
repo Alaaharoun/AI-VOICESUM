@@ -1,4 +1,5 @@
 // Database table names and structures for the admin panel
+// This is an example file - create your own database.ts with real values
 
 export const ADMIN_TABLES = {
   PROFILES: 'profiles',
@@ -155,8 +156,8 @@ export const TEST_CONFIG = {
   AUDIO_BITS_PER_SAMPLE: 16,
 } as const;
 
-// Default PIN for admin access
-export const ADMIN_PIN = '1414';
+// Default PIN for admin access - CHANGE THIS TO YOUR OWN PIN!
+export const ADMIN_PIN = 'YOUR_ADMIN_PIN_HERE';
 
 // Default trial settings
 export const TRIAL_SETTINGS = {
