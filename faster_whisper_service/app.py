@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, Header
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -6,8 +6,10 @@ from faster_whisper import WhisperModel
 import shutil
 import os
 import tempfile
+import sys
 from typing import Optional
 
+# Create FastAPI app
 app = FastAPI(
     title="Faster Whisper Service",
     description="High-performance speech-to-text service using Faster Whisper",
@@ -17,29 +19,36 @@ app = FastAPI(
 # Add CORS middleware
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # In production, specify your domain
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# For Hugging Face Spaces compatibility
-# Note: This is a FastAPI app, no Gradio needed for Docker deployment
-
 # Security
 security = HTTPBearer(auto_error=False)
 
 # Configuration
-API_TOKEN = ""  # No API token required
-REQUIRE_AUTH = False  # Authentication disabled
+API_TOKEN = ""
+REQUIRE_AUTH = False
 
-# Load model on startup
-try:
-    model = WhisperModel("base", compute_type="int8")
-    print("✅ Model loaded successfully")
-except Exception as e:
-    print(f"❌ Error loading model: {e}")
-    model = None
+# Global model variable
+model = None
+
+def load_model():
+    """Load the Whisper model"""
+    global model
+    try:
+        print("🔄 Loading Whisper model...")
+        model = WhisperModel("base", compute_type="int8")
+        print("✅ Model loaded successfully")
+        return True
+    except Exception as e:
+        print(f"❌ Error loading model: {e}")
+        print(f"Python version: {sys.version}")
+        print(f"Current working directory: {os.getcwd()}")
+        model = None
+        return False
 
 def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     """Verify API token if authentication is required"""
@@ -60,6 +69,11 @@ def verify_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
     
     return credentials
 
+@app.on_event("startup")
+async def startup_event():
+    """Load model on startup"""
+    load_model()
+
 @app.get("/")
 async def root():
     """Root endpoint"""
@@ -74,7 +88,8 @@ async def health_check(credentials: HTTPAuthorizationCredentials = Depends(verif
         "service": "faster-whisper",
         "auth_required": REQUIRE_AUTH,
         "auth_configured": bool(API_TOKEN),
-        "vad_support": True
+        "vad_support": True,
+        "python_version": sys.version
     }
 
 @app.post("/transcribe")
@@ -87,20 +102,12 @@ async def transcribe(
     credentials: HTTPAuthorizationCredentials = Depends(verify_token)
 ):
     """
-    Transcribe audio file to text
-    
-    - **file**: Audio file (WAV, MP3, M4A, etc.)
-    - **language**: Language code (optional, e.g., "en", "ar", "es")
-    - **task**: "transcribe" or "translate" (default: "transcribe")
+    Transcribe audio file to text with optional VAD support
     """
-    print(f"📥 Received transcription request:")
-    print(f"   - File: {file.filename}")
-    print(f"   - Language: {language}")
-    print(f"   - Task: {task}")
-    print(f"   - VAD Filter: {vad_filter}")
-    print(f"   - VAD Parameters: {vad_parameters}")
-    
+    temp_path = None
     try:
+        print(f"🎵 Starting transcription for file: {file.filename}")
+        
         # Check if model is loaded
         if model is None:
             print("❌ Model not loaded")
@@ -117,113 +124,116 @@ async def transcribe(
                 content={"error": "No file provided", "success": False}
             )
         
-        print(f"📁 Processing file: {file.filename}")
+        # Validate file size (25MB limit)
+        file.file.seek(0, 2)
+        file_size = file.file.tell()
+        file.file.seek(0)
         
-        # Validate file size (max 25MB)
-        file_size = 0
-        file_content = b""
-        while chunk := await file.read(8192):
-            file_content += chunk
-            file_size += len(chunk)
-            if file_size > 25 * 1024 * 1024:  # 25MB limit
-                print(f"❌ File too large: {file_size} bytes")
-                return JSONResponse(
-                    status_code=400,
-                    content={"error": "File too large. Maximum size is 25MB", "success": False}
-                )
+        print(f"📁 File size: {file_size} bytes")
         
-        print(f"📊 File size: {file_size} bytes")
+        if file_size > 25 * 1024 * 1024:  # 25MB
+            print("❌ File too large")
+            return JSONResponse(
+                status_code=400,
+                content={"error": "File too large. Maximum size is 25MB", "success": False}
+            )
         
         # Create temporary file
+        print("📝 Creating temporary file...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
-            temp_file.write(file_content)
+            shutil.copyfileobj(file.file, temp_file)
             temp_path = temp_file.name
-            print(f"💾 Temporary file created: {temp_path}")
         
-        try:
-            # Parse VAD parameters
-            vad_threshold = 0.5  # default
-            if vad_filter and vad_parameters:
-                try:
-                    # Parse vad_parameters string like "threshold=0.5"
-                    params = dict(param.split('=') for param in vad_parameters.split(','))
-                    vad_threshold = float(params.get('threshold', 0.5))
-                    print(f"🔧 Using VAD with threshold: {vad_threshold}")
-                except Exception as e:
-                    print(f"⚠️ VAD parameter parsing error: {e}, using default threshold=0.5")
-            
-            # Transcribe audio with VAD if enabled
-            if vad_filter:
-                print("🎤 Starting transcription with VAD...")
-                # Use VAD filtering without parameters (fallback)
-                try:
+        print(f"✅ Temporary file created: {temp_path}")
+        
+        # Parse VAD parameters
+        vad_threshold = 0.5  # default
+        if vad_filter and vad_parameters:
+            try:
+                for param in vad_parameters.split(','):
+                    if '=' in param:
+                        key, value = param.strip().split('=')
+                        if key == 'threshold':
+                            vad_threshold = float(value)
+            except Exception as e:
+                print(f"⚠️ Warning: Failed to parse VAD parameters: {e}")
+        
+        # Transcribe audio
+        print("🎤 Starting transcription...")
+        if vad_filter:
+            print(f"🔊 Using VAD with threshold: {vad_threshold}")
+            try:
+                if language:
                     segments, info = model.transcribe(
                         temp_path, 
                         language=language, 
                         task=task,
-                        vad_filter=True
+                        vad_filter=True,
+                        vad_parameters=f"threshold={vad_threshold}"
                     )
-                    print(f"✅ VAD transcription completed successfully")
-                except Exception as vad_error:
-                    print(f"⚠️ VAD error: {vad_error}")
-                    print(f"📋 Full error details:")
-                    traceback.print_exc()
-                    print(f"🔄 Trying without VAD...")
-                    # Fallback to transcription without VAD
-                    if language:
-                        segments, info = model.transcribe(temp_path, language=language, task=task)
-                    else:
-                        segments, info = model.transcribe(temp_path, task=task)
-                    print(f"✅ Fallback transcription completed")
-            else:
-                print("🎤 Starting transcription without VAD...")
-                # Transcribe without VAD
+                else:
+                    segments, info = model.transcribe(
+                        temp_path, 
+                        task=task,
+                        vad_filter=True,
+                        vad_parameters=f"threshold={vad_threshold}"
+                    )
+                print(f"✅ VAD transcription completed successfully")
+            except Exception as vad_error:
+                print(f"⚠️ VAD error: {vad_error}")
+                print(f"🔄 Trying without VAD...")
+                # Fallback to transcription without VAD
                 if language:
                     segments, info = model.transcribe(temp_path, language=language, task=task)
                 else:
                     segments, info = model.transcribe(temp_path, task=task)
-                print(f"✅ Transcription completed successfully")
-            
-            # Collect transcription results
-            transcription = " ".join([seg.text for seg in segments])
-            print(f"📝 Transcription result: '{transcription}'")
-            print(f"🌍 Detected language: {info.language} (probability: {info.language_probability})")
-            
-            # Clean up temporary file
-            os.unlink(temp_path)
-            print(f"🧹 Temporary file cleaned: {temp_path}")
-            
-            result = {
-                "success": True,
-                "text": transcription,
-                "language": info.language,
-                "language_probability": info.language_probability,
-                "vad_enabled": vad_filter,
-                "vad_threshold": vad_threshold if vad_filter else None
-            }
-            print(f"✅ Request completed successfully")
-            return result
-            
-        except Exception as e:
-            # Clean up temporary file in case of error
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-                print(f"🧹 Temporary file cleaned after error: {temp_path}")
-            
-            print(f"❌ Transcription error: {e}")
-            print(f"📋 Full error details:")
-            traceback.print_exc()
-            
-            return JSONResponse(
-                status_code=500,
-                content={"error": str(e), "success": False}
-            )
-            
+                print(f"✅ Fallback transcription completed")
+        else:
+            print("🎤 Starting transcription without VAD...")
+            # Transcribe without VAD
+            if language:
+                segments, info = model.transcribe(temp_path, language=language, task=task)
+            else:
+                segments, info = model.transcribe(temp_path, task=task)
+            print(f"✅ Transcription completed successfully")
+        
+        # Collect transcription results
+        transcription = " ".join([seg.text for seg in segments])
+        print(f"📝 Transcription result: '{transcription}'")
+        print(f"🌍 Detected language: {info.language} (probability: {info.language_probability})")
+        
+        # Clean up temporary file
+        os.unlink(temp_path)
+        print(f"🧹 Temporary file cleaned: {temp_path}")
+        
+        result = {
+            "success": True,
+            "text": transcription,
+            "language": info.language,
+            "language_probability": info.language_probability,
+            "vad_enabled": vad_filter,
+            "vad_threshold": vad_threshold if vad_filter else None
+        }
+        print(f"✅ Request completed successfully")
+        return result
+        
     except Exception as e:
-        print(f"❌ General error: {e}")
+        # Clean up temporary file in case of error
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+            print(f"🧹 Temporary file cleaned after error: {temp_path}")
+        
+        error_msg = str(e)
+        error_type = type(e).__name__
+        print(f"❌ Transcription error ({error_type}): {error_msg}")
+        
         return JSONResponse(
             status_code=500,
-            content={"error": str(e), "success": False}
+            content={
+                "error": error_msg,
+                "error_type": error_type,
+                "success": False
+            }
         )
 
 @app.post("/detect-language")
@@ -233,12 +243,14 @@ async def detect_language(
 ):
     """
     Detect the language of an audio file
-    
-    - **file**: Audio file to analyze
     """
+    temp_path = None
     try:
+        print(f"🌍 Starting language detection for file: {file.filename}")
+        
         # Check if model is loaded
         if model is None:
+            print("❌ Model not loaded")
             return JSONResponse(
                 status_code=500,
                 content={"error": "Model not loaded", "success": False}
@@ -246,42 +258,56 @@ async def detect_language(
         
         # Validate file
         if not file.filename:
+            print("❌ No file provided")
             return JSONResponse(
                 status_code=400,
                 content={"error": "No file provided", "success": False}
             )
         
         # Create temporary file
+        print("📝 Creating temporary file...")
         with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
             shutil.copyfileobj(file.file, temp_file)
             temp_path = temp_file.name
         
-        try:
-            # Detect language
-            segments, info = model.transcribe(temp_path, beam_size=5)
-            
-            # Clean up temporary file
-            os.unlink(temp_path)
-            
-            return {
-                "success": True,
-                "language": info.language,
-                "language_probability": info.language_probability
-            }
-            
-        except Exception as e:
-            # Clean up temporary file in case of error
-            if os.path.exists(temp_path):
-                os.unlink(temp_path)
-            raise e
-            
+        print(f"✅ Temporary file created: {temp_path}")
+        
+        # Detect language
+        print("🌍 Detecting language...")
+        segments, info = model.transcribe(temp_path)
+        
+        print(f"✅ Language detected: {info.language} (probability: {info.language_probability:.2f})")
+        
+        # Clean up temporary file
+        os.unlink(temp_path)
+        print(f"🧹 Temporary file cleaned: {temp_path}")
+        
+        return JSONResponse(content={
+            "success": True,
+            "language": info.language,
+            "language_probability": info.language_probability
+        })
+        
     except Exception as e:
+        # Clean up temporary file in case of error
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
+            print(f"🧹 Temporary file cleaned after error: {temp_path}")
+        
+        error_msg = str(e)
+        error_type = type(e).__name__
+        print(f"❌ Language detection error ({error_type}): {error_msg}")
+        
         return JSONResponse(
             status_code=500,
-            content={"error": str(e), "success": False}
+            content={
+                "error": error_msg,
+                "error_type": error_type,
+                "success": False
+            }
         )
 
+# For Hugging Face Spaces compatibility
 if __name__ == "__main__":
     import uvicorn
-    print("🚀 Starting Faster Whisper Service on port 7860...")
     uvicorn.run(app, host="0.0.0.0", port=7860) 
