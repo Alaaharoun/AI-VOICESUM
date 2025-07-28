@@ -1,3 +1,14 @@
+---
+title: Faster Whisper API
+emoji: 🎤
+colorFrom: blue
+colorTo: purple
+sdk: docker
+sdk_version: "latest"
+app_file: app.py
+pinned: false
+---
+
 # 🎤 Faster Whisper API - Fixed Version
 
 ## 🆕 Latest Fixes Applied:
