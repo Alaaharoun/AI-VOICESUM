@@ -468,6 +468,52 @@ class TestRunner {
     }
   }
 
+  async runFasterWhisperTest(): Promise<TestResult> {
+    const startTime = Date.now();
+    
+    try {
+      // Test Faster Whisper service health endpoint
+      const response = await fetch('https://alaaharoun-faster-whisper-api.hf.space/health', {
+        method: 'GET',
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      });
+
+      if (!response.ok) {
+        return {
+          success: false,
+          message: `Faster Whisper service returned status ${response.status}`,
+          details: { status: response.status },
+          timestamp: new Date().toISOString(),
+          duration: Date.now() - startTime
+        };
+      }
+
+      const healthData = await response.json();
+      
+      return {
+        success: true,
+        message: 'Faster Whisper service is healthy and responding',
+        details: {
+          status: healthData.status || 'unknown',
+          modelLoaded: healthData.model_loaded || false,
+          service: healthData.service || 'faster-whisper',
+          responseTime: `${Date.now() - startTime}ms`
+        },
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime
+      };
+
+    } catch (error) {
+      return {
+        success: false,
+        message: 'Faster Whisper service test failed',
+        details: { error: (error as Error).message },
+        timestamp: new Date().toISOString(),
+        duration: Date.now() - startTime
+      };
+    }
+  }
+
   private createTestAudio(durationMs: number = 1000): ArrayBuffer {
     // Create realistic 16kHz PCM audio for testing
     const sampleRate = 16000;

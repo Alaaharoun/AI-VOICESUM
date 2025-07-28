@@ -7,12 +7,14 @@ import Clipboard from '@react-native-clipboard/clipboard';
 import { useLocalSearchParams, router } from 'expo-router';
 import { LanguageSelector } from '../../components/LanguageSelector';
 import { SpeechService } from '../../services/speechService';
+import { transcriptionEngineService } from '../../services/transcriptionEngineService';
 import { useLanguage, Language } from '@/contexts/LanguageContext';
 import { getAudioService } from '../../services/audioService';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import { supabase } from '@/lib/supabase';
 import { useAuth } from '@/contexts/AuthContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
+import { EarlyConnectionService } from '../../services/earlyConnectionService';
 
 interface TranscriptionItem {
   id: string;
@@ -74,6 +76,10 @@ export default function LiveTranslationScreen() {
   const [realTimeTranslation, setRealTimeTranslation] = useState<string>('');
   const [showSummaryButton, setShowSummaryButton] = useState(false);
   
+  // Transcription engine state
+  const [useLocalTranscription, setUseLocalTranscription] = useState(false);
+  const [currentTranscriptionEngine, setCurrentTranscriptionEngine] = useState<string>('azure');
+  
   // Current session display state - keeps the latest transcription/translation visible
   const [currentSessionText, setCurrentSessionText] = useState<{
     original: string;
@@ -97,9 +103,169 @@ export default function LiveTranslationScreen() {
 
   // Add a ref to track the last Azure transcription text
   const lastAzureTextRef = useRef<string>('');
+  
+  // إضافة ref لخدمة الاتصال المبكر
+  const earlyConnectionServiceRef = useRef<EarlyConnectionService | null>(null);
+  
+  // Function to check transcription engine setting
+  const checkTranscriptionEngine = async () => {
+    try {
+      const engine = await transcriptionEngineService.getCurrentEngine();
+      setCurrentTranscriptionEngine(engine);
+      
+      // If using Hugging Face, use local transcription instead of WebSocket
+      if (engine === 'huggingface') {
+        setUseLocalTranscription(true);
+        Logger.info('Using local Hugging Face transcription engine');
+      } else {
+        setUseLocalTranscription(false);
+        Logger.info('Using Azure WebSocket transcription');
+      }
+    } catch (error) {
+      Logger.error('Error checking transcription engine:', error);
+      setUseLocalTranscription(false);
+    }
+  };
+  
+  // Function to process local transcription
+  const processLocalTranscription = async () => {
+    if (chunkBufferRef.current.length === 0) {
+      Logger.warn('No audio chunks to process');
+      return;
+    }
+    
+    try {
+      // Combine all chunks into a single audio blob
+      const totalSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+      const combinedBuffer = new Uint8Array(totalSize);
+      let offset = 0;
+      
+      for (const chunk of chunkBufferRef.current) {
+        combinedBuffer.set(chunk, offset);
+        offset += chunk.byteLength;
+      }
+      
+      // Create WAV header
+      const sampleRate = 16000;
+      const channels = 1;
+      const bitsPerSample = 16;
+      const bytesPerSample = bitsPerSample / 8;
+      const blockAlign = channels * bytesPerSample;
+      const byteRate = sampleRate * blockAlign;
+      const dataSize = combinedBuffer.length;
+      const fileSize = 36 + dataSize;
+      
+      const wavHeader = new ArrayBuffer(44);
+      const view = new DataView(wavHeader);
+      
+      // RIFF header
+      view.setUint32(0, 0x52494646, false); // "RIFF"
+      view.setUint32(4, fileSize, true);
+      view.setUint32(8, 0x57415645, false); // "WAVE"
+      
+      // fmt chunk
+      view.setUint32(12, 0x666D7420, false); // "fmt "
+      view.setUint32(16, 16, true); // fmt chunk size
+      view.setUint16(20, 1, true); // Audio format (PCM)
+      view.setUint16(22, channels, true); // Number of channels
+      view.setUint32(24, sampleRate, true); // Sample rate
+      view.setUint32(28, byteRate, true); // Byte rate
+      view.setUint16(32, blockAlign, true); // Block align
+      view.setUint16(34, bitsPerSample, true); // Bits per sample
+      
+      // data chunk
+      view.setUint32(36, 0x64617461, false); // "data"
+      view.setUint32(40, dataSize, true); // Data size
+      
+      // Combine header and audio data
+      const wavBlob = new Blob([wavHeader, combinedBuffer], { type: 'audio/wav' });
+      
+      Logger.info(`Processing local transcription with ${wavBlob.size} bytes of audio data`);
+      
+      // Get source language for transcription
+      const sourceLang = selectedSourceLanguage?.code || 'auto';
+      const targetLang = selectedTargetLanguage?.code || 'en';
+      
+      // Use the selected transcription engine
+      const transcription = await SpeechService.transcribeAudio(wavBlob, sourceLang === 'auto' ? undefined : sourceLang);
+      
+      if (transcription && transcription.trim()) {
+        Logger.info(`Local transcription result: ${transcription}`);
+        
+        // Update real-time transcription
+        appendNewTranscriptionSegment(transcription);
+        
+        // Translate if target language is selected
+        if (targetLang && targetLang !== 'auto') {
+          try {
+            const translation = await SpeechService.translateText(transcription, targetLang);
+            if (translation) {
+              setRealTimeTranslation(translation);
+              Logger.info(`Local translation result: ${translation}`);
+            }
+          } catch (translationError) {
+            Logger.error('Local translation error:', translationError);
+          }
+        }
+      } else {
+        Logger.warn('No transcription result from local engine');
+      }
+      
+      // Clear the buffer after processing
+      chunkBufferRef.current = [];
+      
+    } catch (error) {
+      Logger.error('Local transcription error:', error);
+      // Clear the buffer on error to prevent accumulation
+      chunkBufferRef.current = [];
+    }
+  };
 
   // Add a ref to track the current accumulated transcription
   const currentAccumulatedTextRef = useRef<string>('');
+
+  // Cleanup function for when component unmounts
+  useEffect(() => {
+    return () => {
+      Logger.info('🔄 Component unmounting - cleaning up resources');
+      
+      // Stop recording if active
+      if (isRecording) {
+        stopStreaming();
+      }
+      
+      // Keep WebSocket connection open for 1 minute for potential return
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        Logger.info('🔗 Keeping WebSocket connection open for 1 minute for potential return');
+        
+        // Set timeout to close connection after 1 minute
+        const closeTimeout = setTimeout(() => {
+          if (wsRef.current) {
+            Logger.info('🔗 Closing WebSocket connection after 1 minute timeout');
+            wsRef.current.close(1000, 'Component unmounting - timeout');
+            wsRef.current = null;
+          }
+        }, 60000); // 1 minute
+        
+        // Store the timeout reference for potential cleanup
+        wsTimeoutRef.current = closeTimeout;
+      }
+      
+      // Clear other timeouts
+      if (chunkBufferTimeoutRef.current) {
+        clearTimeout(chunkBufferTimeoutRef.current);
+      }
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+      }
+      
+      // Clear buffers
+      chunkBufferRef.current = [];
+      pendingChunksRef.current = [];
+      
+      Logger.info('✅ Cleanup completed - WebSocket kept open for 1 minute');
+    };
+  }, [isRecording]);
 
   // Initialize languages from route params if provided, otherwise use context values
   useEffect(() => {
@@ -226,6 +392,12 @@ export default function LiveTranslationScreen() {
       
       Logger.info('🎵 Initializing audio service...');
       
+      // Check transcription engine setting first
+      await checkTranscriptionEngine();
+      
+      // تهيئة خدمة الاتصال المبكر
+      earlyConnectionServiceRef.current = EarlyConnectionService.getInstance();
+      
       // إنشاء خدمة صوت جديدة
       const audioService = getAudioService();
       
@@ -240,13 +412,36 @@ export default function LiveTranslationScreen() {
       await audioService.init(audioConfig);
       audioServiceRef.current = audioService;
       
+      // التحقق من جاهزية المحرك الحالي عبر خدمة الاتصال المبكر
+      const isEngineReady = await earlyConnectionServiceRef.current.isCurrentEngineReady();
+      Logger.info(`[initAll] Current engine ready: ${isEngineReady}`);
+      
+      // Initialize WebSocket connection only if not using local transcription AND engine is Azure
+      if (!useLocalTranscription) {
+        const engine = await transcriptionEngineService.getCurrentEngine();
+        if (engine === 'azure') {
+          Logger.info('Azure engine detected, checking pre-established connection...');
+          
+          // التحقق من وجود WebSocket جاهز من الاتصال المبكر
+          const existingWs = earlyConnectionServiceRef.current.getAzureWebSocket();
+          if (existingWs) {
+            Logger.info('✅ Using pre-established Azure WebSocket connection');
+            wsRef.current = existingWs;
+          } else {
+            Logger.info('🔄 No pre-established connection, initializing new WebSocket...');
+            await initializeWebSocket();
+          }
+        } else {
+          Logger.info('Hugging Face engine detected, skipping WebSocket initialization');
+        }
+      }
+      
       setIsReady(true);
       Logger.info('✅ Audio service initialized successfully with Azure-compatible settings:', audioConfig);
+      Logger.info(`Using transcription engine: ${currentTranscriptionEngine}`);
     } catch (error) {
-      const errorMessage = error instanceof Error ? error.message : 'Unknown error';
-      Logger.error('❌ Failed to initialize audio service:', errorMessage);
-      setError(`فشل في تهيئة الصوت: ${errorMessage}`);
-      throw error; // إعادة رمي الخطأ لمعالجته في startStreaming
+      Logger.error('❌ Failed to initialize audio service:', error);
+      setError('Failed to initialize audio service. Please try again.');
     } finally {
       setIsInitializing(false);
     }
@@ -344,12 +539,102 @@ export default function LiveTranslationScreen() {
   };
 
   // دالة لتجميع وإرسال الـchunks
-  const sendBufferedChunks = () => {
+  const sendBufferedChunks = async () => {
     Logger.info(`[sendBufferedChunks] Called with ${chunkBufferRef.current.length} chunks in buffer`);
     if (chunkBufferRef.current.length === 0) {
       Logger.warn(`[sendBufferedChunks] No chunks to send`);
       return;
     }
+    
+    // التحقق من المحرك المستخدم أولاً
+    try {
+      const currentEngine = await transcriptionEngineService.getCurrentEngine();
+      Logger.info(`[sendBufferedChunks] Current engine: ${currentEngine}`);
+      
+      if (currentEngine === 'huggingface') {
+        // Hugging Face يستخدم HTTP API
+        await sendToHuggingFace();
+        return;
+      }
+    } catch (error) {
+      Logger.warn(`[sendBufferedChunks] Error checking engine, falling back to WebSocket:`, error);
+    }
+    
+    // Azure يستخدم WebSocket
+    sendToWebSocket();
+  };
+
+  // دالة إرسال البيانات إلى Hugging Face عبر HTTP API
+  const sendToHuggingFace = async () => {
+    const totalSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+    const combinedChunk = new Uint8Array(totalSize);
+    let offset = 0;
+    chunkBufferRef.current.forEach((chunk) => {
+      combinedChunk.set(chunk, offset);
+      offset += chunk.byteLength;
+    });
+    
+    if (combinedChunk.byteLength === 0) {
+      Logger.warn(`[sendToHuggingFace] Combined chunk is empty, skipping send`);
+      chunkBufferRef.current = [];
+      return;
+    }
+    
+    try {
+      Logger.info(`[sendToHuggingFace] 🚀 Sending ${combinedChunk.byteLength} bytes to Hugging Face API`);
+      
+      // تحويل البيانات إلى Blob
+      const audioBlob = new Blob([combinedChunk], { type: 'audio/wav' });
+      
+      // إرسال البيانات إلى Hugging Face
+      const transcription = await SpeechService.transcribeAudio(
+        audioBlob,
+        selectedTargetLanguage?.code || 'en',
+        false // لا نستخدم VAD في الوقت الحالي
+      );
+      
+      if (transcription) {
+        Logger.info(`[sendToHuggingFace] ✅ Transcription received: "${transcription}"`);
+        
+        // تحديث النص المترجم
+        if (isRealTimeMode) {
+          setRealTimeTranscription(transcription);
+          
+          // ترجمة النص إذا كان مطلوباً
+          if (selectedTargetLanguage?.code !== selectedSourceLanguage?.code) {
+            try {
+              const translation = await SpeechService.translateText(
+                transcription,
+                selectedSourceLanguage?.code || 'auto',
+                selectedTargetLanguage?.code || 'en'
+              );
+              if (translation) {
+                setRealTimeTranslation(translation);
+                Logger.info(`[sendToHuggingFace] ✅ Translation: "${translation}"`);
+              }
+            } catch (translationError) {
+              Logger.error(`[sendToHuggingFace] ❌ Translation failed:`, translationError);
+            }
+          }
+        } else {
+          // تحديث النص العادي
+          setCurrentSessionText(prev => ({
+            original: prev.original + (prev.original ? ' ' : '') + transcription,
+            translation: prev.translation
+          }));
+        }
+      }
+    } catch (error) {
+      Logger.error(`[sendToHuggingFace] ❌ Failed to send to Hugging Face:`, error);
+      setError('Failed to transcribe audio. Please try again.');
+    } finally {
+      chunkBufferRef.current = [];
+      Logger.info(`[sendToHuggingFace] Buffer cleared`);
+    }
+  };
+
+  // دالة إرسال البيانات إلى Azure عبر WebSocket
+  const sendToWebSocket = () => {
     const totalSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
     const combinedChunk = new Uint8Array(totalSize);
     let offset = 0;
@@ -360,14 +645,14 @@ export default function LiveTranslationScreen() {
     
     // Validate the combined chunk before sending
     if (combinedChunk.byteLength === 0) {
-      Logger.warn(`[sendBufferedChunks] Combined chunk is empty, skipping send`);
+      Logger.warn(`[sendToWebSocket] Combined chunk is empty, skipping send`);
       chunkBufferRef.current = [];
       return;
     }
     
     // Validate audio format (16-bit samples should be even number of bytes)
     if (combinedChunk.byteLength % 2 !== 0) {
-      Logger.warn(`[sendBufferedChunks] ⚠️ Audio chunk size not aligned to 16-bit samples: ${combinedChunk.byteLength} bytes`);
+      Logger.warn(`[sendToWebSocket] ⚠️ Audio chunk size not aligned to 16-bit samples: ${combinedChunk.byteLength} bytes`);
       // Pad with zero if needed
       const paddedChunk = new Uint8Array(combinedChunk.byteLength + 1);
       paddedChunk.set(combinedChunk);
@@ -376,19 +661,19 @@ export default function LiveTranslationScreen() {
         try {
           wsRef.current.send(paddedChunk);
           manageWebSocketTimeout();
-          Logger.info(`[sendBufferedChunks] ✅ Padded chunk sent successfully to Azure Speech SDK (${paddedChunk.byteLength} bytes)`);
+          Logger.info(`[sendToWebSocket] ✅ Padded chunk sent successfully to Azure Speech SDK (${paddedChunk.byteLength} bytes)`);
         } catch (sendError) {
-          Logger.error(`[sendBufferedChunks] ❌ Failed to send padded chunk:`, sendError);
+          Logger.error(`[sendToWebSocket] ❌ Failed to send padded chunk:`, sendError);
           pendingChunksRef.current.push(paddedChunk);
         }
       } else {
         pendingChunksRef.current.push(paddedChunk);
         const wsState = wsRef.current?.readyState;
         const wsStateText = wsState === 0 ? 'CONNECTING' : wsState === 1 ? 'OPEN' : wsState === 2 ? 'CLOSING' : wsState === 3 ? 'CLOSED' : 'UNKNOWN';
-        Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), padded chunk stored in pending queue`);
+        Logger.warn(`[sendToWebSocket] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), padded chunk stored in pending queue`);
       }
       chunkBufferRef.current = [];
-      Logger.info(`[sendBufferedChunks] Buffer cleared`);
+      Logger.info(`[sendToWebSocket] Buffer cleared`);
       return;
     }
     
@@ -398,19 +683,19 @@ export default function LiveTranslationScreen() {
         // Send the Uint8Array directly, not the buffer
         wsRef.current.send(combinedChunk);
         manageWebSocketTimeout();
-        Logger.info(`[sendBufferedChunks] ✅ Combined chunk sent successfully to Azure Speech SDK (${combinedChunk.byteLength} bytes)`);
+        Logger.info(`[sendToWebSocket] ✅ Combined chunk sent successfully to Azure Speech SDK (${combinedChunk.byteLength} bytes)`);
       } catch (sendError) {
-        Logger.error(`[sendBufferedChunks] ❌ Failed to send chunk:`, sendError);
+        Logger.error(`[sendToWebSocket] ❌ Failed to send chunk:`, sendError);
         pendingChunksRef.current.push(combinedChunk);
       }
     } else {
       pendingChunksRef.current.push(combinedChunk);
       const wsState = wsRef.current?.readyState;
       const wsStateText = wsState === 0 ? 'CONNECTING' : wsState === 1 ? 'OPEN' : wsState === 2 ? 'CLOSING' : wsState === 3 ? 'CLOSED' : 'UNKNOWN';
-      Logger.warn(`[sendBufferedChunks] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), combined chunk stored in pending queue`);
+      Logger.warn(`[sendToWebSocket] ⚠️ WebSocket not ready (state: ${wsState}/${wsStateText}), combined chunk stored in pending queue`);
     }
     chunkBufferRef.current = [];
-    Logger.info(`[sendBufferedChunks] Buffer cleared`);
+    Logger.info(`[sendToWebSocket] Buffer cleared`);
   };
 
   // Initialize WebSocket connection
@@ -430,7 +715,7 @@ export default function LiveTranslationScreen() {
       
       // إذا كان الاتصال مفتوح بالفعل، لا نحتاج لإنشاء جديد
       if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
-        Logger.info('✅ WebSocket already connected, skipping initialization');
+        Logger.info('✅ WebSocket already connected and ready, skipping initialization');
         return;
       }
       
@@ -460,9 +745,48 @@ export default function LiveTranslationScreen() {
       
       isConnectingRef.current = true;
       
-      Logger.info('🚀 Creating new WebSocket connection to prevent parallel requests...');
-      // استخدام السيرفر على Render
-      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+      // الحصول على المحرك الحالي وعنوان WebSocket المناسب
+      let wsUrl: string;
+      let connectionMessage: string;
+      
+      try {
+        const engine = await transcriptionEngineService.getCurrentEngine();
+        connectionMessage = await transcriptionEngineService.getConnectionMessage();
+        Logger.info(`🚀 Using transcription engine: ${engine}`);
+        
+        if (engine === 'huggingface') {
+          // Hugging Face لا يستخدم WebSocket، لذا نستخدم HTTP API
+          Logger.info('🔄 Hugging Face engine detected - using HTTP API instead of WebSocket');
+          isConnectingRef.current = false;
+          return; // لا نحتاج لإنشاء WebSocket
+        } else {
+          // Azure يستخدم WebSocket
+          wsUrl = await transcriptionEngineService.getWebSocketURL();
+        }
+      } catch (error) {
+        Logger.warn('⚠️ Error getting engine config:', error);
+        
+        // في حالة الخطأ، نتحقق من المحرك مرة أخرى
+        try {
+          const fallbackEngine = await transcriptionEngineService.getCurrentEngine();
+          if (fallbackEngine === 'huggingface') {
+            Logger.info('🔄 Fallback: Hugging Face engine detected - using HTTP API instead of WebSocket');
+            isConnectingRef.current = false;
+            return; // لا نحتاج لإنشاء WebSocket
+          }
+        } catch (fallbackError) {
+          Logger.warn('⚠️ Fallback engine check failed:', fallbackError);
+        }
+        
+        // فقط إذا لم يكن Hugging Face، نستخدم WebSocket الافتراضي
+        wsUrl = 'wss://ai-voicesum.onrender.com/ws';
+        connectionMessage = 'Connecting to Azure Speech...';
+      }
+      
+      Logger.info(`🚀 ${connectionMessage}`);
+      
+      // إنشاء اتصال WebSocket جديد
+      const ws = new WebSocket(wsUrl);
       
       ws.onopen = () => {
         Logger.info('✅ WebSocket connected successfully');
@@ -482,14 +806,6 @@ export default function LiveTranslationScreen() {
           pendingChunksRef.current = []; // تفريغ القائمة
         }
         
-        // تم حذف تنظيف AsyncStorage هنا
-        // if (Platform.OS !== 'web') {
-        //   AsyncStorage.removeItem('audio_cache').catch(() => {});
-        //   AsyncStorage.removeItem('transcription_cache').catch(() => {});
-        //   AsyncStorage.removeItem('translation_cache').catch(() => {});
-        //   Logger.info('WebSocket opened and cache cleared');
-        // }
-        
         // Validate and prepare language codes
         const supportedLanguages = SpeechService.getAvailableLanguages().map(lang => lang.code);
         
@@ -508,16 +824,14 @@ export default function LiveTranslationScreen() {
           return;
         }
         
-        Logger.info('Language configuration - Source:', sourceLang, '→', azureSourceLang, 'Target:', targetLang, '→', azureTargetLang);
-        
-        // Send initialization message with simplified configuration
+        // Send initialization message
         const initMessage = {
           type: 'init',
-          language: azureSourceLang, // null for auto detection, specific language code otherwise
+          language: azureSourceLang || 'auto',
           targetLanguage: azureTargetLang,
           clientSideTranslation: true,
-          realTimeMode: isRealTimeMode,
-          autoDetection: sourceLang === 'auto', // True only when auto detection is selected
+          realTimeMode: true,
+          autoDetection: azureSourceLang === null,
           audioConfig: {
             sampleRate: 16000,
             channels: 1,
@@ -526,8 +840,8 @@ export default function LiveTranslationScreen() {
           }
         };
         
+        Logger.info('📤 Sending init message:', JSON.stringify(initMessage, null, 2));
         ws.send(JSON.stringify(initMessage));
-        Logger.info('Init message sent with auto detection:', initMessage);
       };
       
       ws.onmessage = async (event) => {
@@ -749,6 +1063,11 @@ export default function LiveTranslationScreen() {
       Logger.info('🎙️ Starting audio streaming...');
       setShowSummaryButton(false); // Hide summary button when starting new recording
       
+      // Reset state for new recording session
+      setError(null);
+      setIsRecording(false);
+      setIsReady(false);
+      
       // 1. تأكد أن السيرفر متصل
       if (connectionStatus !== 'connected') {
         Logger.info('Server not connected, initializing connection...');
@@ -758,25 +1077,48 @@ export default function LiveTranslationScreen() {
       }
       
       // 2. إذا لم يكن AudioService جاهزًا، هيئه
-      if (!isReady) {
+      if (!isReady || !audioServiceRef.current) {
         Logger.info('Audio service not ready, initializing...');
         setIsInitializing(true);
         try {
           await initAll();
+          // Wait a bit for initialization to complete
+          await new Promise(resolve => setTimeout(resolve, 500));
         } catch (error) {
           Logger.error('Failed to initialize audio service:', error);
           setError('فشل في تهيئة الصوت. يرجى المحاولة مرة أخرى.');
           setIsInitializing(false);
           return;
+        } finally {
+          setIsInitializing(false);
         }
       }
       
-      // 3. إنشاء WebSocket connection إذا لم يكن موجوداً
+      // 3. إنشاء WebSocket connection إذا لم يكن موجوداً أو غير مفتوح
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         Logger.info('Creating WebSocket connection...');
         await initializeWebSocket();
-        // انتظار قصير للتأكد من الاتصال
-        await new Promise(resolve => setTimeout(resolve, 1000));
+        
+        // تحقق من المحرك الحالي
+        const currentEngine = await transcriptionEngineService.getCurrentEngine();
+        
+        if (currentEngine === 'huggingface') {
+          // Hugging Face لا يحتاج WebSocket
+          Logger.info('✅ Hugging Face engine - WebSocket not needed, proceeding with HTTP API');
+        } else {
+          // Azure يحتاج WebSocket
+          // انتظار قصير للتأكد من الاتصال
+          await new Promise(resolve => setTimeout(resolve, 1000));
+          
+          // تحقق إضافي من حالة الاتصال
+          if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+            Logger.error('❌ WebSocket connection failed to establish');
+            setError('فشل في الاتصال بالسيرفر. يرجى المحاولة مرة أخرى.');
+            return;
+          }
+        }
+      } else {
+        Logger.info('✅ WebSocket connection already open and ready');
       }
       
       // CRASH PREVENTION: Ensure audio service exists and is ready
@@ -833,39 +1175,56 @@ export default function LiveTranslationScreen() {
           return;
         }
         
-        // إضافة الـchunk إلى الـbuffer
-        chunkBufferRef.current.push(raw);
-        Logger.info(`[onData] 📦 Added chunk to buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
-        
-        // تحديد استراتيجية الإرسال بناءً على حجم البيانات - إرسال مستمر بدون timeout
-        const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-        const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio (تقليل الحجم للاستجابة الأسرع)
-        
-        // إرسال البيانات فوراً عند الوصول للحجم المطلوب (بدون timeout)
-        if (bufferSize >= targetBufferSize) {
-          Logger.info(`[onData] 🚀 Buffer size reached target (${bufferSize}/${targetBufferSize} bytes), sending immediately`);
-          sendBufferedChunks();
-          return;
-        }
-        
-        // إلغاء الـtimeout السابق للتجميع
-        if (chunkBufferTimeoutRef.current) {
-          clearTimeout(chunkBufferTimeoutRef.current);
-          Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
-        }
-        
-        // لا نستخدم timeout في الترجمة الفورية - فقط إرسال مباشر أو عند الإيقاف
-        if (!isRealTimeMode) {
-          // للتسجيل العادي فقط - استخدام timeout
-          const bufferTimeout = 2000; // 2 seconds for regular recording
-          chunkBufferTimeoutRef.current = setTimeout(() => {
-            Logger.info(`[onData] ⏰ Buffer timeout reached (${bufferTimeout}ms), calling sendBufferedChunks`);
-            sendBufferedChunks();
-          }, bufferTimeout);
+        // Handle local transcription if enabled
+        if (useLocalTranscription) {
+          // إضافة الـchunk إلى الـbuffer للنسخ المحلي
+          chunkBufferRef.current.push(raw);
+          Logger.info(`[onData] 📦 Added chunk to local buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
           
-          Logger.info(`[onData] ⏰ Set buffer timeout for regular mode: ${bufferTimeout}ms (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio
+          
+          // Process local transcription when buffer is full
+          if (bufferSize >= targetBufferSize) {
+            Logger.info(`[onData] 🚀 Local buffer size reached target (${bufferSize}/${targetBufferSize} bytes), processing locally`);
+            processLocalTranscription();
+            return;
+          }
         } else {
-          Logger.info(`[onData] 🔴 Real-time mode: No timeout, buffer will be sent only on size target or stop (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          // إضافة الـchunk إلى الـbuffer للـWebSocket
+          chunkBufferRef.current.push(raw);
+          Logger.info(`[onData] 📦 Added chunk to WebSocket buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
+          
+          // تحديد استراتيجية الإرسال بناءً على حجم البيانات - إرسال مستمر بدون timeout
+          const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio (تقليل الحجم للاستجابة الأسرع)
+          
+          // إرسال البيانات فوراً عند الوصول للحجم المطلوب (بدون timeout)
+          if (bufferSize >= targetBufferSize) {
+            Logger.info(`[onData] 🚀 Buffer size reached target (${bufferSize}/${targetBufferSize} bytes), sending immediately`);
+            sendBufferedChunks();
+            return;
+          }
+          
+          // إلغاء الـtimeout السابق للتجميع
+          if (chunkBufferTimeoutRef.current) {
+            clearTimeout(chunkBufferTimeoutRef.current);
+            Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
+          }
+          
+          // لا نستخدم timeout في الترجمة الفورية - فقط إرسال مباشر أو عند الإيقاف
+          if (!isRealTimeMode) {
+            // للتسجيل العادي فقط - استخدام timeout
+            const bufferTimeout = 2000; // 2 seconds for regular recording
+            chunkBufferTimeoutRef.current = setTimeout(() => {
+              Logger.info(`[onData] ⏰ Buffer timeout reached (${bufferTimeout}ms), calling sendBufferedChunks`);
+              sendBufferedChunks();
+            }, bufferTimeout);
+            
+            Logger.info(`[onData] ⏰ Set buffer timeout for regular mode: ${bufferTimeout}ms (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          } else {
+            Logger.info(`[onData] 🔴 Real-time mode: No timeout, buffer will be sent only on size target or stop (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          }
         }
       });
       
@@ -891,6 +1250,54 @@ export default function LiveTranslationScreen() {
         currentAccumulatedTextRef.current = ''; // Clear the accumulated text reference for new session
         Logger.info('[startStreaming] 🔴 Real-time mode: Cleared real-time data for new recording (keeping current session text)');
       }
+      
+      // Set up periodic local transcription processing if using local engine
+      if (useLocalTranscription) {
+        const localTranscriptionInterval = setInterval(async () => {
+          if (isRecording && chunkBufferRef.current.length > 0) {
+            const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+            if (bufferSize >= 16000) { // Process every ~0.5 seconds of audio
+              await processLocalTranscription();
+            }
+          }
+        }, 500); // Check every 500ms
+        
+        // Store the interval reference for cleanup
+        (window as any).localTranscriptionInterval = localTranscriptionInterval;
+        Logger.info('[startStreaming] 🔧 Set up periodic local transcription processing');
+      }
+      
+      // Check if WebSocket connection is still open and usable
+      if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+        Logger.info('[startStreaming] 🔗 WebSocket connection is still open and usable - reusing it');
+        // Don't close the connection, just clear the buffers
+      } else if (wsRef.current) {
+        // Close if exists but not in OPEN state
+        wsRef.current.close(1000, 'Starting new recording session');
+        wsRef.current = null;
+        Logger.info('[startStreaming] 🔄 Closed existing WebSocket connection for fresh start');
+      }
+      
+      // Clear all timeouts and buffers for fresh start
+      if (chunkBufferTimeoutRef.current) {
+        clearTimeout(chunkBufferTimeoutRef.current);
+        chunkBufferTimeoutRef.current = null;
+      }
+      if (wsTimeoutRef.current) {
+        clearTimeout(wsTimeoutRef.current);
+        wsTimeoutRef.current = null;
+      }
+      if (translationTimeoutRef.current) {
+        clearTimeout(translationTimeoutRef.current);
+        translationTimeoutRef.current = null;
+      }
+      
+      // Clear all buffers
+      chunkBufferRef.current = [];
+      pendingChunksRef.current = [];
+      isTranslatingRef.current.clear();
+      
+      Logger.info('[startStreaming] 🧹 Cleared all timeouts and buffers for fresh start');
       
       Logger.info(`[startStreaming] ✅ Live streaming started successfully (Real-time mode: ${isRealTimeMode})`);
     } catch (error) {
@@ -968,10 +1375,15 @@ export default function LiveTranslationScreen() {
     try {
       Logger.info('Stopping audio streaming...');
       
-      // إرسال أي chunks متبقية في الـbuffer قبل الإيقاف
+      // Handle remaining chunks based on transcription engine
       if (chunkBufferRef.current.length > 0) {
-        Logger.info(`[stopStreaming] 📤 Sending remaining ${chunkBufferRef.current.length} chunks before stopping`);
-        sendBufferedChunks();
+        if (useLocalTranscription) {
+          Logger.info(`[stopStreaming] 📤 Processing remaining ${chunkBufferRef.current.length} chunks with local engine`);
+          await processLocalTranscription();
+        } else {
+          Logger.info(`[stopStreaming] 📤 Sending remaining ${chunkBufferRef.current.length} chunks before stopping`);
+          sendBufferedChunks();
+        }
       }
       
       // CRASH PREVENTION: Safe audio stop with error handling
@@ -998,6 +1410,13 @@ export default function LiveTranslationScreen() {
         clearTimeout(chunkBufferTimeoutRef.current);
         chunkBufferTimeoutRef.current = null;
         Logger.info('Buffer timeout cleared');
+      }
+      
+      // Clear local transcription interval if using local engine
+      if (useLocalTranscription && (window as any).localTranscriptionInterval) {
+        clearInterval((window as any).localTranscriptionInterval);
+        (window as any).localTranscriptionInterval = null;
+        Logger.info('Local transcription interval cleared');
       }
       
       // إلغاء الـtimeout الحالي
@@ -1108,8 +1527,17 @@ export default function LiveTranslationScreen() {
             Logger.error('Failed to auto-save session:', error);
           }
           
-          Logger.info('Showing AI Summary button');
-          setShowSummaryButton(true);
+          // Show AI Summary button if there's content
+          const hasContent = (realTimeTranscription && realTimeTranscription.trim()) || 
+                           (currentSessionText.original && currentSessionText.original.trim()) ||
+                           transcriptions.length > 0;
+          
+          if (hasContent) {
+            Logger.info('Showing AI Summary button - content available');
+            setShowSummaryButton(true);
+          } else {
+            Logger.info('No content available - not showing AI Summary button');
+          }
         }
       }, 1000); // Wait 1 second for any final transcriptions
       
@@ -1517,7 +1945,25 @@ export default function LiveTranslationScreen() {
     <View style={{ flex: 1, backgroundColor: '#F9FAFB' }}> {/* Main container */}
       {/* Header */}
       <View style={{ backgroundColor: '#fff', shadowColor: '#000', shadowOpacity: 0.04, shadowRadius: 2, borderBottomWidth: 1, borderBottomColor: '#E5E7EB', paddingHorizontal: 16, paddingVertical: 16 }}> 
-        <Text style={{ fontSize: 20, fontWeight: '600', color: '#111827', textAlign: 'center' }}>Live Translation</Text>
+        <View style={{ flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between', marginBottom: 8 }}>
+          <Text style={{ fontSize: 20, fontWeight: '600', color: '#111827' }}>Live Translation</Text>
+          <TouchableOpacity
+            onPress={() => router.push('/(tabs)/live-translationwidth')}
+            style={{
+              backgroundColor: '#F3F4F6',
+              paddingHorizontal: 12,
+              paddingVertical: 8,
+              borderRadius: 12,
+              borderWidth: 1,
+              borderColor: '#E5E7EB',
+              flexDirection: 'row',
+              alignItems: 'center',
+            }}
+          >
+            <Icon name="view-module" size={16} color="#6B7280" style={{ marginRight: 6 }} />
+            <Text style={{ color: '#6B7280', fontSize: 12, fontWeight: '600' }}>Wide View</Text>
+          </TouchableOpacity>
+        </View>
         {/* Language Selection */}
         <View style={{ marginTop: 16 }}> 
           <View style={{ flexDirection: 'row', flexWrap: 'wrap', gap: 16 }}> 
@@ -1847,6 +2293,20 @@ export default function LiveTranslationScreen() {
       {/* AI Summary Button */}
       {showSummaryButton && !isRecording && (
         <View style={{ position: 'absolute', left: 0, right: 0, bottom: 0, backgroundColor: '#fff', borderTopWidth: 1, borderTopColor: '#E5E7EB', padding: 16, zIndex: 20 }}> 
+          <View style={{ flexDirection: 'row', alignItems: 'center', marginBottom: 12 }}>
+            <Text style={{ fontSize: 16, fontWeight: '600', color: '#333', flex: 1 }}>AI Summary Available</Text>
+            <TouchableOpacity
+              onPress={() => setShowSummaryButton(false)}
+              style={{
+                backgroundColor: '#6B7280',
+                paddingHorizontal: 12,
+                paddingVertical: 6,
+                borderRadius: 8,
+              }}
+            >
+              <Text style={{ color: '#fff', fontSize: 12, fontWeight: '500' }}>Dismiss</Text>
+            </TouchableOpacity>
+          </View>
           <TouchableOpacity
             style={{
               width: '100%',
@@ -1864,7 +2324,7 @@ export default function LiveTranslationScreen() {
             onPress={navigateToSummary}
           >
             <Text style={{ fontSize: 22, marginRight: 8 }}>🤖</Text>
-            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 18 }}>AI Summary</Text>
+            <Text style={{ color: '#fff', fontWeight: '600', fontSize: 18 }}>Generate AI Summary</Text>
           </TouchableOpacity>
         </View>
       )}

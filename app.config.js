@@ -1,19 +1,11 @@
-import 'dotenv/config';
-
-console.log("SUPABASE_URL", process.env.EXPO_PUBLIC_SUPABASE_URL);
-console.log("SUPABASE_ANON_KEY", process.env.EXPO_PUBLIC_SUPABASE_ANON_KEY);
-console.log("ASSEMBLYAI_API_KEY", process.env.EXPO_PUBLIC_ASSEMBLYAI_API_KEY);
-console.log("QWEN_API_KEY", process.env.EXPO_PUBLIC_QWEN_API_KEY);
-
-export default ({ config }) => ({
-  ...config,
+export default {
   expo: {
     name: "AI Live Translate",
     displayName: "AI Live Translate",
     slug: "live-translate",
     description: "AI Live Translate: Real-time and offline voice translation app powered by AI.",
     version: '6.6.0',
-    orientation: "portrait",
+    orientation: "default",
     icon: "./assets/images/logo.png",
     scheme: "myapp",
     userInterfaceStyle: "automatic",
@@ -21,7 +13,18 @@ export default ({ config }) => ({
     ios: {
       supportsTablet: true,
       infoPlist: {
-        NSFaceIDUsageDescription: "This app uses Face ID to securely sign you in"
+        NSFaceIDUsageDescription: "This app uses Face ID to securely sign you in",
+        UISupportedInterfaceOrientations: [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ],
+        "UISupportedInterfaceOrientations~ipad": [
+          "UIInterfaceOrientationPortrait",
+          "UIInterfaceOrientationPortraitUpsideDown",
+          "UIInterfaceOrientationLandscapeLeft",
+          "UIInterfaceOrientationLandscapeRight"
+        ]
       }
     },
     web: {
@@ -56,7 +59,12 @@ export default ({ config }) => ({
       allowBackup: true,
       usesCleartextTraffic: false,
       versionCode: 66,
-      versionName: '6.6.0'
+      versionName: '6.6.0',
+      screenOrientation: "sensor",
+      adaptiveIcon: {
+        foregroundImage: "./assets/images/logo.png",
+        backgroundColor: "#ffffff"
+      }
     },
     extra: {
       EXPO_PUBLIC_SUPABASE_URL: process.env.EXPO_PUBLIC_SUPABASE_URL,
@@ -77,4 +85,4 @@ export default ({ config }) => ({
       backgroundColor: "#ffffff"
     }
   }
-}); 
+};

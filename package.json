@@ -36,6 +36,7 @@
     "expo-status-bar": "~2.2.3",
     "express": "^5.1.0",
     "ffmpeg-static": "^5.2.0",
+    "form-data": "^4.0.4",
     "franc": "^6.2.0",
     "lucide-react-native": "^0.525.0",
     "microsoft-cognitiveservices-speech-sdk": "^1.45.0",

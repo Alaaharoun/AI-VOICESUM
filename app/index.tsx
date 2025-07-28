@@ -6,31 +6,31 @@ declare global {
   }
 }
 
-import { useEffect, useState, useRef } from 'react';
-import { router } from 'expo-router';
-import { useAuth } from '@/contexts/AuthContext';
-import { View, Text, ActivityIndicator } from 'react-native';
-import { ensureMicPermission } from '@/utils/permissionHelper';
-import AudioRecord from 'react-native-audio-record';
-import { checkEnvironmentVariables } from '@/utils/envChecker';
+import { useEffect } from 'react';
+import { Platform } from 'react-native';
+import { transcriptionEngineService } from '../services/transcriptionEngineService';
+import { EarlyConnectionService } from '../services/earlyConnectionService';
+
+// استيراد AudioRecord فقط في React Native
+let AudioRecord: any = null;
+if (Platform.OS !== 'web') {
+  try {
+    AudioRecord = require('react-native-audio-record').default;
+  } catch (e) {
+    console.warn('[Index] AudioRecord not available:', e);
+  }
+}
 
 export default function Index() {
-  const { user, loading } = useAuth();
-  const [fallback, setFallback] = useState(false);
-  const routedRef = useRef(false);
-
-  // تهيئة عامة (AudioRecord + WebSocket) عند أول دخول
   useEffect(() => {
-    // تحقق من متغيرات البيئة عند بدء الصفحة
-    checkEnvironmentVariables();
     (async () => {
       try {
-        const mic = await ensureMicPermission();
-        if (!mic) {
-          console.warn('[Index] Microphone permission not granted');
-          window.__LT_AUDIO_READY = false;
-        } else {
-          // تهيئة AudioRecord
+        // تهيئة AudioRecord (فقط في React Native)
+        if (Platform.OS === 'web') {
+          // في الويب، نستخدم Web Audio API بدلاً من AudioRecord
+          window.__LT_AUDIO_READY = true;
+          console.log('[Index] Web platform detected - using Web Audio API');
+        } else if (AudioRecord) {
           try {
             AudioRecord.init({
               sampleRate: 16000,
@@ -39,33 +39,47 @@ export default function Index() {
               wavFile: '',
             });
             window.__LT_AUDIO_READY = true;
+            console.log('[Index] ✅ AudioRecord initialized successfully');
           } catch (e) {
             window.__LT_AUDIO_READY = false;
             console.warn('[Index] AudioRecord init failed', e);
           }
+        } else {
+          window.__LT_AUDIO_READY = false;
+          console.warn('[Index] AudioRecord not available on this platform');
+        }
 
-          // فتح WebSocket
-          try {
-            if (!window.__LT_WS || window.__LT_WS.readyState !== 1) {
-              const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
-              window.__LT_WS = ws;
-              ws.onopen = () => {
-                console.log('[Index] WebSocket ready!');
-                window.__LT_WS_READY = true;
-              };
-              ws.onerror = (e) => {
-                console.warn('[Index] WebSocket error', e);
-                window.__LT_WS_READY = false;
-              };
-              ws.onclose = () => {
-                window.__LT_WS_READY = false;
-              };
+        // تهيئة الاتصال المبكر لجميع المحركات
+        try {
+          const earlyConnectionService = EarlyConnectionService.getInstance();
+          await earlyConnectionService.initializeEarlyConnections();
+          console.log('[Index] ✅ Early connections initialized successfully');
+        } catch (e) {
+          console.warn('[Index] Early connection initialization failed', e);
+        }
+
+        // فتح WebSocket حسب المحرك المحدد (فقط عند الحاجة)
+        try {
+          if (!window.__LT_WS || window.__LT_WS.readyState !== 1) {
+            // الحصول على المحرك الحالي
+            const engine = await transcriptionEngineService.getCurrentEngine();
+            
+            if (engine === 'huggingface') {
+              // Hugging Face لا يستخدم WebSocket، لذا نعتبره جاهز
+              console.log('[Index] Hugging Face engine detected - WebSocket not needed');
+              window.__LT_WS_READY = true;
+              window.__LT_WS = null; // لا نحتاج WebSocket
+            } else {
+              // Azure يستخدم WebSocket - لكن لا نفتحه تلقائياً
+              console.log('[Index] Azure engine detected - WebSocket will be opened when needed');
+              window.__LT_WS_READY = false; // سيتم فتحه عند الحاجة
+              window.__LT_WS = null;
             }
-          } catch (e) {
-            window.__LT_WS = null;
-            window.__LT_WS_READY = false;
-            console.warn('[Index] WebSocket init failed', e);
           }
+        } catch (e) {
+          window.__LT_WS = null;
+          window.__LT_WS_READY = false;
+          console.warn('[Index] Engine check failed', e);
         }
       } catch (err) {
         window.__LT_AUDIO_READY = false;
@@ -73,48 +87,7 @@ export default function Index() {
         console.warn('[Index] Mic permission or pre-connection failed', err);
       }
     })();
-    return () => {
-      if (window.__LT_WS) {
-        window.__LT_WS.close();
-        window.__LT_WS = null;
-        window.__LT_WS_READY = false;
-      }
-    };
   }, []);
 
-  useEffect(() => {
-    console.log('[Index] user:', user, 'loading:', loading);
-    if (!loading && !routedRef.current) {
-      routedRef.current = true;
-      if (user) {
-        console.log('[Index] Routing to /tabs');
-        router.replace('/(tabs)');
-      } else {
-        console.log('[Index] Routing to /auth/sign-in');
-        router.replace('/(auth)/sign-in');
-      }
-      // إذا لم يتم التوجيه خلال 3 ثواني، أظهر شاشة fallback
-      const timer = setTimeout(() => setFallback(true), 3000);
-      return () => clearTimeout(timer);
-    }
-  }, [user, loading]);
-
-  if (fallback) {
-    return (
-      <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#fff' }}>
-        <Text style={{ fontSize: 20, color: 'red', marginBottom: 16 }}>⚠️ لم يتم التوجيه لأي شاشة!</Text>
-        <Text style={{ fontSize: 16, color: '#333', marginBottom: 8 }}>user: {String(user)}</Text>
-        <Text style={{ fontSize: 16, color: '#333', marginBottom: 8 }}>loading: {String(loading)}</Text>
-        <Text style={{ fontSize: 14, color: '#666' }}>إذا رأيت هذه الشاشة، هناك مشكلة في التوجيه أو في Expo Router.</Text>
-      </View>
-    );
-  }
-
-  // Show loading screen while checking authentication
-  return (
-    <View style={{ flex: 1, justifyContent: 'center', alignItems: 'center', backgroundColor: '#F8FAFC' }}>
-      <ActivityIndicator size="large" color="#2563EB" />
-      <Text style={{ marginTop: 16, fontSize: 16, color: '#6B7280' }}>Loading...</Text>
-    </View>
-  );
+  return null;
 } 

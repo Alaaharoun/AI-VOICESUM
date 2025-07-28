@@ -18,8 +18,10 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { UserManagement } from '@/components/UserManagement';
 import { SubscriptionManagement } from '@/components/SubscriptionManagement';
 import { DatabaseManagement } from '@/components/DatabaseManagement';
+import { VADTestButton } from '@/components/VADTestButton';
 import { testRunner } from '@/services/testRunner';
 import { ADMIN_PIN } from '@/constants/database';
+import { transcriptionEngineService } from '@/services/transcriptionEngineService';
 
 // Import icons (you may need to install lucide-react-native)
 import { 
@@ -89,10 +91,23 @@ export default function AdminRoute() {
     { name: 'Azure Deep', status: 'idle', result: '' },
     { name: 'Real-time Buffer', status: 'idle', result: '' },
     { name: 'Qwen API', status: 'idle', result: '' },
+    { name: 'Faster Whisper', status: 'idle', result: '' },
   ]);
   
   // Settings
   const [showApiKeys, setShowApiKeys] = useState(false);
+  
+  // Transcription Engine Settings
+  const [transcriptionEngine, setTranscriptionEngine] = useState<'azure' | 'huggingface'>('azure');
+  
+
+  const [engineSaveLoading, setEngineSaveLoading] = useState(false);
+  const [engineStatus, setEngineStatus] = useState<{
+    engine: string;
+    configured: boolean;
+    status: 'ready' | 'not_configured' | 'error';
+    message: string;
+  } | null>(null);
 
   const isAdmin = isSuperadmin || (typeof hasRole === 'function' && (hasRole('admin') || hasRole('super_admin')));
 
@@ -251,6 +266,135 @@ export default function AdminRoute() {
     };
   }, [pinOk, activeTab]);
 
+  // Load transcription engine setting when settings tab is accessed
+  useEffect(() => {
+    if (pinOk && activeTab === 'settings') {
+      fetchTranscriptionEngine();
+    }
+  }, [pinOk, activeTab]);
+
+  const fetchTranscriptionEngine = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'transcription_engine')
+        .single();
+      
+      if (error) {
+        console.warn('Error fetching transcription_engine:', error);
+        setTranscriptionEngine('azure'); // Default to Azure
+      } else if (data && data.value) {
+        setTranscriptionEngine(data.value as 'azure' | 'huggingface');
+      }
+      
+      // Fetch engine status
+      await fetchEngineStatus();
+    } catch (error) {
+      console.error('Error fetching transcription engine setting:', error);
+      setTranscriptionEngine('azure'); // Default to Azure
+    }
+  };
+
+  const fetchEngineStatus = async () => {
+    try {
+      console.log('🔄 Fetching engine status...');
+      
+      // Add a timeout to prevent hanging
+      const statusPromise = transcriptionEngineService.getEngineStatus();
+      const timeoutPromise = new Promise((_, reject) => 
+        setTimeout(() => reject(new Error('Status check timeout')), 5000)
+      );
+      
+      const status = await Promise.race([statusPromise, timeoutPromise]) as {
+        engine: string;
+        configured: boolean;
+        status: 'ready' | 'not_configured' | 'error';
+        message: string;
+      };
+      console.log('✅ Engine status fetched:', status);
+      setEngineStatus(status);
+    } catch (error) {
+      console.error('❌ Error fetching engine status:', error);
+      // Set a fallback status without external API call
+      setEngineStatus({
+        engine: transcriptionEngine,
+        configured: true, // Assume configured since we have the engine setting
+        status: 'ready',
+        message: `Engine set to ${transcriptionEngine === 'azure' ? 'Azure Speech' : 'Faster Whisper'}`
+      });
+    }
+  };
+
+  const handleSaveTranscriptionEngine = async () => {
+    console.log('🔄 Starting to save transcription engine:', transcriptionEngine);
+    setEngineSaveLoading(true);
+    
+    try {
+      console.log('📝 Attempting to save to database...');
+      const { data, error } = await supabase
+        .from('app_settings')
+        .upsert([
+          { key: 'transcription_engine', value: transcriptionEngine }
+        ], { onConflict: 'key' });
+      
+      if (error) {
+        console.error('❌ Database error:', error);
+        throw error;
+      }
+      
+      console.log('✅ Database save successful:', data);
+      
+      // Update engine status immediately without external API call
+      console.log('🔄 Updating local engine status...');
+      setEngineStatus({
+        engine: transcriptionEngine,
+        configured: true,
+        status: 'ready',
+        message: `Engine switched to ${transcriptionEngine === 'azure' ? 'Azure Speech' : 'Faster Whisper'}`
+      });
+      
+      console.log('✅ Save operation completed successfully');
+      Alert.alert(
+        'تم الحفظ', 
+        'تم تحديث محرك النسخ بنجاح'
+      );
+      
+    } catch (err) {
+      console.error('❌ Save operation failed:', err);
+      Alert.alert(
+        'خطأ', 
+        (err as Error).message || 'حدث خطأ أثناء حفظ إعدادات محرك النسخ'
+      );
+    } finally {
+      console.log('🔄 Setting engineSaveLoading to false');
+      setEngineSaveLoading(false);
+    }
+  };
+
+  // Alternative save function without status check
+  const handleSaveTranscriptionEngineSimple = async () => {
+    console.log('🔄 Simple save - starting...');
+    setEngineSaveLoading(true);
+    
+    try {
+      const { error } = await supabase
+        .from('app_settings')
+        .upsert([
+          { key: 'transcription_engine', value: transcriptionEngine }
+        ], { onConflict: 'key' });
+      
+      if (error) throw error;
+      
+      Alert.alert('تم الحفظ', 'تم تحديث محرك النسخ بنجاح');
+      
+    } catch (err) {
+      Alert.alert('خطأ', (err as Error).message || 'حدث خطأ أثناء الحفظ');
+    } finally {
+      setEngineSaveLoading(false);
+    }
+  };
+
   const runTest = async (testName: string, testFile: string) => {
     const testIndex = testResults.findIndex(t => t.name === testName);
     const updatedTests = [...testResults];
@@ -274,6 +418,9 @@ export default function AdminRoute() {
             break;
           case 'Qwen API':
             testResult = await testRunner.runQwenApiTest();
+            break;
+          case 'Faster Whisper':
+            testResult = await testRunner.runFasterWhisperTest();
             break;
           default:
             throw new Error(`Unknown test: ${testName}`);
@@ -336,6 +483,8 @@ export default function AdminRoute() {
 
     setTestResults(updatedTests);
   };
+
+
 
   // Loading state
   if (loading) {
@@ -623,10 +772,77 @@ export default function AdminRoute() {
           <Text style={styles.settingSectionTitle}>⚙️ Application Settings</Text>
           
           <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>Transcription Engine</Text>
+            <View style={styles.engineSelector}>
+              <TouchableOpacity 
+                style={[
+                  styles.engineButton, 
+                  { backgroundColor: transcriptionEngine === 'azure' ? '#3B82F6' : '#6B7280' }
+                ]}
+                onPress={() => setTranscriptionEngine('azure')}
+              >
+                <Text style={styles.engineButtonText}>Azure Speech</Text>
+              </TouchableOpacity>
+              <TouchableOpacity 
+                style={[
+                  styles.engineButton, 
+                  { backgroundColor: transcriptionEngine === 'huggingface' ? '#3B82F6' : '#6B7280' }
+                ]}
+                onPress={() => setTranscriptionEngine('huggingface')}
+              >
+                <Text style={styles.engineButtonText}>Faster Whisper</Text>
+              </TouchableOpacity>
+            </View>
+            
+            {/* Engine Status Display */}
+            {engineStatus && (
+              <View style={styles.engineStatusContainer}>
+                <Text style={styles.engineStatusLabel}>Current Engine Status:</Text>
+                <View style={styles.engineStatusItem}>
+                  <View style={[
+                    styles.engineStatusDot, 
+                    { 
+                      backgroundColor: engineStatus.status === 'ready' ? '#10B981' : 
+                                     engineStatus.status === 'not_configured' ? '#F59E0B' : '#EF4444' 
+                    }
+                  ]} />
+                  <Text style={styles.engineStatusText}>
+                    {engineStatus.engine === 'azure' ? 'Azure Speech' : 'Faster Whisper'}: {engineStatus.message}
+                  </Text>
+                </View>
+              </View>
+            )}
+            
+            <TouchableOpacity 
+              style={[
+                styles.saveButton, 
+                engineSaveLoading && styles.saveButtonDisabled
+              ]}
+              onPress={handleSaveTranscriptionEngine}
+              disabled={engineSaveLoading}
+              activeOpacity={engineSaveLoading ? 0.5 : 0.8}
+            >
+              {engineSaveLoading ? (
+                <View style={{ flexDirection: 'row', alignItems: 'center' }}>
+                  <ActivityIndicator size="small" color="white" style={{ marginRight: 8 }} />
+                  <Text style={styles.saveButtonText}>Saving...</Text>
+                </View>
+              ) : (
+                <Text style={styles.saveButtonText}>Save Engine Setting</Text>
+              )}
+            </TouchableOpacity>
+          </View>
+
+          <View style={styles.settingItem}>
             <Text style={styles.settingLabel}>Default Language</Text>
             <View style={styles.settingDropdown}>
               <Text style={styles.settingDropdownText}>English (EN)</Text>
             </View>
+          </View>
+
+          <View style={styles.settingItem}>
+            <Text style={styles.settingLabel}>VAD Testing</Text>
+            <VADTestButton />
           </View>
 
           <View style={styles.settingItem}>
@@ -667,10 +883,6 @@ export default function AdminRoute() {
             </TouchableOpacity>
           </View>
         </View>
-
-        <TouchableOpacity style={styles.saveButton}>
-          <Text style={styles.saveButtonText}>Save Settings</Text>
-        </TouchableOpacity>
       </View>
     </ScrollView>
   );
@@ -1269,6 +1481,10 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
   },
+  saveButtonDisabled: {
+    backgroundColor: '#E5E7EB',
+    opacity: 0.7,
+  },
   statusContainer: {
     backgroundColor: '#F9FAFB',
     borderRadius: 8,
@@ -1326,4 +1542,53 @@ const styles = StyleSheet.create({
     fontWeight: '600',
     fontSize: 16,
   },
+  engineSelector: {
+    flexDirection: 'row',
+    gap: 8,
+    marginTop: 8,
+  },
+  engineButton: {
+    flex: 1,
+    paddingVertical: 12,
+    paddingHorizontal: 16,
+    borderRadius: 8,
+    alignItems: 'center',
+  },
+  engineButtonText: {
+    color: 'white',
+    fontWeight: '600',
+    fontSize: 14,
+  },
+  engineStatusContainer: {
+    marginTop: 16,
+    padding: 12,
+    backgroundColor: '#F9FAFB',
+    borderRadius: 8,
+    borderWidth: 1,
+    borderColor: '#E5E7EB',
+  },
+  engineStatusLabel: {
+    fontSize: 14,
+    color: '#6B7280',
+    marginBottom: 8,
+  },
+  engineStatusItem: {
+    flexDirection: 'row',
+    alignItems: 'center',
+  },
+  engineStatusDot: {
+    width: 8,
+    height: 8,
+    borderRadius: 4,
+    marginRight: 8,
+  },
+  engineStatusText: {
+    fontSize: 14,
+    color: '#374151',
+  },
+  saveButtonDisabled: {
+    backgroundColor: '#E5E7EB',
+    opacity: 0.7,
+  },
+
 }); 

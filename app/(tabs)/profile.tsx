@@ -13,6 +13,7 @@ import {
   Switch,
   TextInput,
   Share,
+  RefreshControl,
 } from 'react-native';
 import { router } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -265,6 +266,7 @@ export default function ProfileScreen() {
   const [rateUsUrl, setRateUsUrl] = useState('');
   const [shareAppUrl, setShareAppUrl] = useState('');
   const [signingOut, setSigningOut] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
   const isWeb = Platform.OS === 'web';
 
   useEffect(() => {
@@ -300,6 +302,46 @@ export default function ProfileScreen() {
     };
     fetchPaidUsage();
   }, [user, checkSubscription, subscriptionType]);
+
+  // وظيفة التحديث
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // إعادة فحص الاشتراك
+      await checkSubscription();
+      
+      // إعادة تحميل بيانات الاستخدام المدفوع
+      if (user && isSubscribed && subscriptionType !== 'yearly') {
+        const { data, error } = await supabase
+          .from('user_subscriptions')
+          .select('usage_seconds, subscription_type')
+          .eq('user_id', user.id)
+          .eq('active', true)
+          .gt('expires_at', new Date().toISOString())
+          .single();
+        
+        if (!error && data) {
+          let totalMinutes = 0;
+          if (data.subscription_type === 'transcription_2.5hr') totalMinutes = 150;
+          else if (data.subscription_type === 'transcription_5hr') totalMinutes = 300;
+          
+          const usedMinutes = Math.floor((data.usage_seconds || 0) / 60);
+          setRemainingPaidMinutes(Math.max(0, totalMinutes - usedMinutes));
+        }
+      }
+      
+      // إعادة فحص الأذونات
+      await checkAllPermissions();
+      
+      // تأخير صغير لتحسين تجربة المستخدم
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+    } catch (error) {
+      console.error('Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   useEffect(() => {
     const fetchLinks = async () => {
@@ -365,11 +407,7 @@ export default function ProfileScreen() {
     ]);
   };
 
-  useEffect(() => {
-    if (!user && !signingOut) {
-      router.replace('/(auth)/sign-in');
-    }
-  }, [user, signingOut]);
+  // AuthGuard handles authentication redirects, so we don't need this here
 
   const checkMicPermission = async () => {
     if (Platform.OS === 'android') {
@@ -496,7 +534,20 @@ export default function ProfileScreen() {
 
   try {
     return (
-      <ScrollView style={styles.container}>
+      <ScrollView 
+        style={styles.container}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3B82F6"
+            title="Pull to refresh"
+            titleColor="#6B7280"
+            colors={["#3B82F6"]}
+            progressBackgroundColor="#F8FAFC"
+          />
+        }
+      >
         <View style={styles.header}>
           <View style={styles.avatarContainer}>
             <View style={styles.avatar}>

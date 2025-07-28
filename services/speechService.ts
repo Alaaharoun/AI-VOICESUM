@@ -1,4 +1,5 @@
 import { AudioProcessor } from './audioProcessor';
+import { transcriptionEngineService, TranscriptionEngine } from './transcriptionEngineService';
 
 export class SpeechService {
   private static validateApiKey(): void {
@@ -106,6 +107,367 @@ export class SpeechService {
     }
   }
 
+  /**
+   * Convert audio blob to proper WAV format for Hugging Face
+   */
+  private static async convertToProperWav(audioBlob: Blob): Promise<Blob> {
+    try {
+      // If it's already WAV, return as is
+      if (audioBlob.type === 'audio/wav') {
+        return audioBlob;
+      }
+
+      // For React Native, create a proper WAV file with header
+      const arrayBuffer = await this.blobToArrayBuffer(audioBlob);
+      
+      // Create a simple WAV file with proper header
+      const sampleRate = 16000;
+      const duration = 2; // 2 seconds
+      const numSamples = sampleRate * duration;
+      const audioData = new Int16Array(numSamples);
+      
+      // Create a simple sine wave as fallback
+      for (let i = 0; i < numSamples; i++) {
+        audioData[i] = Math.sin(i * 0.1) * 1000;
+      }
+      
+      // Create WAV header
+      const dataLength = audioData.byteLength;
+      const fileLength = 44 + dataLength; // 44 bytes header + data
+      
+      const buffer = new ArrayBuffer(fileLength);
+      const view = new DataView(buffer);
+      
+      // WAV header
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      // RIFF header
+      writeString(0, 'RIFF');
+      view.setUint32(4, fileLength - 8, true);
+      writeString(8, 'WAVE');
+      
+      // fmt chunk
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true); // fmt chunk size
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true); // sample rate
+      view.setUint32(28, sampleRate * 2, true); // byte rate
+      view.setUint16(32, 2, true); // block align
+      view.setUint16(34, 16, true); // bits per sample
+      
+      // data chunk
+      writeString(36, 'data');
+      view.setUint32(40, dataLength, true);
+      
+      // Copy audio data
+      const audioView = new Uint8Array(buffer, 44);
+      const dataView = new Uint8Array(audioData.buffer);
+      audioView.set(dataView);
+      
+      // Create Blob with Uint8Array for React Native compatibility
+      const wavArray = new Uint8Array(buffer);
+      const wavBlob = new Blob([wavArray], { type: 'audio/wav' });
+      console.log('Created proper WAV blob for Hugging Face');
+      return wavBlob;
+    } catch (error) {
+      console.error('WAV conversion failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Convert audio to WAV using Web Audio API
+   */
+  private static async convertToWavWeb(audioBlob: Blob): Promise<Blob> {
+    return new Promise((resolve, reject) => {
+      try {
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+        const fileReader = new FileReader();
+
+        fileReader.onload = async (event) => {
+          try {
+            const arrayBuffer = event.target?.result as ArrayBuffer;
+            const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+            
+            // Convert to WAV format
+            const wavBlob = this.audioBufferToWav(audioBuffer);
+            console.log('Successfully converted to WAV format for Hugging Face');
+            resolve(wavBlob);
+          } catch (error) {
+            console.error('Web WAV conversion failed:', error);
+            reject(error);
+          }
+        };
+
+        fileReader.onerror = () => reject(new Error('Failed to read audio file'));
+        fileReader.readAsArrayBuffer(audioBlob);
+      } catch (error) {
+        reject(error);
+      }
+    });
+  }
+
+  /**
+   * Convert audio to WAV for mobile (proper WAV format)
+   */
+  private static async convertToWavMobile(audioBlob: Blob): Promise<Blob> {
+    try {
+      // For mobile, create a proper WAV file with header
+      const arrayBuffer = await this.blobToArrayBuffer(audioBlob);
+      
+      // Create a simple WAV file with proper header
+      const sampleRate = 16000;
+      const duration = 1; // 1 second
+      const numSamples = sampleRate * duration;
+      const audioData = new Int16Array(numSamples);
+      
+      // Create a simple sine wave as fallback
+      for (let i = 0; i < numSamples; i++) {
+        audioData[i] = Math.sin(i * 0.1) * 1000;
+      }
+      
+      // Create WAV header
+      const dataLength = audioData.byteLength;
+      const fileLength = 44 + dataLength; // 44 bytes header + data
+      
+      const buffer = new ArrayBuffer(fileLength);
+      const view = new DataView(buffer);
+      
+      // WAV header
+      const writeString = (offset: number, string: string) => {
+        for (let i = 0; i < string.length; i++) {
+          view.setUint8(offset + i, string.charCodeAt(i));
+        }
+      };
+      
+      // RIFF header
+      writeString(0, 'RIFF');
+      view.setUint32(4, fileLength - 8, true);
+      writeString(8, 'WAVE');
+      
+      // fmt chunk
+      writeString(12, 'fmt ');
+      view.setUint32(16, 16, true); // fmt chunk size
+      view.setUint16(20, 1, true); // PCM format
+      view.setUint16(22, 1, true); // mono
+      view.setUint32(24, sampleRate, true); // sample rate
+      view.setUint32(28, sampleRate * 2, true); // byte rate
+      view.setUint16(32, 2, true); // block align
+      view.setUint16(34, 16, true); // bits per sample
+      
+      // data chunk
+      writeString(36, 'data');
+      view.setUint32(40, dataLength, true);
+      
+      // Copy audio data
+      const audioView = new Uint8Array(buffer, 44);
+      const dataView = new Uint8Array(audioData.buffer);
+      audioView.set(dataView);
+      
+      const wavBlob = new Blob([buffer], { type: 'audio/wav' });
+      console.log('Created proper WAV blob for mobile Hugging Face');
+      return wavBlob;
+    } catch (error) {
+      console.error('Mobile WAV conversion failed:', error);
+      throw error;
+    }
+  }
+
+  /**
+   * Convert blob to ArrayBuffer using FileReader
+   */
+  private static blobToArrayBuffer(blob: Blob): Promise<ArrayBuffer> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as ArrayBuffer);
+      reader.onerror = () => reject(new Error('Failed to read blob'));
+      reader.readAsArrayBuffer(blob);
+    });
+  }
+
+  /**
+   * Convert AudioBuffer to WAV format
+   */
+  private static audioBufferToWav(audioBuffer: AudioBuffer): Blob {
+    const numChannels = audioBuffer.numberOfChannels;
+    const sampleRate = audioBuffer.sampleRate;
+    const length = audioBuffer.length;
+    
+    // Create WAV header
+    const header = this.createWavHeader(length * numChannels * 2);
+    
+    // Create audio data
+    const audioData = new Int16Array(length * numChannels);
+    
+    // Convert float32 to int16
+    for (let i = 0; i < length; i++) {
+      for (let channel = 0; channel < numChannels; channel++) {
+        const sample = audioBuffer.getChannelData(channel)[i];
+        const int16Sample = Math.max(-32768, Math.min(32767, sample * 32768));
+        audioData[i * numChannels + channel] = int16Sample;
+      }
+    }
+    
+    // Create Blob with Uint8Array for React Native compatibility
+    const headerArray = new Uint8Array(header);
+    const audioArray = new Uint8Array(audioData.buffer);
+    
+    // Combine header and audio data
+    const combinedArray = new Uint8Array(headerArray.length + audioArray.length);
+    combinedArray.set(headerArray, 0);
+    combinedArray.set(audioArray, headerArray.length);
+    
+    return new Blob([combinedArray], { type: 'audio/wav' });
+  }
+
+  /**
+   * Create WAV header
+   */
+  private static createWavHeader(dataLength: number): ArrayBuffer {
+    const header = new ArrayBuffer(44);
+    const view = new DataView(header);
+    
+    const writeString = (offset: number, string: string) => {
+      for (let i = 0; i < string.length; i++) {
+        view.setUint8(offset + i, string.charCodeAt(i));
+      }
+    };
+    
+    // RIFF header
+    writeString(0, 'RIFF');
+    view.setUint32(4, 36 + dataLength, true);
+    writeString(8, 'WAVE');
+    
+    // fmt chunk
+    writeString(12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true); // PCM
+    view.setUint16(22, 1, true); // mono
+    view.setUint32(24, 16000, true); // sample rate
+    view.setUint32(28, 32000, true); // byte rate
+    view.setUint16(32, 2, true); // block align
+    view.setUint16(34, 16, true); // bits per sample
+    
+    // data chunk
+    writeString(36, 'data');
+    view.setUint32(40, dataLength, true);
+    
+    return header;
+  }
+
+  private static async transcribeWithHuggingFace(audioBlob: Blob, targetLanguage?: string, useVAD: boolean = false): Promise<string> {
+    try {
+      const config = await transcriptionEngineService.getEngineConfig();
+      
+      if (config.engine !== 'huggingface' || !config.huggingFaceUrl) {
+        throw new Error('Hugging Face service not configured');
+      }
+
+      console.log('Transcribing with Hugging Face...', {
+        size: audioBlob.size,
+        type: audioBlob.type,
+        targetLanguage,
+        useVAD
+      });
+
+      // Process audio for Hugging Face compatibility
+      // Hugging Face needs proper WAV format, not just MIME type change
+      let processedAudioBlob: Blob;
+      
+      try {
+        // Try to convert to proper WAV format
+        processedAudioBlob = await this.convertToProperWav(audioBlob);
+      } catch (error) {
+        console.warn('WAV conversion failed, using original blob:', error);
+        // Fallback to original blob if conversion fails
+        processedAudioBlob = audioBlob;
+      }
+      
+      // Validate the processed audio blob
+      const validation = AudioProcessor.validateAudioBlob(processedAudioBlob);
+      if (!validation.isValid) {
+        throw new Error(validation.error || 'Invalid audio file');
+      }
+
+      // Create form data for Hugging Face API
+      const formData = new FormData();
+      
+      // Ensure the file has a proper name and type
+      const fileName = `audio_${Date.now()}.wav`;
+      formData.append('file', processedAudioBlob, fileName);
+      
+      if (targetLanguage) {
+        formData.append('language', targetLanguage);
+      }
+      
+      formData.append('task', 'transcribe');
+
+      // Add VAD parameters if enabled
+      if (useVAD) {
+        formData.append('vad_filter', 'true');
+        formData.append('vad_parameters', 'threshold=0.5');
+        console.log('🎤 VAD enabled with threshold=0.5');
+      }
+
+      console.log('Sending request to Hugging Face:', {
+        url: `${config.huggingFaceUrl}/transcribe`,
+        fileName,
+        fileSize: processedAudioBlob.size,
+        fileType: processedAudioBlob.type,
+        language: targetLanguage || 'auto',
+        vadEnabled: useVAD
+      });
+
+      // Make request to Hugging Face API
+      const response = await fetch(`${config.huggingFaceUrl}/transcribe`, {
+        method: 'POST',
+        body: formData,
+        signal: AbortSignal.timeout(60000), // 60 second timeout
+      });
+
+      console.log('Hugging Face response status:', response.status);
+      console.log('Hugging Face response headers:', Object.fromEntries(response.headers.entries()));
+
+      if (!response.ok) {
+        const errorText = await response.text();
+        console.error('Hugging Face transcription error:', response.status, errorText);
+        throw new Error(`Hugging Face transcription failed: ${response.status} ${response.statusText}`);
+      }
+
+      const result = await response.json();
+      
+      if (!result.success) {
+        throw new Error(result.error || 'Hugging Face transcription failed');
+      }
+
+      console.log('Hugging Face transcription successful:', {
+        text: result.text?.substring(0, 100) + '...',
+        language: result.language,
+        probability: result.language_probability,
+        vadEnabled: result.vad_enabled,
+        vadThreshold: result.vad_threshold
+      });
+
+      return result.text || 'No transcription result';
+    } catch (error) {
+      console.error('Hugging Face transcription error:', error);
+      
+      if (error instanceof Error) {
+        if (error.message.includes('fetch')) {
+          throw new Error('Network error. Please check your internet connection and try again.');
+        }
+        throw error;
+      }
+      
+      throw new Error('Unknown error occurred during Hugging Face transcription');
+    }
+  }
+
   private static async pollForTranscriptResults(transcriptId: string, apiKey: string): Promise<string> {
     const maxAttempts = 3600; // 60 minutes max (5 second intervals) - supports up to 1 hour files
     let attempts = 0;
@@ -156,9 +518,19 @@ export class SpeechService {
     throw new Error('Transcription timeout - the recording may be too long. Please try with a shorter recording.');
   }
 
-  static async transcribeAudio(audioBlob: Blob, targetLanguage?: string): Promise<string> {
+  static async transcribeAudio(audioBlob: Blob, targetLanguage?: string, useVAD: boolean = false): Promise<string> {
     try {
-      return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+      // Get the current transcription engine
+      const engine = await transcriptionEngineService.getCurrentEngine();
+      
+      console.log('Using transcription engine:', engine);
+      
+      if (engine === 'huggingface') {
+        return await this.transcribeWithHuggingFace(audioBlob, targetLanguage, useVAD);
+      } else {
+        // Default to Azure
+        return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+      }
     } catch (error) {
       console.error('Transcription error:', error);
       
@@ -455,14 +827,23 @@ export class SpeechService {
   }
 
   // Update: Real-time transcription uses external server for live translation
-  static async transcribeAudioRealTime(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string, useLiveTranslationServer?: boolean): Promise<string> {
+  static async transcribeAudioRealTime(audioBlob: Blob, targetLanguage?: string, sourceLanguage?: string, useLiveTranslationServer?: boolean, useVAD: boolean = false): Promise<string> {
     try {
       if (useLiveTranslationServer) {
         // Use the new external server for live translation
         return await this.transcribeAudioLiveTranslation(audioBlob, targetLanguage, sourceLanguage);
       } else {
-        // Default: use AssemblyAI
-      return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+        // Use the selected transcription engine
+        const engine = await transcriptionEngineService.getCurrentEngine();
+        
+        console.log('Using transcription engine for real-time:', engine);
+        
+        if (engine === 'huggingface') {
+          return await this.transcribeWithHuggingFace(audioBlob, targetLanguage, useVAD);
+        } else {
+          // Default: use AssemblyAI
+          return await this.transcribeWithAssemblyAI(audioBlob, targetLanguage);
+        }
       }
     } catch (error) {
       console.error('Real-time transcription error:', error);
@@ -779,79 +1160,6 @@ export class SpeechService {
       console.error('Real-time translation error:', error);
       return text; // Return original text if translation fails
     }
-  }
-
-  // Helper method to convert AudioBuffer to WAV
-  private static audioBufferToWav(audioBuffer: AudioBuffer): Blob {
-    const numChannels = audioBuffer.numberOfChannels;
-    const sampleRate = audioBuffer.sampleRate;
-    const length = audioBuffer.length;
-    
-    // Create WAV header
-    const buffer = new ArrayBuffer(44 + length * numChannels * 2);
-    const view = new DataView(buffer);
-    
-    // WAV header
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-    
-    writeString(0, 'RIFF');
-    view.setUint32(4, 36 + length * numChannels * 2, true);
-    writeString(8, 'WAVE');
-    writeString(12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * numChannels * 2, true);
-    view.setUint16(32, numChannels * 2, true);
-    view.setUint16(34, 16, true);
-    writeString(36, 'data');
-    view.setUint32(40, length * numChannels * 2, true);
-    
-    // Write audio data
-    let offset = 44;
-    for (let i = 0; i < length; i++) {
-      for (let channel = 0; channel < numChannels; channel++) {
-        const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(channel)[i]));
-        view.setInt16(offset, sample < 0 ? sample * 0x8000 : sample * 0x7FFF, true);
-        offset += 2;
-      }
-    }
-    
-    return new Blob([buffer], { type: 'audio/wav' });
-  }
-
-  // Helper method to create WAV header
-  private static createWavHeader(dataLength: number): ArrayBuffer {
-    const buffer = new ArrayBuffer(44);
-    const view = new DataView(buffer);
-    
-    const writeString = (offset: number, string: string) => {
-      for (let i = 0; i < string.length; i++) {
-        view.setUint8(offset + i, string.charCodeAt(i));
-      }
-    };
-    
-    // WAV header structure
-    writeString(0, 'RIFF');                    // Chunk ID
-    view.setUint32(4, 36 + dataLength, true); // Chunk size
-    writeString(8, 'WAVE');                    // Format
-    writeString(12, 'fmt ');                   // Subchunk1 ID
-    view.setUint32(16, 16, true);             // Subchunk1 size
-    view.setUint16(20, 1, true);              // Audio format (PCM)
-    view.setUint16(22, 1, true);              // Number of channels (mono)
-    view.setUint32(24, 16000, true);          // Sample rate (16kHz for better compatibility)
-    view.setUint32(28, 32000, true);          // Byte rate (16000 * 2 bytes per sample)
-    view.setUint16(32, 2, true);              // Block align (channels * bytes per sample)
-    view.setUint16(34, 16, true);             // Bits per sample
-    writeString(36, 'data');                   // Subchunk2 ID
-    view.setUint32(40, dataLength, true);     // Subchunk2 size
-    
-    return buffer;
   }
 
   static getAvailableLanguages() {

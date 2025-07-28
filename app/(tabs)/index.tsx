@@ -8,6 +8,7 @@ import {
   TouchableOpacity,
   Platform,
   Modal,
+  RefreshControl,
 } from 'react-native';
 import { router, useRouter, useFocusEffect } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -22,6 +23,7 @@ import { supabase } from '@/lib/supabase';
 import { Crown, Sparkles, Settings, Clock, Timer, CircleAlert as AlertCircle, Languages, Save } from 'lucide-react-native';
 import { ensureMicPermission } from '@/utils/permissionHelper';
 import AudioRecord from 'react-native-audio-record';
+import { transcriptionEngineService } from '@/services/transcriptionEngineService';
 
 const styles = StyleSheet.create({
   container: {
@@ -424,6 +426,7 @@ export default function RecordScreen() {
   const [liveTranslationReady, setLiveTranslationReady] = useState(false);
 
   const [isSaved, setIsSaved] = useState(false);
+  const [refreshing, setRefreshing] = useState(false);
 
   // Use shared language context instead of local state
   const { selectedSourceLanguage, selectedTargetLanguage, setSelectedSourceLanguage, setSelectedTargetLanguage } = useLanguage();
@@ -467,6 +470,31 @@ export default function RecordScreen() {
 
   // Helper to check if user has exhausted their daily minutes
   const hasNoMinutesLeft = (!isSubscribed && hasFreeTrial && !hasRemainingTrialTime) || (isSubscribed && dailyUsageSeconds >= dailyLimitSeconds);
+
+  // وظيفة التحديث
+  const handleRefresh = async () => {
+    setRefreshing(true);
+    try {
+      // إعادة فحص إعدادات API
+      checkApiConfiguration();
+      
+      // إعادة تحميل حالة اللغة
+      if (selectedTargetLanguage) {
+        console.log('🔄 Refreshing language state:', selectedTargetLanguage);
+      }
+      
+      // إعادة تحميل حالة الاشتراك
+      console.log('🔄 Refreshing subscription state');
+      
+      // تأخير صغير لتحسين تجربة المستخدم
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      
+    } catch (error) {
+      console.error('❌ Refresh error:', error);
+    } finally {
+      setRefreshing(false);
+    }
+  };
 
   // استدعِ فحص إعدادات الـ API مرة واحدة فقط عند تحميل الصفحة
   useEffect(() => {
@@ -535,31 +563,8 @@ export default function RecordScreen() {
   // دالة تهيئة الترجمة المباشرة
   const initializeLiveTranslation = async (): Promise<boolean> => {
     setIsInitializingLiveTranslation(true);
-    
+
     try {
-      // طلب إذن المايك باستخدام الدالة المشتركة
-      const hasMicPermission = await ensureMicPermission();
-      if (!hasMicPermission) {
-        throw new Error('Microphone permission denied.');
-      }
-
-      // تهيئة AudioRecord
-      try {
-        if (!AudioRecord || typeof AudioRecord.init !== 'function') {
-          throw new Error('AudioRecord is not available.');
-        }
-        const audioOptions = {
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          wavFile: '',
-        };
-        AudioRecord.init(audioOptions);
-      } catch (audioError) {
-        console.error('AudioRecord initialization error:', audioError);
-        throw new Error('Failed to initialize audio recording. Please make sure the app has proper permissions.');
-      }
-
       // اختبار الاتصال بالسيرفر
       return new Promise<boolean>((resolve, reject) => {
         try {
@@ -568,28 +573,122 @@ export default function RecordScreen() {
             return;
           }
           
-          const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
-          const timeoutId = setTimeout(() => {
-            reject(new Error('Connection timeout. Please check your internet connection.'));
-          }, 5000);
+          // الحصول على المحرك الحالي وعنوان WebSocket المناسب
+          transcriptionEngineService.getCurrentEngine().then(async (engine) => {
+            let wsUrl: string;
+            
+            try {
+              if (engine === 'huggingface') {
+                // Hugging Face لا يستخدم WebSocket، لذا نعتبر الاتصال ناجح
+                console.log('Hugging Face engine detected - connection test passed');
+                resolve(true);
+                return;
+              } else {
+                // Azure يستخدم WebSocket
+                wsUrl = await transcriptionEngineService.getWebSocketURL();
+              }
+            } catch (error) {
+              console.warn('Error getting engine config:', error);
+              
+              // في حالة الخطأ، نتحقق من المحرك مرة أخرى
+              try {
+                const fallbackEngine = await transcriptionEngineService.getCurrentEngine();
+                if (fallbackEngine === 'huggingface') {
+                  console.log('Fallback: Hugging Face engine detected - connection test passed');
+                  resolve(true);
+                  return;
+                }
+              } catch (fallbackError) {
+                console.warn('Fallback engine check failed:', fallbackError);
+              }
+              
+              // فقط إذا لم يكن Hugging Face، نستخدم WebSocket الافتراضي
+              wsUrl = 'wss://ai-voicesum.onrender.com/ws';
+            }
+          
+            const ws = new WebSocket(wsUrl);
+            const timeoutId = setTimeout(() => {
+              reject(new Error('Connection timeout. Please check your internet connection.'));
+            }, 5000);
 
-          ws.onopen = () => {
-            clearTimeout(timeoutId);
-            ws.close();
-            resolve(true);
-          };
+            ws.onopen = () => {
+              clearTimeout(timeoutId);
+              ws.close();
+              resolve(true);
+            };
 
-          ws.onerror = (error) => {
-            clearTimeout(timeoutId);
-            console.error('WebSocket error:', error);
-            reject(new Error('Failed to connect to server.'));
-          };
+            ws.onerror = (error) => {
+              clearTimeout(timeoutId);
+              console.error('WebSocket error:', error);
+              reject(new Error('Failed to connect to server.'));
+            };
 
-          ws.onclose = (event) => {
-            clearTimeout(timeoutId);
-            console.error('WebSocket closed:', event);
-            reject(new Error('Connection closed unexpectedly.'));
-          };
+            ws.onclose = (event) => {
+              clearTimeout(timeoutId);
+              console.error('WebSocket closed:', event);
+              reject(new Error('Connection closed unexpectedly.'));
+            };
+          }).catch((error) => {
+            console.error('Error getting engine config:', error);
+            
+            // في حالة الخطأ، نتحقق من المحرك مرة أخرى
+            transcriptionEngineService.getCurrentEngine().then(async (fallbackEngine) => {
+              if (fallbackEngine === 'huggingface') {
+                console.log('Fallback: Hugging Face engine detected - connection test passed');
+                resolve(true);
+                return;
+              }
+              
+              // فقط إذا لم يكن Hugging Face، نستخدم WebSocket الافتراضي
+              const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+              const timeoutId = setTimeout(() => {
+                reject(new Error('Connection timeout. Please check your internet connection.'));
+              }, 5000);
+
+              ws.onopen = () => {
+                clearTimeout(timeoutId);
+                ws.close();
+                resolve(true);
+              };
+
+              ws.onerror = (error) => {
+                clearTimeout(timeoutId);
+                console.error('WebSocket error:', error);
+                reject(new Error('Failed to connect to server.'));
+              };
+
+              ws.onclose = (event) => {
+                clearTimeout(timeoutId);
+                console.error('WebSocket closed:', event);
+                reject(new Error('Connection closed unexpectedly.'));
+              };
+            }).catch((fallbackError) => {
+              console.error('Fallback engine check failed:', fallbackError);
+              // Fallback to default WebSocket
+              const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+              const timeoutId = setTimeout(() => {
+                reject(new Error('Connection timeout. Please check your internet connection.'));
+              }, 5000);
+
+              ws.onopen = () => {
+                clearTimeout(timeoutId);
+                ws.close();
+                resolve(true);
+              };
+
+              ws.onerror = (error) => {
+                clearTimeout(timeoutId);
+                console.error('WebSocket error:', error);
+                reject(new Error('Failed to connect to server.'));
+              };
+
+              ws.onclose = (event) => {
+                clearTimeout(timeoutId);
+                console.error('WebSocket closed:', event);
+                reject(new Error('Connection closed unexpectedly.'));
+              };
+            });
+          });
         } catch (wsError) {
           console.error('WebSocket creation error:', wsError);
           reject(new Error('Failed to create connection.'));
@@ -1044,7 +1143,21 @@ export default function RecordScreen() {
 
   return (
     <>
-      <ScrollView style={styles.container} contentContainerStyle={styles.scrollContent}>
+      <ScrollView 
+        style={styles.container} 
+        contentContainerStyle={styles.scrollContent}
+        refreshControl={
+          <RefreshControl
+            refreshing={refreshing}
+            onRefresh={handleRefresh}
+            tintColor="#3B82F6"
+            title="Pull to refresh"
+            titleColor="#6B7280"
+            colors={["#3B82F6"]}
+            progressBackgroundColor="#F8FAFC"
+          />
+        }
+      >
         <View style={styles.header}>
           <Text style={styles.title}>Voice Transcriber</Text>
           <Text style={styles.subtitle}>

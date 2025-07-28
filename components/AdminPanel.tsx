@@ -74,6 +74,14 @@ export function AdminPanel() {
   const [assemblyKey, setAssemblyKey] = useState(Constants.expoConfig?.extra?.EXPO_PUBLIC_ASSEMBLYAI_API_KEY || '');
   const [saveLoading, setSaveLoading] = useState(false);
   const [showKey, setShowKey] = useState(false);
+  const [transcriptionEngine, setTranscriptionEngine] = useState('azure');
+  const [engineSaveLoading, setEngineSaveLoading] = useState(false);
+  const [engineStatus, setEngineStatus] = useState<{
+    engine: string;
+    configured: boolean;
+    status: 'ready' | 'not_configured' | 'error';
+    message: string;
+  } | null>(null);
 
   const isRTL = I18nManager.isRTL;
   const t = (ar: string, en: string) => isRTL ? ar : en;
@@ -90,6 +98,7 @@ export function AdminPanel() {
       try {
       fetchAdminData();
       fetchLinks();
+      fetchTranscriptionEngine();
       } catch (error) {
         console.error('Error in AdminPanel useEffect:', error);
         setLoading(false);
@@ -213,6 +222,45 @@ export function AdminPanel() {
       // Set default values if there's an error
       setRateUsUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
       setShareAppUrl('https://play.google.com/store/apps/details?id=com.ailivetranslate.app');
+    }
+  };
+
+  const fetchTranscriptionEngine = async () => {
+    try {
+      const { data, error } = await supabase
+        .from('app_settings')
+        .select('value')
+        .eq('key', 'transcription_engine')
+        .single();
+      
+      if (error) {
+        console.warn('Error fetching transcription_engine:', error);
+        setTranscriptionEngine('azure'); // Default to Azure
+      } else if (data && data.value) {
+        setTranscriptionEngine(data.value);
+      }
+      
+      // Fetch engine status
+      await fetchEngineStatus();
+    } catch (error) {
+      console.error('Error fetching transcription engine setting:', error);
+      setTranscriptionEngine('azure'); // Default to Azure
+    }
+  };
+
+  const fetchEngineStatus = async () => {
+    try {
+      const { transcriptionEngineService } = await import('@/services/transcriptionEngineService');
+      const status = await transcriptionEngineService.getEngineStatus();
+      setEngineStatus(status);
+    } catch (error) {
+      console.error('Error fetching engine status:', error);
+      setEngineStatus({
+        engine: transcriptionEngine,
+        configured: false,
+        status: 'error',
+        message: 'Failed to check engine status'
+      });
     }
   };
 
@@ -379,6 +427,24 @@ export function AdminPanel() {
       alert('Failed to update API Key');
     }
     setSaveLoading(false);
+  };
+
+  const handleSaveTranscriptionEngine = async () => {
+    setEngineSaveLoading(true);
+    try {
+      const { error } = await supabase.from('app_settings').upsert([
+        { key: 'transcription_engine', value: transcriptionEngine }
+      ], { onConflict: 'key' });
+      if (error) throw error;
+      
+      // Refresh engine status after saving
+      await fetchEngineStatus();
+      
+      Alert.alert('تم الحفظ', 'تم تحديث محرك النسخ بنجاح');
+    } catch (err) {
+      Alert.alert('خطأ', (err as Error).message || 'حدث خطأ أثناء حفظ إعدادات محرك النسخ');
+    }
+    setEngineSaveLoading(false);
   };
 
   if (permissionsLoading) {
@@ -679,6 +745,100 @@ export function AdminPanel() {
           </>
         )}
       </ScrollView>
+      <View style={{ marginVertical: 16, padding: 12, backgroundColor: '#F3F4F6', borderRadius: 12 }}>
+        <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Transcription Engine Settings</Text>
+        <View style={{ marginBottom: 12 }}>
+          <Text style={{ fontSize: 14, color: '#374151', marginBottom: 4 }}>Select Transcription Engine:</Text>
+          <View style={{ flexDirection: 'row', marginTop: 8 }}>
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                padding: 12,
+                borderRadius: 8,
+                marginRight: 8,
+                backgroundColor: transcriptionEngine === 'azure' ? '#2563EB' : '#E5E7EB',
+                borderWidth: 2,
+                borderColor: transcriptionEngine === 'azure' ? '#2563EB' : '#D1D5DB'
+              }}
+              onPress={() => setTranscriptionEngine('azure')}
+            >
+              <Text style={{
+                textAlign: 'center',
+                fontWeight: 'bold',
+                color: transcriptionEngine === 'azure' ? 'white' : '#374151'
+              }}>
+                Azure (Default)
+              </Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={{
+                flex: 1,
+                padding: 12,
+                borderRadius: 8,
+                marginLeft: 8,
+                backgroundColor: transcriptionEngine === 'huggingface' ? '#2563EB' : '#E5E7EB',
+                borderWidth: 2,
+                borderColor: transcriptionEngine === 'huggingface' ? '#2563EB' : '#D1D5DB'
+              }}
+              onPress={() => setTranscriptionEngine('huggingface')}
+            >
+              <Text style={{
+                textAlign: 'center',
+                fontWeight: 'bold',
+                color: transcriptionEngine === 'huggingface' ? 'white' : '#374151'
+              }}>
+                Hugging Face
+              </Text>
+            </TouchableOpacity>
+          </View>
+        </View>
+        <TouchableOpacity
+          style={{
+            backgroundColor: engineSaveLoading ? '#A5B4FC' : '#2563EB',
+            borderRadius: 8,
+            paddingVertical: 10,
+            alignItems: 'center',
+            marginBottom: 12
+          }}
+          onPress={handleSaveTranscriptionEngine}
+          disabled={engineSaveLoading}
+        >
+          <Text style={{ color: 'white', fontWeight: 'bold', fontSize: 15 }}>
+            {engineSaveLoading ? t('...جارٍ الحفظ', 'Saving...') : t('حفظ محرك النسخ', 'Save Engine')}
+          </Text>
+        </TouchableOpacity>
+
+        {/* Engine Status Indicator */}
+        {engineStatus && (
+          <View style={{
+            padding: 12,
+            borderRadius: 8,
+            backgroundColor: engineStatus.status === 'ready' ? '#D1FAE5' : 
+                           engineStatus.status === 'not_configured' ? '#FEF3C7' : '#FEE2E2',
+            borderLeftWidth: 4,
+            borderLeftColor: engineStatus.status === 'ready' ? '#10B981' : 
+                           engineStatus.status === 'not_configured' ? '#F59E0B' : '#EF4444'
+          }}>
+            <Text style={{
+              fontWeight: 'bold',
+              fontSize: 14,
+              color: engineStatus.status === 'ready' ? '#065F46' : 
+                     engineStatus.status === 'not_configured' ? '#92400E' : '#991B1B'
+            }}>
+              Engine Status: {engineStatus.engine.toUpperCase()}
+            </Text>
+            <Text style={{
+              fontSize: 12,
+              color: engineStatus.status === 'ready' ? '#065F46' : 
+                     engineStatus.status === 'not_configured' ? '#92400E' : '#991B1B',
+              marginTop: 4
+            }}>
+              {engineStatus.message}
+            </Text>
+          </View>
+        )}
+      </View>
+
       <View style={{ marginVertical: 16, padding: 12, backgroundColor: '#F3F4F6', borderRadius: 12 }}>
         <Text style={{ fontWeight: 'bold', marginBottom: 8 }}>Update ASSEMBLYAI_API_KEY</Text>
         <View style={{ flexDirection: 'row', alignItems: 'center' }}>

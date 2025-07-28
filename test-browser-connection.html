@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hugging Face API Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #ddd;
+            border-radius: 5px;
+        }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        pre {
+            background: #f8f9fa;
+            padding: 10px;
+            border-radius: 5px;
+            overflow-x: auto;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Hugging Face API Connection Test</h1>
+        <p>This page tests the connection to the Hugging Face Faster Whisper API to diagnose the app's connection issues.</p>
+        
+        <div class="test-section">
+            <h3>1️⃣ Health Check</h3>
+            <button onclick="testHealth()">Test Health Endpoint</button>
+            <div id="health-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>2️⃣ Audio Transcription Test</h3>
+            <button onclick="testTranscription()">Test Transcription</button>
+            <div id="transcription-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>3️⃣ Real Audio Test</h3>
+            <button onclick="testRealAudio()">Test with Real Audio</button>
+            <div id="real-audio-result"></div>
+        </div>
+        
+        <div class="test-section">
+            <h3>4️⃣ App Simulation Test</h3>
+            <button onclick="testAppSimulation()">Simulate App Request</button>
+            <div id="app-simulation-result"></div>
+        </div>
+    </div>
+
+    <script>
+        const HF_API_URL = 'https://alaaharoun-faster-whisper-api.hf.space';
+        
+        function log(elementId, message, type = 'info') {
+            const element = document.getElementById(elementId);
+            const className = type === 'success' ? 'success' : type === 'error' ? 'error' : 'info';
+            element.innerHTML += `<div class="${className}">${new Date().toLocaleTimeString()}: ${message}</div>`;
+        }
+        
+        async function testHealth() {
+            const resultDiv = document.getElementById('health-result');
+            resultDiv.innerHTML = '';
+            
+            try {
+                log('health-result', 'Testing health endpoint...', 'info');
+                
+                const response = await fetch(`${HF_API_URL}/health`, {
+                    method: 'GET',
+                    signal: AbortSignal.timeout(10000)
+                });
+                
+                log('health-result', `Response status: ${response.status}`, 'info');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('health-result', '✅ Health check successful!', 'success');
+                    log('health-result', `<pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
+                } else {
+                    const errorText = await response.text();
+                    log('health-result', `❌ Health check failed: ${errorText}`, 'error');
+                }
+            } catch (error) {
+                log('health-result', `❌ Health check error: ${error.message}`, 'error');
+            }
+        }
+        
+        function createTestWavBlob() {
+            // Create a simple WAV file (1 second of silence)
+            const sampleRate = 16000;
+            const duration = 1;
+            const samples = sampleRate * duration;
+            
+            // WAV header (44 bytes)
+            const header = new ArrayBuffer(44);
+            const view = new DataView(header);
+            
+            // RIFF header
+            const writeString = (offset, string) => {
+                for (let i = 0; i < string.length; i++) {
+                    view.setUint8(offset + i, string.charCodeAt(i));
+                }
+            };
+            
+            writeString(0, 'RIFF');
+            view.setUint32(4, 36 + samples * 2, true);
+            writeString(8, 'WAVE');
+            writeString(12, 'fmt ');
+            view.setUint32(16, 16, true);
+            view.setUint16(20, 1, true);
+            view.setUint16(22, 1, true);
+            view.setUint32(24, sampleRate, true);
+            view.setUint32(28, sampleRate * 2, true);
+            view.setUint16(32, 2, true);
+            view.setUint16(34, 16, true);
+            writeString(36, 'data');
+            view.setUint32(40, samples * 2, true);
+            
+            // Create audio data (silence)
+            const audioData = new ArrayBuffer(samples * 2);
+            const audioView = new DataView(audioData);
+            for (let i = 0; i < samples; i++) {
+                audioView.setInt16(i * 2, 0, true);
+            }
+            
+            // Combine header and audio data
+            const wavData = new Uint8Array(header.byteLength + audioData.byteLength);
+            wavData.set(new Uint8Array(header), 0);
+            wavData.set(new Uint8Array(audioData), header.byteLength);
+            
+            return new Blob([wavData], { type: 'audio/wav' });
+        }
+        
+        async function testTranscription() {
+            const resultDiv = document.getElementById('transcription-result');
+            resultDiv.innerHTML = '';
+            
+            try {
+                log('transcription-result', 'Testing transcription endpoint...', 'info');
+                
+                const audioBlob = createTestWavBlob();
+                const formData = new FormData();
+                formData.append('file', audioBlob, `test_${Date.now()}.wav`);
+                formData.append('language', 'en');
+                formData.append('task', 'transcribe');
+                
+                log('transcription-result', `Audio file size: ${audioBlob.size} bytes`, 'info');
+                
+                const response = await fetch(`${HF_API_URL}/transcribe`, {
+                    method: 'POST',
+                    body: formData,
+                    signal: AbortSignal.timeout(30000)
+                });
+                
+                log('transcription-result', `Response status: ${response.status}`, 'info');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('transcription-result', '✅ Transcription successful!', 'success');
+                    log('transcription-result', `<pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
+                } else {
+                    const errorText = await response.text();
+                    log('transcription-result', `❌ Transcription failed: ${errorText}`, 'error');
+                }
+            } catch (error) {
+                log('transcription-result', `❌ Transcription error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testRealAudio() {
+            const resultDiv = document.getElementById('real-audio-result');
+            resultDiv.innerHTML = '';
+            
+            try {
+                log('real-audio-result', 'Testing with real audio file...', 'info');
+                
+                // Create a more realistic audio file (sine wave)
+                const sampleRate = 16000;
+                const duration = 2;
+                const samples = sampleRate * duration;
+                
+                const header = new ArrayBuffer(44);
+                const view = new DataView(header);
+                
+                const writeString = (offset, string) => {
+                    for (let i = 0; i < string.length; i++) {
+                        view.setUint8(offset + i, string.charCodeAt(i));
+                    }
+                };
+                
+                writeString(0, 'RIFF');
+                view.setUint32(4, 36 + samples * 2, true);
+                writeString(8, 'WAVE');
+                writeString(12, 'fmt ');
+                view.setUint32(16, 16, true);
+                view.setUint16(20, 1, true);
+                view.setUint16(22, 1, true);
+                view.setUint32(24, sampleRate, true);
+                view.setUint32(28, sampleRate * 2, true);
+                view.setUint16(32, 2, true);
+                view.setUint16(34, 16, true);
+                writeString(36, 'data');
+                view.setUint32(40, samples * 2, true);
+                
+                // Create sine wave audio data
+                const audioData = new ArrayBuffer(samples * 2);
+                const audioView = new DataView(audioData);
+                for (let i = 0; i < samples; i++) {
+                    const value = Math.sin(2 * Math.PI * 440 * i / sampleRate) * 0.5 * 32767;
+                    audioView.setInt16(i * 2, Math.round(value), true);
+                }
+                
+                const wavData = new Uint8Array(header.byteLength + audioData.byteLength);
+                wavData.set(new Uint8Array(header), 0);
+                wavData.set(new Uint8Array(audioData), header.byteLength);
+                
+                const audioBlob = new Blob([wavData], { type: 'audio/wav' });
+                const formData = new FormData();
+                formData.append('file', audioBlob, `real_audio_${Date.now()}.wav`);
+                formData.append('language', 'en');
+                formData.append('task', 'transcribe');
+                
+                log('real-audio-result', `Audio file size: ${audioBlob.size} bytes`, 'info');
+                log('real-audio-result', 'Audio content: 2-second sine wave at 440Hz', 'info');
+                
+                const response = await fetch(`${HF_API_URL}/transcribe`, {
+                    method: 'POST',
+                    body: formData,
+                    signal: AbortSignal.timeout(30000)
+                });
+                
+                log('real-audio-result', `Response status: ${response.status}`, 'info');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('real-audio-result', '✅ Real audio test successful!', 'success');
+                    log('real-audio-result', `<pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
+                } else {
+                    const errorText = await response.text();
+                    log('real-audio-result', `❌ Real audio test failed: ${errorText}`, 'error');
+                }
+            } catch (error) {
+                log('real-audio-result', `❌ Real audio test error: ${error.message}`, 'error');
+            }
+        }
+        
+        async function testAppSimulation() {
+            const resultDiv = document.getElementById('app-simulation-result');
+            resultDiv.innerHTML = '';
+            
+            try {
+                log('app-simulation-result', 'Simulating app request...', 'info');
+                
+                // Simulate exactly what the app would send
+                const audioBlob = createTestWavBlob();
+                const formData = new FormData();
+                formData.append('file', audioBlob, `audio_${Date.now()}.wav`);
+                formData.append('language', 'en');
+                formData.append('task', 'transcribe');
+                
+                log('app-simulation-result', 'App request details:', 'info');
+                log('app-simulation-result', `- File name: audio_[timestamp].wav`, 'info');
+                log('app-simulation-result', `- File size: ${audioBlob.size} bytes`, 'info');
+                log('app-simulation-result', `- Language: en`, 'info');
+                log('app-simulation-result', `- Task: transcribe`, 'info');
+                
+                const response = await fetch(`${HF_API_URL}/transcribe`, {
+                    method: 'POST',
+                    body: formData,
+                    signal: AbortSignal.timeout(30000)
+                });
+                
+                log('app-simulation-result', `Response status: ${response.status}`, 'info');
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log('app-simulation-result', '✅ App simulation successful!', 'success');
+                    log('app-simulation-result', `<pre>${JSON.stringify(data, null, 2)}</pre>`, 'info');
+                } else {
+                    const errorText = await response.text();
+                    log('app-simulation-result', `❌ App simulation failed: ${errorText}`, 'error');
+                    
+                    if (errorText.includes('Field required')) {
+                        log('app-simulation-result', '💡 Issue: File field is not being sent properly', 'error');
+                        log('app-simulation-result', '🔧 Solution: Check FormData creation in the app', 'info');
+                    }
+                }
+            } catch (error) {
+                log('app-simulation-result', `❌ App simulation error: ${error.message}`, 'error');
+            }
+        }
+    </script>
+</body>
+</html> 

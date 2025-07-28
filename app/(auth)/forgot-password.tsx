@@ -14,9 +14,7 @@ export default function ForgotPasswordScreen() {
     }
     setLoading(true);
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      // يمكنك تغيير الرابط أدناه إذا كان لديك صفحة ويب لإعادة تعيين كلمة المرور
-      // أو احذفه ليستخدم رابط Supabase الافتراضي
-      // redirectTo: 'https://your-app-url.com/reset-password',
+      redirectTo: 'myapp://reset-password',
     });
     setLoading(false);
     if (error) {

@@ -2,6 +2,7 @@ import React, { createContext, useContext, useEffect, useState, useRef } from 'r
 import { supabase, isSupabaseConfigured } from '@/lib/supabase';
 import type { User, Session } from '@supabase/supabase-js';
 import Constants from 'expo-constants';
+import { transcriptionEngineService } from '@/services/transcriptionEngineService';
 
 interface UserPermissions {
   isSuperadmin: boolean;
@@ -83,7 +84,7 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
     
     // Check if Supabase is properly configured
     if (!isSupabaseConfigured) {
-      console.warn('[AuthContext] Supabase not properly configured, skipping auth initialization');
+      console.warn('[AuthContext] Demo Mode: Supabase not configured. Authentication is disabled.');
       if (mountedRef.current) {
         setUser(null);
         setSession(null);
@@ -117,11 +118,22 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         setUser(session?.user ?? null);
         setLoading(false);
         
-        // الاتصال التلقائي بالسيرفر عند تسجيل الدخول
+        // الاتصال التلقائي بالسيرفر عند تسجيل الدخول (فقط إذا كان المحرك Azure)
         if (session?.user && _event === 'SIGNED_IN') {
-          console.log('[AuthContext] User signed in, initializing server connection...');
-          setTimeout(() => {
-            initializeServerConnection();
+          console.log('[AuthContext] User signed in, checking engine before initializing server connection...');
+          setTimeout(async () => {
+            try {
+              const engine = await transcriptionEngineService.getCurrentEngine();
+              if (engine === 'azure') {
+                console.log('[AuthContext] Azure engine detected, initializing WebSocket connection...');
+                initializeServerConnection();
+              } else {
+                console.log('[AuthContext] Hugging Face engine detected, no WebSocket needed');
+                setServerConnectionStatus('connected'); // نعتبره متصل لأننا سنستخدم HTTP
+              }
+            } catch (error) {
+              console.warn('[AuthContext] Error checking engine, skipping auto-connection:', error);
+            }
           }, 1000); // انتظار ثانية واحدة للتأكد من اكتمال تسجيل الدخول
         }
       }
@@ -172,7 +184,13 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
   const signUp = async (email: string, password: string) => {
     console.log('[AuthContext] Attempting sign up for:', email);
     try {
-      const result = await supabase.auth.signUp({ email, password });
+      const result = await supabase.auth.signUp({ 
+        email, 
+        password,
+        options: {
+          emailRedirectTo: 'myapp://email-confirmed'
+        }
+      });
       console.log('[AuthContext] Sign up result:', result.error ? 'Error' : 'Success');
       if (result.error && typeof (result.error as any).message !== 'string') {
         result.error = { message: String(result.error) } as any;
@@ -271,43 +289,77 @@ export function AuthProvider({ children }: { children: React.ReactNode }) {
         wsRef.current = null;
       }
       
-      // إنشاء اتصال جديد
-      const ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+      // الحصول على المحرك الحالي أولاً
+      let engine: string;
+      try {
+        engine = await transcriptionEngineService.getCurrentEngine();
+        console.log(`[AuthContext] Current engine: ${engine}`);
+      } catch (error) {
+        console.warn('[AuthContext] Error getting engine config:', error);
+        // في حالة الخطأ، نفترض Hugging Face كافتراضي
+        engine = 'huggingface';
+      }
       
-      ws.onopen = () => {
-        console.log('[AuthContext] Server connection established');
+      // إذا كان المحرك هو Hugging Face، لا نحتاج WebSocket
+      if (engine === 'huggingface') {
+        console.log('[AuthContext] Hugging Face engine detected - WebSocket not needed');
         setServerConnectionStatus('connected');
+        return;
+      }
+      
+      // فقط إذا كان المحرك هو Azure، نستخدم WebSocket
+      if (engine === 'azure') {
+        let wsUrl: string;
+        let connectionMessage: string;
         
-        // إرسال رسالة تهيئة بسيطة
-        const initMessage = {
-          type: 'init',
-          language: 'ar-SA',
-          targetLanguage: 'en-US',
-          clientSideTranslation: true,
-          realTimeMode: true,
-          autoDetection: true,
-          audioConfig: {
-            sampleRate: 16000,
-            channels: 1,
-            bitsPerSample: 16,
-            encoding: 'pcm_s16le'
-          }
+        try {
+          wsUrl = await transcriptionEngineService.getWebSocketURL();
+          connectionMessage = await transcriptionEngineService.getConnectionMessage();
+        } catch (error) {
+          console.warn('[AuthContext] Error getting Azure config, using default:', error);
+          wsUrl = 'wss://ai-voicesum.onrender.com/ws';
+          connectionMessage = 'Connecting to Azure Speech...';
+        }
+        
+        console.log(`[AuthContext] ${connectionMessage}`);
+        
+        // إنشاء اتصال جديد
+        const ws = new WebSocket(wsUrl);
+        
+        ws.onopen = () => {
+          console.log('[AuthContext] Server connection established');
+          setServerConnectionStatus('connected');
+          
+          // إرسال رسالة تهيئة بسيطة
+          const initMessage = {
+            type: 'init',
+            language: 'ar-SA',
+            targetLanguage: 'en-US',
+            clientSideTranslation: true,
+            realTimeMode: true,
+            autoDetection: true,
+            audioConfig: {
+              sampleRate: 16000,
+              channels: 1,
+              bitsPerSample: 16,
+              encoding: 'pcm_s16le'
+            }
+          };
+          ws.send(JSON.stringify(initMessage));
         };
-        ws.send(JSON.stringify(initMessage));
-      };
-      
-      ws.onerror = (error) => {
-        console.error('[AuthContext] Server connection error:', error);
-        setServerConnectionStatus('disconnected');
-      };
-      
-      ws.onclose = (event) => {
-        console.log('[AuthContext] Server connection closed:', event.code, event.reason);
-        setServerConnectionStatus('disconnected');
-      };
-      
-      wsRef.current = ws;
-      
+        
+        ws.onerror = (error) => {
+          console.error('[AuthContext] Server connection error:', error);
+          setServerConnectionStatus('disconnected');
+        };
+        
+        ws.onclose = (event) => {
+          console.log('[AuthContext] Server connection closed:', event.code, event.reason);
+          setServerConnectionStatus('disconnected');
+        };
+        
+        wsRef.current = ws;
+      }
     } catch (error) {
       console.error('[AuthContext] Failed to initialize server connection:', error);
       setServerConnectionStatus('disconnected');
