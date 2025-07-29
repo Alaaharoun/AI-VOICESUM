@@ -700,6 +700,8 @@ function startWebSocketServer(server) {
                   errorCode: e.errorCode
                 });
                 console.error(`Cancel reason: ${e.reason}`);
+                
+                // Send error to client
                 ws.send(JSON.stringify({ 
                   type: 'error', 
                   error: `Recognition canceled: ${e.errorDetails}`,
@@ -707,14 +709,73 @@ function startWebSocketServer(server) {
                   errorCode: e.errorCode
                 }));
                 
-                // Clean up
-                if (recognizer) {
-                  recognizer.close();
-                  recognizer = null;
-                }
-                if (pushStream) {
-                  pushStream.close();
-                  pushStream = null;
+                // For quota exceeded, try to restart recognition instead of cleanup
+                if (e.errorDetails && e.errorDetails.includes('Quota exceeded')) {
+                  console.log(`🔄 [${language}] Quota exceeded, attempting to restart recognition...`);
+                  
+                  // Clean up old recognizer
+                  if (recognizer) {
+                    recognizer.close();
+                    recognizer = null;
+                  }
+                  if (pushStream) {
+                    pushStream.close();
+                    pushStream = null;
+                  }
+                  
+                  // Try to reinitialize after a delay
+                  setTimeout(() => {
+                    try {
+                      // Recreate push stream
+                      const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
+                      pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
+                      audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+                      
+                      // Recreate speech config
+                      speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
+                      speechConfig.speechRecognitionLanguage = language;
+                      speechConfig.enableDictation();
+                      
+                      // Recreate recognizer
+                      recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                      
+                      // Set up event handlers (reuse the same handlers)
+                      recognizer.recognizing = (s, e) => {
+                        if (e.result.text && e.result.text.trim()) {
+                          ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
+                        }
+                      };
+                      
+                      recognizer.recognized = (s, e) => {
+                        if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech && e.result.text && e.result.text.trim()) {
+                          ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
+                        }
+                      };
+                      
+                      // Start recognition
+                      recognizer.startContinuousRecognitionAsync(
+                        () => {
+                          console.log(`✅ [${language}] Recognition restarted successfully after quota error`);
+                          ws.send(JSON.stringify({ type: 'status', message: 'Recognition restarted after quota error' }));
+                        },
+                        (err) => {
+                          console.error(`❌ [${language}] Failed to restart recognition:`, err);
+                        }
+                      );
+                    } catch (error) {
+                      console.error(`❌ [${language}] Error restarting recognition:`, error);
+                    }
+                  }, 3000); // Wait 3 seconds before retry
+                } else {
+                  // For other errors, do normal cleanup
+                  if (recognizer) {
+                    recognizer.close();
+                    recognizer = null;
+                  }
+                  if (pushStream) {
+                    pushStream.close();
+                    pushStream = null;
+                  }
                 }
               };
               

@@ -159,7 +159,20 @@ export class RenderWebSocketService {
             
           case 'error':
             console.error('❌ Server error:', data.message);
-            this.isInitialized = false;
+            // Don't reset isInitialized for quota exceeded errors
+            if (data.error && data.error.includes('Quota exceeded')) {
+              console.warn('⚠️ Azure quota exceeded, but keeping connection alive');
+              // Keep isInitialized true to continue audio processing
+              // Try to reinitialize after a delay
+              setTimeout(() => {
+                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                  console.log('🔄 Attempting to reinitialize after quota error...');
+                  this.sendInitMessage();
+                }
+              }, 2000);
+            } else {
+              this.isInitialized = false;
+            }
             break;
             
           case 'pong':
@@ -279,6 +292,24 @@ export class RenderWebSocketService {
     } else {
       console.warn('⚠️ WebSocket not ready, cannot send message');
     }
+  }
+
+  private sendInitMessage() {
+    const initMessage = {
+      type: 'init',
+      language: this.sourceLanguage,
+      targetLanguage: this.targetLanguage,
+      clientSideTranslation: true,
+      realTimeMode: true,
+      autoDetection: true,
+      audioConfig: {
+        sampleRate: 16000,
+        channels: 1,
+        bitsPerSample: 16,
+        encoding: 'pcm_s16le'
+      }
+    };
+    this.sendMessage(initMessage);
   }
 
   sendAudioChunk(audioChunk: Blob) {
