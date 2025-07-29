@@ -200,7 +200,7 @@ export function SubscriptionProvider({ children }: { children: React.ReactNode }
         .eq('user_id', user.id)
         .eq('active', true)
         .gt('expires_at', new Date().toISOString())
-        .single();
+        .maybeSingle();
 
       if (error && error.code !== 'PGRST116') {
         console.error('Error checking subscription:', error);

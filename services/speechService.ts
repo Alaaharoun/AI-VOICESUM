@@ -117,22 +117,51 @@ export class SpeechService {
         return audioBlob;
       }
 
-      // For React Native, create a proper WAV file with header
+      // For React Native, we need to handle the audio data properly
       const arrayBuffer = await this.blobToArrayBuffer(audioBlob);
       
-      // Create a simple WAV file with proper header
-      const sampleRate = 16000;
-      const duration = 2; // 2 seconds
-      const numSamples = sampleRate * duration;
-      const audioData = new Int16Array(numSamples);
-      
-      // Create a simple sine wave as fallback
-      for (let i = 0; i < numSamples; i++) {
-        audioData[i] = Math.sin(i * 0.1) * 1000;
+      // Validate that we have actual audio data
+      if (arrayBuffer.byteLength === 0) {
+        throw new Error('Empty audio data');
       }
       
-      // Create WAV header
-      const dataLength = audioData.byteLength;
+      // Try to use Web Audio API if available (for web)
+      if (typeof window !== 'undefined' && window.AudioContext) {
+        try {
+          const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+          const audioBuffer = await audioContext.decodeAudioData(arrayBuffer);
+          const wavBlob = this.audioBufferToWav(audioBuffer);
+          console.log('✅ Successfully converted to WAV using Web Audio API');
+          return wavBlob;
+        } catch (error) {
+          console.warn('⚠️ Web Audio API conversion failed, using fallback:', error);
+        }
+      }
+
+      // Fallback: Create a proper WAV file from the original audio data
+      // This is for React Native where Web Audio API is not available
+      const audioData = new Uint8Array(arrayBuffer);
+      
+      // Validate that we have actual audio data
+      if (audioData.length === 0) {
+        throw new Error('No audio data found in blob');
+      }
+      
+      // Additional validation: check for corrupted data
+      let hasNonZeroData = false;
+      for (let i = 0; i < Math.min(audioData.length, 1000); i++) {
+        if (audioData[i] !== 0) {
+          hasNonZeroData = true;
+          break;
+        }
+      }
+      
+      if (!hasNonZeroData) {
+        throw new Error('Audio data appears to be empty or corrupted');
+      }
+      
+      // Create WAV header with proper format
+      const dataLength = audioData.length;
       const fileLength = 44 + dataLength; // 44 bytes header + data
       
       const buffer = new ArrayBuffer(fileLength);
@@ -155,8 +184,8 @@ export class SpeechService {
       view.setUint32(16, 16, true); // fmt chunk size
       view.setUint16(20, 1, true); // PCM format
       view.setUint16(22, 1, true); // mono
-      view.setUint32(24, sampleRate, true); // sample rate
-      view.setUint32(28, sampleRate * 2, true); // byte rate
+      view.setUint32(24, 16000, true); // sample rate (16kHz for better compatibility)
+      view.setUint32(28, 16000 * 2, true); // byte rate
       view.setUint16(32, 2, true); // block align
       view.setUint16(34, 16, true); // bits per sample
       
@@ -164,18 +193,22 @@ export class SpeechService {
       writeString(36, 'data');
       view.setUint32(40, dataLength, true);
       
-      // Copy audio data
+      // Copy original audio data
       const audioView = new Uint8Array(buffer, 44);
-      const dataView = new Uint8Array(audioData.buffer);
-      audioView.set(dataView);
+      audioView.set(audioData);
       
-      // Create Blob with Uint8Array for React Native compatibility
+      // Create Blob with proper WAV format
       const wavArray = new Uint8Array(buffer);
       const wavBlob = new Blob([wavArray], { type: 'audio/wav' });
-      console.log('Created proper WAV blob for Hugging Face');
+      console.log('✅ Created proper WAV blob from original audio data for Hugging Face', {
+        originalSize: audioBlob.size,
+        wavSize: wavBlob.size,
+        dataLength,
+        hasNonZeroData
+      });
       return wavBlob;
     } catch (error) {
-      console.error('WAV conversion failed:', error);
+      console.error('❌ WAV conversion failed:', error);
       throw error;
     }
   }
@@ -361,111 +394,254 @@ export class SpeechService {
   }
 
   private static async transcribeWithHuggingFace(audioBlob: Blob, targetLanguage?: string, useVAD: boolean = false): Promise<string> {
-    try {
-      const config = await transcriptionEngineService.getEngineConfig();
-      
-      if (config.engine !== 'huggingface' || !config.huggingFaceUrl) {
-        throw new Error('Hugging Face service not configured');
-      }
-
-      console.log('Transcribing with Hugging Face...', {
-        size: audioBlob.size,
-        type: audioBlob.type,
-        targetLanguage,
-        useVAD
-      });
-
-      // Process audio for Hugging Face compatibility
-      // Hugging Face needs proper WAV format, not just MIME type change
-      let processedAudioBlob: Blob;
-      
+    const maxRetries = 3;
+    let lastError: Error | null = null;
+    
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
       try {
-        // Try to convert to proper WAV format
-        processedAudioBlob = await this.convertToProperWav(audioBlob);
-      } catch (error) {
-        console.warn('WAV conversion failed, using original blob:', error);
-        // Fallback to original blob if conversion fails
-        processedAudioBlob = audioBlob;
-      }
-      
-      // Validate the processed audio blob
-      const validation = AudioProcessor.validateAudioBlob(processedAudioBlob);
-      if (!validation.isValid) {
-        throw new Error(validation.error || 'Invalid audio file');
-      }
-
-      // Create form data for Hugging Face API
-      const formData = new FormData();
-      
-      // Ensure the file has a proper name and type
-      const fileName = `audio_${Date.now()}.wav`;
-      formData.append('file', processedAudioBlob, fileName);
-      
-      if (targetLanguage) {
-        formData.append('language', targetLanguage);
-      }
-      
-      formData.append('task', 'transcribe');
-
-      // Add VAD parameters if enabled
-      if (useVAD) {
-        formData.append('vad_filter', 'true');
-        formData.append('vad_parameters', 'threshold=0.5');
-        console.log('🎤 VAD enabled with threshold=0.5');
-      }
-
-      console.log('Sending request to Hugging Face:', {
-        url: `${config.huggingFaceUrl}/transcribe`,
-        fileName,
-        fileSize: processedAudioBlob.size,
-        fileType: processedAudioBlob.type,
-        language: targetLanguage || 'auto',
-        vadEnabled: useVAD
-      });
-
-      // Make request to Hugging Face API
-      const response = await fetch(`${config.huggingFaceUrl}/transcribe`, {
-        method: 'POST',
-        body: formData,
-        signal: AbortSignal.timeout(60000), // 60 second timeout
-      });
-
-      console.log('Hugging Face response status:', response.status);
-      console.log('Hugging Face response headers:', Object.fromEntries(response.headers.entries()));
-
-      if (!response.ok) {
-        const errorText = await response.text();
-        console.error('Hugging Face transcription error:', response.status, errorText);
-        throw new Error(`Hugging Face transcription failed: ${response.status} ${response.statusText}`);
-      }
-
-      const result = await response.json();
-      
-      if (!result.success) {
-        throw new Error(result.error || 'Hugging Face transcription failed');
-      }
-
-      console.log('Hugging Face transcription successful:', {
-        text: result.text?.substring(0, 100) + '...',
-        language: result.language,
-        probability: result.language_probability,
-        vadEnabled: result.vad_enabled,
-        vadThreshold: result.vad_threshold
-      });
-
-      return result.text || 'No transcription result';
-    } catch (error) {
-      console.error('Hugging Face transcription error:', error);
-      
-      if (error instanceof Error) {
-        if (error.message.includes('fetch')) {
-          throw new Error('Network error. Please check your internet connection and try again.');
+        const config = await transcriptionEngineService.getEngineConfig();
+        
+        if (config.engine !== 'huggingface' || !config.huggingFaceUrl) {
+          throw new Error('Hugging Face service not configured');
         }
-        throw error;
+
+        console.log(`🎵 Transcribing with Hugging Face (attempt ${attempt}/${maxRetries})...`, {
+          size: audioBlob.size,
+          type: audioBlob.type,
+          targetLanguage,
+          useVAD,
+          url: config.huggingFaceUrl
+        });
+
+        // Process audio for Hugging Face compatibility
+        // Hugging Face needs proper WAV format, not just MIME type change
+        let processedAudioBlob: Blob;
+        
+        try {
+          // Try to convert to proper WAV format
+          processedAudioBlob = await this.convertToProperWav(audioBlob);
+          console.log('✅ WAV conversion successful', {
+            originalSize: audioBlob.size,
+            processedSize: processedAudioBlob.size,
+            originalType: audioBlob.type,
+            processedType: processedAudioBlob.type
+          });
+        } catch (error) {
+          console.warn('⚠️ WAV conversion failed, using original blob:', error);
+          // Fallback to original blob if conversion fails
+          processedAudioBlob = audioBlob;
+        }
+        
+        // Validate the processed audio blob
+        const validation = AudioProcessor.validateAudioBlob(processedAudioBlob);
+        if (!validation.isValid) {
+          throw new Error(validation.error || 'Invalid audio file');
+        }
+
+        // Create form data for Hugging Face API
+        const formData = new FormData();
+        
+        // Ensure the file has a proper name and type
+        const fileName = `audio_${Date.now()}.wav`;
+        formData.append('file', processedAudioBlob, fileName);
+        
+        // Handle language parameter more intelligently
+        if (targetLanguage) {
+          // Map common language codes to Hugging Face format
+          const languageMap: { [key: string]: string } = {
+            'ar': 'ar', // Arabic
+            'en': 'en', // English
+            'fr': 'fr', // French
+            'es': 'es', // Spanish
+            'de': 'de', // German
+            'it': 'it', // Italian
+            'pt': 'pt', // Portuguese
+            'ru': 'ru', // Russian
+            'zh': 'zh', // Chinese
+            'ja': 'ja', // Japanese
+            'ko': 'ko', // Korean
+            'hi': 'hi', // Hindi
+            'tr': 'tr', // Turkish
+            'nl': 'nl', // Dutch
+            'pl': 'pl', // Polish
+            'sv': 'sv', // Swedish
+            'da': 'da', // Danish
+            'no': 'no', // Norwegian
+            'fi': 'fi', // Finnish
+            'cs': 'cs', // Czech
+            'sk': 'sk', // Slovak
+            'hu': 'hu', // Hungarian
+            'ro': 'ro', // Romanian
+            'bg': 'bg', // Bulgarian
+            'hr': 'hr', // Croatian
+            'sl': 'sl', // Slovenian
+            'et': 'et', // Estonian
+            'lv': 'lv', // Latvian
+            'lt': 'lt', // Lithuanian
+            'mt': 'mt', // Maltese
+            'ga': 'ga', // Irish
+            'cy': 'cy', // Welsh
+            'eu': 'eu', // Basque
+            'ca': 'ca', // Catalan
+            'gl': 'gl', // Galician
+            'is': 'is', // Icelandic
+            'mk': 'mk', // Macedonian
+            'sq': 'sq', // Albanian
+            'sr': 'sr', // Serbian
+            'bs': 'bs', // Bosnian
+            'me': 'me', // Montenegrin
+            'uk': 'uk', // Ukrainian
+            'be': 'be', // Belarusian
+            'kk': 'kk', // Kazakh
+            'ky': 'ky', // Kyrgyz
+            'uz': 'uz', // Uzbek
+            'tg': 'tg', // Tajik
+            'mn': 'mn', // Mongolian
+            'ka': 'ka', // Georgian
+            'hy': 'hy', // Armenian
+            'az': 'az', // Azerbaijani
+            'fa': 'fa', // Persian
+            'ps': 'ps', // Pashto
+            'ur': 'ur', // Urdu
+            'bn': 'bn', // Bengali
+            'ta': 'ta', // Tamil
+            'te': 'te', // Telugu
+            'ml': 'ml', // Malayalam
+            'kn': 'kn', // Kannada
+            'gu': 'gu', // Gujarati
+            'pa': 'pa', // Punjabi
+            'or': 'or', // Odia
+            'as': 'as', // Assamese
+            'ne': 'ne', // Nepali
+            'si': 'si', // Sinhala
+            'my': 'my', // Burmese
+            'km': 'km', // Khmer
+            'lo': 'lo', // Lao
+            'th': 'th', // Thai
+            'vi': 'vi', // Vietnamese
+            'id': 'id', // Indonesian
+            'ms': 'ms', // Malay
+            'tl': 'tl', // Tagalog
+            'ceb': 'ceb', // Cebuano
+            'jv': 'jv', // Javanese
+            'su': 'su', // Sundanese
+            'yo': 'yo', // Yoruba
+            'ig': 'ig', // Igbo
+            'ha': 'ha', // Hausa
+            'sw': 'sw', // Swahili
+            'am': 'am', // Amharic
+            'so': 'so', // Somali
+            'zu': 'zu', // Zulu
+            'xh': 'xh', // Xhosa
+            'af': 'af', // Afrikaans
+            'st': 'st', // Southern Sotho
+            'tn': 'tn', // Tswana
+            'ss': 'ss', // Swati
+            've': 've', // Venda
+            'ts': 'ts', // Tsonga
+            'tso': 'tso', // Tsonga
+            'nr': 'nr', // Southern Ndebele
+            'nso': 'nso', // Northern Sotho
+          };
+          
+          const mappedLanguage = languageMap[targetLanguage.toLowerCase()] || targetLanguage;
+          formData.append('language', mappedLanguage);
+          console.log(`🌍 Using language: ${targetLanguage} -> ${mappedLanguage}`);
+        }
+        
+        formData.append('task', 'transcribe');
+
+        // Add VAD parameters if enabled
+        if (useVAD) {
+          formData.append('vad_filter', 'true');
+          formData.append('vad_parameters', 'threshold=0.5');
+          console.log('🎤 VAD enabled with threshold=0.5');
+        }
+
+        console.log('📤 Sending request to Hugging Face:', {
+          url: `${config.huggingFaceUrl}/transcribe`,
+          fileName,
+          fileSize: processedAudioBlob.size,
+          fileType: processedAudioBlob.type,
+          language: targetLanguage || 'auto',
+          vadEnabled: useVAD
+        });
+
+        // Make request to Hugging Face API
+        const response = await fetch(`${config.huggingFaceUrl}/transcribe`, {
+          method: 'POST',
+          body: formData,
+          signal: AbortSignal.timeout(60000), // 60 second timeout
+        });
+
+        console.log('📥 Hugging Face response status:', response.status);
+        console.log('📥 Hugging Face response headers:', Object.fromEntries(response.headers.entries()));
+
+        if (!response.ok) {
+          const errorText = await response.text();
+          console.error('❌ Hugging Face transcription error:', response.status, errorText);
+          
+          // Try to parse error JSON for better error messages
+          try {
+            const errorJson = JSON.parse(errorText);
+            if (errorJson.error) {
+              lastError = new Error(`Hugging Face transcription failed: ${errorJson.error}`);
+            }
+          } catch (parseError) {
+            // If JSON parsing fails, use the raw error text
+            lastError = new Error(`Hugging Face transcription failed: ${response.status} ${response.statusText} - ${errorText}`);
+          }
+          
+          // If it's a 500 error, try again
+          if (response.status === 500 && attempt < maxRetries) {
+            console.log(`🔄 Retrying due to 500 error (attempt ${attempt + 1}/${maxRetries})`);
+            await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+            continue;
+          }
+          
+          throw lastError || new Error(`Hugging Face transcription failed: ${response.status} ${response.statusText}`);
+        }
+
+        const result = await response.json();
+        
+        if (!result.success) {
+          throw new Error(result.error || 'Hugging Face transcription failed');
+        }
+
+        console.log('✅ Hugging Face transcription successful:', {
+          text: result.text?.substring(0, 100) + '...',
+          language: result.language,
+          probability: result.language_probability,
+          vadEnabled: result.vad_enabled,
+          vadThreshold: result.vad_threshold
+        });
+
+        return result.text || 'No transcription result';
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+        console.error(`❌ Hugging Face transcription error (attempt ${attempt}/${maxRetries}):`, lastError.message);
+        
+        if (attempt < maxRetries) {
+          console.log(`🔄 Retrying in ${attempt} second(s)...`);
+          await new Promise(resolve => setTimeout(resolve, 1000 * attempt)); // Exponential backoff
+        }
       }
-      
-      throw new Error('Unknown error occurred during Hugging Face transcription');
     }
+    
+    // If we get here, all retries failed
+    console.error('❌ All retry attempts failed');
+    
+    if (lastError instanceof Error) {
+      if (lastError.message.includes('fetch')) {
+        throw new Error('Network error. Please check your internet connection and try again.');
+      }
+      if (lastError.message.includes('timeout')) {
+        throw new Error('Request timeout. The server is taking too long to respond. Please try again.');
+      }
+      throw lastError;
+    }
+    
+    throw new Error('Unknown error occurred during Hugging Face transcription');
   }
 
   private static async pollForTranscriptResults(transcriptId: string, apiKey: string): Promise<string> {

@@ -1,4 +1,4 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Depends, WebSocket, WebSocketDisconnect
 from fastapi.responses import JSONResponse
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 from fastapi.middleware.cors import CORSMiddleware
@@ -7,6 +7,8 @@ import shutil
 import os
 import tempfile
 import sys
+import json
+import asyncio
 from typing import Optional
 
 # Create FastAPI app
@@ -34,6 +36,31 @@ REQUIRE_AUTH = False
 
 # Global model variable
 model = None
+
+# WebSocket connection manager
+class ConnectionManager:
+    def __init__(self):
+        self.active_connections: list[WebSocket] = []
+
+    async def connect(self, websocket: WebSocket):
+        await websocket.accept()
+        self.active_connections.append(websocket)
+
+    def disconnect(self, websocket: WebSocket):
+        self.active_connections.remove(websocket)
+
+    async def send_personal_message(self, message: str, websocket: WebSocket):
+        await websocket.send_text(message)
+
+    async def broadcast(self, message: str):
+        for connection in self.active_connections:
+            try:
+                await connection.send_text(message)
+            except:
+                # Remove disconnected clients
+                self.active_connections.remove(connection)
+
+manager = ConnectionManager()
 
 def load_model():
     """Load the Whisper model"""
@@ -89,8 +116,102 @@ async def health_check(credentials: HTTPAuthorizationCredentials = Depends(verif
         "auth_required": REQUIRE_AUTH,
         "auth_configured": bool(API_TOKEN),
         "vad_support": True,
+        "websocket_support": True,
         "python_version": sys.version
     }
+
+@app.websocket("/ws")
+async def websocket_endpoint(websocket: WebSocket):
+    """WebSocket endpoint for real-time transcription"""
+    await manager.connect(websocket)
+    try:
+        print("🔌 WebSocket connection established")
+        await manager.send_personal_message(
+            json.dumps({
+                "type": "connection",
+                "status": "connected",
+                "message": "WebSocket connection established"
+            }), 
+            websocket
+        )
+        
+        while True:
+            try:
+                # Receive data from client
+                message = await websocket.receive()
+                
+                # Handle different message types
+                if "bytes" in message:
+                    # Binary audio data
+                    data = message["bytes"]
+                    print(f"🎵 WebSocket: Processing audio chunk ({len(data)} bytes)")
+                    
+                    # Save audio data to temporary file
+                    with tempfile.NamedTemporaryFile(delete=False, suffix='.wav') as temp_file:
+                        temp_file.write(data)
+                        temp_path = temp_file.name
+                    
+                    # Transcribe audio
+                    if model:
+                        segments, info = model.transcribe(temp_path)
+                        transcription = " ".join([seg.text for seg in segments])
+                        
+                        # Send transcription result
+                        result = {
+                            "type": "transcription",
+                            "text": transcription,
+                            "language": info.language,
+                            "language_probability": info.language_probability,
+                            "success": True
+                        }
+                        
+                        await manager.send_personal_message(json.dumps(result), websocket)
+                        print(f"✅ WebSocket: Sent transcription: '{transcription}'")
+                    else:
+                        error_result = {
+                            "type": "error",
+                            "message": "Model not loaded",
+                            "success": False
+                        }
+                        await manager.send_personal_message(json.dumps(error_result), websocket)
+                    
+                    # Clean up temporary file
+                    os.unlink(temp_path)
+                    
+                elif "text" in message:
+                    # Text message (JSON configuration)
+                    try:
+                        data = json.loads(message["text"])
+                        print(f"📨 WebSocket: Received configuration: {data}")
+                        
+                        if data.get("type") == "init":
+                            # Handle initialization
+                            await manager.send_personal_message(
+                                json.dumps({
+                                    "type": "connection",
+                                    "status": "initialized",
+                                    "message": "Configuration received"
+                                }), 
+                                websocket
+                            )
+                    except json.JSONDecodeError:
+                        print(f"⚠️ WebSocket: Invalid JSON received: {message['text']}")
+                        
+            except Exception as e:
+                print(f"❌ WebSocket processing error: {e}")
+                error_result = {
+                    "type": "error",
+                    "message": str(e),
+                    "success": False
+                }
+                await manager.send_personal_message(json.dumps(error_result), websocket)
+                
+    except WebSocketDisconnect:
+        print("🔌 WebSocket connection disconnected")
+        manager.disconnect(websocket)
+    except Exception as e:
+        print(f"❌ WebSocket error: {e}")
+        manager.disconnect(websocket)
 
 @app.post("/transcribe")
 async def transcribe(

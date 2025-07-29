@@ -1,0 +1,1 @@
+1. اذهب إلى Supabase Dashboard  Editor

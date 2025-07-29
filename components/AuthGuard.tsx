@@ -1,4 +1,4 @@
-import React, { useEffect, useRef } from 'react';
+import React, { useEffect } from 'react';
 import { View, Text, ActivityIndicator } from 'react-native';
 import { router, usePathname } from 'expo-router';
 import { useAuth } from '@/contexts/AuthContext';
@@ -10,33 +10,31 @@ interface AuthGuardProps {
 export function AuthGuard({ children }: AuthGuardProps) {
   const { user, loading } = useAuth();
   const pathname = usePathname();
-  const hasRedirected = useRef(false);
 
   useEffect(() => {
-    if (!loading) {
-      // إذا كان المستخدم غير موجود وليس في صفحة auth
-      if (!user && !pathname.startsWith('/(auth)') && !hasRedirected.current) {
-        console.log('[AuthGuard] No user found, redirecting to sign-in...');
-        hasRedirected.current = true;
-        // استخدام setTimeout للتأكد من أن التوجيه يحدث بعد render
-        setTimeout(() => {
-          router.replace('/(auth)/sign-in');
-        }, 100);
-      } 
-      // إذا كان المستخدم موجود وفي صفحة auth
-      else if (user && pathname.startsWith('/(auth)') && !hasRedirected.current) {
-        console.log('[AuthGuard] User authenticated, redirecting to tabs...');
-        hasRedirected.current = true;
-        // استخدام setTimeout للتأكد من أن التوجيه يحدث بعد render
-        setTimeout(() => {
-          router.replace('/(tabs)');
-        }, 100);
-      }
-      // إعادة تعيين العلم عند تغيير حالة المستخدم
-      else if (user && hasRedirected.current) {
-        console.log('[AuthGuard] User authenticated, resetting redirect flag');
-        hasRedirected.current = false;
-      }
+    if (loading) return;
+
+    console.log('[AuthGuard] Checking auth state:', { 
+      user: !!user, 
+      pathname, 
+      isOnAuthPage: pathname?.startsWith('/(auth)'),
+      isAuthenticated: !!user 
+    });
+
+    const isOnAuthPage = pathname?.startsWith('/(auth)');
+    const isAuthenticated = !!user;
+
+    if (isAuthenticated && isOnAuthPage) {
+      // المستخدم مسجل دخول وفي صفحة auth -> توجيه إلى التطبيق
+      console.log('[AuthGuard] User authenticated but on auth page, redirecting to app...');
+      router.replace('/(tabs)');
+    } else if (!isAuthenticated && !isOnAuthPage) {
+      // المستخدم غير مسجل دخول وليس في صفحة auth -> توجيه إلى التسجيل
+      console.log('[AuthGuard] User not authenticated and not on auth page, redirecting to sign-up...');
+      router.replace('/(auth)/sign-up');
+    } else {
+      // الحالات الأخرى - السماح بالوصول
+      console.log('[AuthGuard] Allowing access - user:', !!user, 'pathname:', pathname);
     }
   }, [user, loading, pathname]);
 
@@ -50,18 +48,6 @@ export function AuthGuard({ children }: AuthGuardProps) {
     );
   }
 
-  // If no user and not loading, allow navigation to auth pages
-  if (!user && !pathname.startsWith('/(auth)')) {
-    // Don't show loading screen, let the redirect happen naturally
-    return <>{children}</>;
-  }
-
-  // If user is authenticated and on auth pages, allow navigation to app
-  if (user && pathname.startsWith('/(auth)')) {
-    // Don't show loading screen, let the redirect happen naturally
-    return <>{children}</>;
-  }
-
-  // Render children for all other cases
+  // السماح بالوصول في جميع الحالات - التوجيه يتم في useEffect
   return <>{children}</>;
 } 

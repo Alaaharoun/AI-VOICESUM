@@ -1,39 +1,35 @@
 
-// Simple test to verify Hugging Face functionality
-console.log('🧪 Testing Hugging Face setup...');
+// Simple test for local server
+const http = require('http');
 
-// Test 1: Check if SpeechService exists
-try {
-  const { SpeechService } = require('./services/speechService');
-  console.log('✅ SpeechService imported successfully');
+function testHTTP() {
+  console.log('🔍 Testing HTTP connection to local server...');
   
-  // Test 2: Check if methods exist
-  if (typeof SpeechService.transcribeAudio === 'function') {
-    console.log('✅ transcribeAudio method exists');
-  } else {
-    console.log('❌ transcribeAudio method missing');
-  }
-  
-  // Test 3: Check if transcribeWithHuggingFace exists (private method)
-  console.log('ℹ️ transcribeWithHuggingFace is a private method (not directly accessible)');
-  
-} catch (error) {
-  console.error('❌ Import error:', error.message);
+  const options = {
+    hostname: 'localhost',
+    port: 7860,
+    path: '/health',
+    method: 'GET'
+  };
+
+  const req = http.request(options, (res) => {
+    console.log(`✅ HTTP Status: ${res.statusCode}`);
+    
+    let data = '';
+    res.on('data', (chunk) => {
+      data += chunk;
+    });
+    
+    res.on('end', () => {
+      console.log('📨 Response:', data);
+    });
+  });
+
+  req.on('error', (error) => {
+    console.log('❌ HTTP Error:', error.message);
+  });
+
+  req.end();
 }
 
-// Test 4: Check transcriptionEngineService
-try {
-  const { transcriptionEngineService } = require('./services/transcriptionEngineService');
-  console.log('✅ transcriptionEngineService imported successfully');
-  
-  if (typeof transcriptionEngineService.getCurrentEngine === 'function') {
-    console.log('✅ getCurrentEngine method exists');
-  } else {
-    console.log('❌ getCurrentEngine method missing');
-  }
-  
-} catch (error) {
-  console.error('❌ Import error:', error.message);
-}
-
-console.log('\n🎯 Test completed!');
+testHTTP();

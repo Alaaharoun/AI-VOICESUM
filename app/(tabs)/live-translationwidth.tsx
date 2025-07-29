@@ -15,6 +15,7 @@ import { useAuth } from '@/contexts/AuthContext';
 import Icon from 'react-native-vector-icons/MaterialCommunityIcons';
 import { transcriptionEngineService } from '../../services/transcriptionEngineService';
 import { EarlyConnectionService } from '../../services/earlyConnectionService';
+import { StreamingService } from '../../services/streamingService';
 
 interface TranscriptionItem {
   id: string;
@@ -96,6 +97,9 @@ export default function LiveTranslationWidthScreen() {
   const translationScrollViewRef = useRef<ScrollView>(null); // ref for translation auto-scroll
   const isConnectingRef = useRef<boolean>(false); // منع الاتصالات المتعددة
   const isTranslatingRef = useRef<Set<string>>(new Set()); // منع الترجمة المتعددة لنفس النص
+
+  // Streaming service ref
+  const streamingServiceRef = useRef<StreamingService | null>(null);
 
   // Add a ref to track the last Azure transcription text
   const lastAzureTextRef = useRef<string>('');
@@ -192,6 +196,41 @@ export default function LiveTranslationWidthScreen() {
   }, [realTimeTranscription, isRecording]);
 
   // Helper function to convert language codes to Azure format
+  // Initialize streaming service
+  const initializeStreamingService = async () => {
+    try {
+      Logger.info('Initializing streaming service...');
+      
+      streamingServiceRef.current = new StreamingService();
+      await streamingServiceRef.current.connect(
+        selectedSourceLanguage?.code || 'auto',
+        selectedTargetLanguage?.code || 'en',
+        await transcriptionEngineService.getCurrentEngine(),
+        (transcriptionText: string) => {
+          Logger.info('Real-time transcription received:', transcriptionText);
+          setRealTimeTranscription(transcriptionText);
+          setCurrentSessionText(prev => ({
+            ...prev,
+            original: transcriptionText
+          }));
+        },
+        (translationText: string) => {
+          Logger.info('Real-time translation received:', translationText);
+          setRealTimeTranslation(translationText);
+          setCurrentSessionText(prev => ({
+            ...prev,
+            translation: translationText
+          }));
+        }
+      );
+      
+      Logger.info('Streaming service initialized successfully');
+    } catch (error) {
+      Logger.error('Failed to initialize streaming service:', error);
+      setError('فشل في تهيئة خدمة الترجمة المباشرة');
+    }
+  };
+
   const convertToAzureLanguage = (langCode: string): string => {
     // فقط اللغات المدعومة من Azure Speech Service
     const azureLanguageMap: { [key: string]: string } = {
@@ -942,7 +981,7 @@ export default function LiveTranslationWidthScreen() {
     setIsStartingRecording(true);
     
     try {
-      Logger.info('🎙️ Starting audio streaming...');
+      Logger.info('🎙️ Starting real-time streaming...');
       setShowSummaryButton(false); // Hide summary button when starting new recording
       
       // Reset state for new recording session
@@ -958,7 +997,11 @@ export default function LiveTranslationWidthScreen() {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
       
-      // 2. إذا لم يكن AudioService جاهزًا، هيئه
+      // 2. تهيئة خدمة الـstreaming
+      Logger.info('Initializing streaming service...');
+      await initializeStreamingService();
+      
+      // 3. إذا لم يكن AudioService جاهزًا، هيئه
       if (!isReady || !audioServiceRef.current) {
         Logger.info('Audio service not ready, initializing...');
         setIsInitializing(true);
@@ -974,33 +1017,6 @@ export default function LiveTranslationWidthScreen() {
         } finally {
           setIsInitializing(false);
         }
-      }
-      
-      // 3. إنشاء WebSocket connection إذا لم يكن موجوداً أو غير مفتوح
-      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        Logger.info('Creating WebSocket connection...');
-        await initializeWebSocket();
-        
-        // تحقق من المحرك الحالي
-        const currentEngine = await transcriptionEngineService.getCurrentEngine();
-        
-        if (currentEngine === 'huggingface') {
-          // Hugging Face لا يحتاج WebSocket
-          Logger.info('✅ Hugging Face engine - WebSocket not needed, proceeding with HTTP API');
-        } else {
-          // Azure يحتاج WebSocket
-          // انتظار قصير للتأكد من الاتصال
-          await new Promise(resolve => setTimeout(resolve, 1000));
-          
-          // تحقق إضافي من حالة الاتصال
-          if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-            Logger.error('❌ WebSocket connection failed to establish');
-            setError('فشل في الاتصال بالسيرفر. يرجى المحاولة مرة أخرى.');
-            return;
-          }
-        }
-      } else {
-        Logger.info('✅ WebSocket connection already open and ready');
       }
       
       // CRASH PREVENTION: Ensure audio service exists and is ready
@@ -1063,39 +1079,46 @@ export default function LiveTranslationWidthScreen() {
           return;
         }
         
-        // إضافة الـchunk إلى الـbuffer
-        chunkBufferRef.current.push(raw);
-        Logger.info(`[onData] 📦 Added chunk to buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
-        
-        // تحديد استراتيجية الإرسال بناءً على حجم البيانات - إرسال مستمر بدون timeout
-        const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
-        const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio (تقليل الحجم للاستجابة الأسرع)
-        
-        // إرسال البيانات فوراً عند الوصول للحجم المطلوب (بدون timeout)
-        if (bufferSize >= targetBufferSize) {
-          Logger.info(`[onData] 🚀 Buffer size reached target (${bufferSize}/${targetBufferSize} bytes), sending immediately`);
-          sendBufferedChunks();
-          return;
-        }
-        
-        // إلغاء الـtimeout السابق للتجميع
-        if (chunkBufferTimeoutRef.current) {
-          clearTimeout(chunkBufferTimeoutRef.current);
-          Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
-        }
-        
-        // لا نستخدم timeout في الترجمة الفورية - فقط إرسال مباشر أو عند الإيقاف
-        if (!isRealTimeMode) {
-          // للتسجيل العادي فقط - استخدام timeout
-          const bufferTimeout = 2000; // 2 seconds for regular recording
-          chunkBufferTimeoutRef.current = setTimeout(() => {
-            Logger.info(`[onData] ⏰ Buffer timeout reached (${bufferTimeout}ms), calling sendBufferedChunks`);
-            sendBufferedChunks();
-          }, bufferTimeout);
-          
-          Logger.info(`[onData] ⏰ Set buffer timeout for regular mode: ${bufferTimeout}ms (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+        // إرسال البيانات مباشرة إلى خدمة الـstreaming
+        if (streamingServiceRef.current) {
+          streamingServiceRef.current.sendAudioChunk(raw);
+          Logger.info(`[onData] 🚀 Sent chunk to streaming service: ${raw.byteLength} bytes`);
         } else {
-          Logger.info(`[onData] 🔴 Real-time mode: No timeout, buffer will be sent only on size target or stop (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          Logger.warn(`[onData] ⚠️ Streaming service not available, falling back to buffer`);
+          // Fallback to old method if streaming service is not available
+          chunkBufferRef.current.push(raw);
+          Logger.info(`[onData] 📦 Added chunk to buffer. Buffer now has ${chunkBufferRef.current.length} chunks`);
+          
+          // تحديد استراتيجية الإرسال بناءً على حجم البيانات
+          const bufferSize = chunkBufferRef.current.reduce((sum, chunk) => sum + chunk.byteLength, 0);
+          const targetBufferSize = 32000; // ~1 second of 16kHz 16-bit mono audio
+          
+          // إرسال البيانات فوراً عند الوصول للحجم المطلوب
+          if (bufferSize >= targetBufferSize) {
+            Logger.info(`[onData] 🚀 Buffer size reached target (${bufferSize}/${targetBufferSize} bytes), sending immediately`);
+            sendBufferedChunks();
+            return;
+          }
+          
+          // إلغاء الـtimeout السابق للتجميع
+          if (chunkBufferTimeoutRef.current) {
+            clearTimeout(chunkBufferTimeoutRef.current);
+            Logger.info(`[onData] ⏰ Cleared previous buffer timeout`);
+          }
+          
+          // لا نستخدم timeout في الترجمة الفورية
+          if (!isRealTimeMode) {
+            // للتسجيل العادي فقط - استخدام timeout
+            const bufferTimeout = 2000; // 2 seconds for regular recording
+            chunkBufferTimeoutRef.current = setTimeout(() => {
+              Logger.info(`[onData] ⏰ Buffer timeout reached (${bufferTimeout}ms), calling sendBufferedChunks`);
+              sendBufferedChunks();
+            }, bufferTimeout);
+            
+            Logger.info(`[onData] ⏰ Set buffer timeout for regular mode: ${bufferTimeout}ms (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          } else {
+            Logger.info(`[onData] 🔴 Real-time mode: No timeout, buffer will be sent only on size target or stop (buffer size: ${bufferSize}/${targetBufferSize} bytes)`);
+          }
         }
       });
       
@@ -1228,9 +1251,15 @@ export default function LiveTranslationWidthScreen() {
     setIsStoppingRecording(true);
     
     try {
-      Logger.info('Stopping audio streaming...');
+      Logger.info('Stopping real-time streaming...');
       
-      // إرسال أي chunks متبقية في الـbuffer قبل الإيقاف
+      // إيقاف خدمة الـstreaming
+      if (streamingServiceRef.current) {
+        streamingServiceRef.current.stopStreaming();
+        Logger.info('✅ Streaming service stopped successfully');
+      }
+      
+      // إرسال أي chunks متبقية في الـbuffer قبل الإيقاف (fallback)
       if (chunkBufferRef.current.length > 0) {
         Logger.info(`[stopStreaming] 📤 Sending remaining ${chunkBufferRef.current.length} chunks before stopping`);
         sendBufferedChunks();
