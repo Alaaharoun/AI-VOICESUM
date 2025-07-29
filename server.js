@@ -579,220 +579,260 @@ function startWebSocketServer(server) {
           initialized: initialized
         });
         
-        // Check if this is an initialization message
-        if (!initialized) {
-          try {
-            const msg = JSON.parse(data.toString());
-            console.log('📥 Received init message:', msg);
+        // First, try to parse as JSON to handle control messages (ping, init, etc.)
+        try {
+          const msg = JSON.parse(data.toString());
+          console.log('📥 Received JSON message:', msg.type);
+          
+          // Handle ping messages (always, regardless of initialization state)
+          if (msg.type === 'ping') {
+            console.log('🏓 Ping received, sending pong');
+            ws.send(JSON.stringify({ type: 'pong' }));
+            return;
+          }
+          
+          // Handle initialization messages (only if not initialized)
+          if (!initialized && msg.type === 'init') {
+            language = msg.language || 'en-US';
+            targetLanguage = msg.targetLanguage || 'ar-SA';
+            clientSideTranslation = msg.clientSideTranslation || false;
+            realTimeMode = msg.realTimeMode || false;
+            const autoDetection = msg.autoDetection || false;
             
-            if (msg.type === 'init') {
-              language = msg.language || 'en-US';
-              targetLanguage = msg.targetLanguage || 'ar-SA';
-              clientSideTranslation = msg.clientSideTranslation || false;
-              realTimeMode = msg.realTimeMode || false;
-              const autoDetection = msg.autoDetection || false;
+            // Check if language is supported
+            if (!supportedStreamingLanguages.includes(language)) {
+              console.warn(`⚠️ Language ${language} might not be supported for streaming, falling back to en-US`);
+              language = 'en-US';
+            }
+            
+            console.log(`🌐 Initializing Azure Speech SDK with:
+              - Source Language: ${language} ${autoDetection ? '(Auto Detection Mode)' : ''}
+              - Target Language: ${targetLanguage}
+              - Client-side Translation: ${clientSideTranslation}
+              - Real-time Mode: ${realTimeMode}
+              - Auto Detection: ${autoDetection}`);
+            
+            // Initialize Azure Speech SDK with simplified configuration
+            try {
+              // Create push stream with specific audio format
+              const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1); // 16kHz, 16-bit, mono
+              pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
+              audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
               
-              // Check if language is supported
-              if (!supportedStreamingLanguages.includes(language)) {
-                console.warn(`⚠️ Language ${language} might not be supported for streaming, falling back to en-US`);
-                language = 'en-US';
+              speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
+              speechConfig.speechRecognitionLanguage = language;
+              
+              // Enable continuous recognition for better results
+              speechConfig.enableDictation();
+              
+              // If auto detection is requested, try to enable auto language detection
+              if (autoDetection) {
+                console.log(`🔍 [${language}] Auto detection mode enabled - using ${language} as primary language`);
+                // Note: Azure requires a specific language to start, but will adapt
               }
               
-              console.log(`🌐 Initializing Azure Speech SDK with:
-                - Source Language: ${language} ${autoDetection ? '(Auto Detection Mode)' : ''}
-                - Target Language: ${targetLanguage}
-                - Client-side Translation: ${clientSideTranslation}
-                - Real-time Mode: ${realTimeMode}
-                - Auto Detection: ${autoDetection}`);
+              recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
               
-              // Initialize Azure Speech SDK with simplified configuration
-              try {
-                // Create push stream with specific audio format
-                const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1); // 16kHz, 16-bit, mono
-                pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
-                audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+              // Set up event handlers with simplified logging
+              recognizer.recognizing = (s, e) => {
+                console.log(`🎤 [${language}] RECOGNIZING:`, {
+                  text: e.result.text,
+                  reason: e.result.reason,
+                  resultId: e.result.resultId
+                });
                 
-                speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-                speechConfig.speechRecognitionLanguage = language;
-                
-                // Enable continuous recognition for better results
-                speechConfig.enableDictation();
-                
-                // If auto detection is requested, try to enable auto language detection
-                if (autoDetection) {
-                  console.log(`🔍 [${language}] Auto detection mode enabled - using ${language} as primary language`);
-                  // Note: Azure requires a specific language to start, but will adapt
+                if (e.result.text && e.result.text.trim()) {
+                  console.log(`🎤 [${language}] Recognizing: "${e.result.text}"`);
+                  ws.send(JSON.stringify({ 
+                    type: 'transcription', 
+                    text: e.result.text
+                  }));
                 }
+              };
+              
+              recognizer.recognized = (s, e) => {
+                console.log(`✅ [${language}] RECOGNIZED:`, {
+                  text: e.result.text,
+                  reason: e.result.reason,
+                  reasonText: speechsdk.ResultReason[e.result.reason]
+                });
                 
-                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-                
-                // Set up event handlers with simplified logging
-                recognizer.recognizing = (s, e) => {
-                  console.log(`🎤 [${language}] RECOGNIZING:`, {
-                    text: e.result.text,
-                    reason: e.result.reason,
-                    resultId: e.result.resultId
-                  });
-                  
+                if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
                   if (e.result.text && e.result.text.trim()) {
-                    console.log(`🎤 [${language}] Recognizing: "${e.result.text}"`);
+                    console.log(`✅ [${language}] Final result: "${e.result.text}"`);
                     ws.send(JSON.stringify({ 
-                      type: 'transcription', 
+                      type: 'final', 
                       text: e.result.text
                     }));
-                  }
-                };
-                
-                recognizer.recognized = (s, e) => {
-                  console.log(`✅ [${language}] RECOGNIZED:`, {
-                    text: e.result.text,
-                    reason: e.result.reason,
-                    reasonText: speechsdk.ResultReason[e.result.reason]
-                  });
-                  
-                  if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-                    if (e.result.text && e.result.text.trim()) {
-                      console.log(`✅ [${language}] Final result: "${e.result.text}"`);
-                      ws.send(JSON.stringify({ 
-                        type: 'final', 
-                        text: e.result.text
-                      }));
-                    } else {
-                      console.log(`✅ [${language}] Recognized speech but no text content`);
-                      ws.send(JSON.stringify({ 
-                        type: 'final', 
-                        text: '',
-                        reason: 'EmptyRecognition'
-                      }));
-                    }
-                  } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
-                    console.log(`⚪ [${language}] No speech could be recognized`);
-                    const noMatchDetails = speechsdk.NoMatchDetails.fromResult(e.result);
-                    console.log(`No match reason: ${noMatchDetails.reason}`);
+                  } else {
+                    console.log(`✅ [${language}] Recognized speech but no text content`);
                     ws.send(JSON.stringify({ 
                       type: 'final', 
                       text: '',
-                      reason: 'NoMatch',
-                      details: noMatchDetails.reason
-                    }));
-                  } else {
-                    console.log(`🔍 [${language}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
-                    ws.send(JSON.stringify({ 
-                      type: 'final', 
-                      text: e.result.text || '',
-                      reason: speechsdk.ResultReason[e.result.reason]
+                      reason: 'EmptyRecognition'
                     }));
                   }
-                };
-                
-                recognizer.canceled = (s, e) => {
-                  console.error(`❌ [${language}] Recognition canceled:`, {
-                    errorDetails: e.errorDetails,
-                    reason: e.reason,
-                    reasonText: speechsdk.CancellationReason[e.reason],
-                    errorCode: e.errorCode
-                  });
-                  console.error(`Cancel reason: ${e.reason}`);
+                } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
+                  console.log(`⚪ [${language}] No speech could be recognized`);
+                  const noMatchDetails = speechsdk.NoMatchDetails.fromResult(e.result);
+                  console.log(`No match reason: ${noMatchDetails.reason}`);
                   ws.send(JSON.stringify({ 
-                    type: 'error', 
-                    error: `Recognition canceled: ${e.errorDetails}`,
-                    reason: e.reason,
-                    errorCode: e.errorCode
+                    type: 'final', 
+                    text: '',
+                    reason: 'NoMatch',
+                    details: noMatchDetails.reason
                   }));
-                  
-                  // Clean up
-                  if (recognizer) {
-                    recognizer.close();
-                    recognizer = null;
-                  }
-                  if (pushStream) {
-                    pushStream.close();
-                    pushStream = null;
-                  }
-                };
-                
-                recognizer.sessionStarted = (s, e) => {
-                  console.log(`🚀 [${language}] Session started:`, {
-                    sessionId: e.sessionId,
-                    timestamp: new Date().toISOString()
-                  });
-                  ws.send(JSON.stringify({ type: 'status', message: 'Recognition session started' }));
-                };
-                
-                recognizer.sessionStopped = (s, e) => {
-                  console.log(`🛑 [${language}] Session stopped:`, {
-                    sessionId: e.sessionId,
-                    timestamp: new Date().toISOString()
-                  });
-                  ws.send(JSON.stringify({ type: 'status', message: 'Recognition session stopped' }));
-                };
-                
-                // Add speech start/end detection
-                recognizer.speechStartDetected = (s, e) => {
-                  console.log(`🗣️ [${language}] Speech start detected:`, {
-                    sessionId: e.sessionId,
-                    offset: e.offset,
-                    timestamp: new Date().toISOString()
-                  });
-                };
-                
-                recognizer.speechEndDetected = (s, e) => {
-                  console.log(`🤐 [${language}] Speech end detected:`, {
-                    sessionId: e.sessionId,
-                    offset: e.offset,
-                    timestamp: new Date().toISOString()
-                  });
-                };
-                
-                // Start continuous recognition
-                recognizer.startContinuousRecognitionAsync(
-                  () => {
-                    console.log(`✅ [${language}] Continuous recognition started successfully`);
-                    initialized = true;
-                    ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
-                    console.log(`📤 [${language}] Sent ready status to client`);
-                  },
-                  (err) => {
-                    console.error(`❌ [${language}] Failed to start recognition:`, err);
-                    ws.send(JSON.stringify({ type: 'error', error: `Failed to start recognition: ${err}` }));
-                    console.log(`📤 [${language}] Sent error status to client:`, err);
-                  }
-                );
-                
-              } catch (initError) {
-                console.error('❌ Azure Speech SDK initialization error:', initError);
-                ws.send(JSON.stringify({ type: 'error', error: `Initialization failed: ${initError.message}` }));
-              }
-              
-              return;
-            } else if (msg.type === 'language_update') {
-              // Handle language update
-              console.log('🔄 Language update requested:', msg);
-              if (msg.sourceLanguage && supportedStreamingLanguages.includes(msg.sourceLanguage)) {
-                language = msg.sourceLanguage;
-                targetLanguage = msg.targetLanguage || targetLanguage;
-                
-                // Restart recognition with new language
-                if (recognizer) {
-                  recognizer.stopContinuousRecognitionAsync(() => {
-                    speechConfig.speechRecognitionLanguage = language;
-                    recognizer.startContinuousRecognitionAsync();
-                    console.log(`🔄 Language updated to: ${language}`);
-                    ws.send(JSON.stringify({ type: 'status', message: `Language updated to ${language}` }));
-                  });
+                } else {
+                  console.log(`🔍 [${language}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
+                  ws.send(JSON.stringify({ 
+                    type: 'final', 
+                    text: e.result.text || '',
+                    reason: speechsdk.ResultReason[e.result.reason]
+                  }));
                 }
-              }
-              return;
+              };
+              
+              recognizer.canceled = (s, e) => {
+                console.error(`❌ [${language}] Recognition canceled:`, {
+                  errorDetails: e.errorDetails,
+                  reason: e.reason,
+                  reasonText: speechsdk.CancellationReason[e.reason],
+                  errorCode: e.errorCode
+                });
+                console.error(`Cancel reason: ${e.reason}`);
+                ws.send(JSON.stringify({ 
+                  type: 'error', 
+                  error: `Recognition canceled: ${e.errorDetails}`,
+                  reason: e.reason,
+                  errorCode: e.errorCode
+                }));
+                
+                // Clean up
+                if (recognizer) {
+                  recognizer.close();
+                  recognizer = null;
+                }
+                if (pushStream) {
+                  pushStream.close();
+                  pushStream = null;
+                }
+              };
+              
+              recognizer.sessionStarted = (s, e) => {
+                console.log(`🚀 [${language}] Session started:`, {
+                  sessionId: e.sessionId,
+                  timestamp: new Date().toISOString()
+                });
+                ws.send(JSON.stringify({ type: 'status', message: 'Recognition session started' }));
+              };
+              
+              recognizer.sessionStopped = (s, e) => {
+                console.log(`🛑 [${language}] Session stopped:`, {
+                  sessionId: e.sessionId,
+                  timestamp: new Date().toISOString()
+                });
+                ws.send(JSON.stringify({ type: 'status', message: 'Recognition session stopped' }));
+              };
+              
+              // Add speech start/end detection
+              recognizer.speechStartDetected = (s, e) => {
+                console.log(`🗣️ [${language}] Speech start detected:`, {
+                  sessionId: e.sessionId,
+                  offset: e.offset,
+                  timestamp: new Date().toISOString()
+                });
+              };
+              
+              recognizer.speechEndDetected = (s, e) => {
+                console.log(`🤐 [${language}] Speech end detected:`, {
+                  sessionId: e.sessionId,
+                  offset: e.offset,
+                  timestamp: new Date().toISOString()
+                });
+              };
+              
+              // Start continuous recognition
+              recognizer.startContinuousRecognitionAsync(
+                () => {
+                  console.log(`✅ [${language}] Continuous recognition started successfully`);
+                  initialized = true;
+                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
+                  console.log(`📤 [${language}] Sent ready status to client`);
+                },
+                (err) => {
+                  console.error(`❌ [${language}] Failed to start recognition:`, err);
+                  ws.send(JSON.stringify({ type: 'error', error: `Failed to start recognition: ${err}` }));
+                  console.log(`📤 [${language}] Sent error status to client:`, err);
+                }
+              );
+              
+            } catch (initError) {
+              console.error('❌ Azure Speech SDK initialization error:', initError);
+              ws.send(JSON.stringify({ type: 'error', error: `Initialization failed: ${initError.message}` }));
             }
-          } catch (parseError) {
-            console.log('📦 Received non-JSON data, treating as audio');
+            
+            return;
+          } else if (!initialized && msg.type === 'language_update') {
+            // Handle language update
+            console.log('🔄 Language update requested:', msg);
+            if (msg.sourceLanguage && supportedStreamingLanguages.includes(msg.sourceLanguage)) {
+              language = msg.sourceLanguage;
+              targetLanguage = msg.targetLanguage || targetLanguage;
+              
+              // Restart recognition with new language
+              if (recognizer) {
+                recognizer.stopContinuousRecognitionAsync(() => {
+                  speechConfig.speechRecognitionLanguage = language;
+                  recognizer.startContinuousRecognitionAsync();
+                  console.log(`🔄 Language updated to: ${language}`);
+                  ws.send(JSON.stringify({ type: 'status', message: `Language updated to ${language}` }));
+                });
+              }
+            }
+            return;
+          } else if (msg.type === 'audio') {
+            // Handle audio data from new app
+            console.log('🎵 Received audio data from new app');
+            // Continue to audio processing below
+          } else {
+            // Unknown JSON message type
+            console.log('📦 Received unknown JSON message type:', msg.type);
+            return;
           }
+        } catch (parseError) {
+          // Not JSON, treat as audio data
+          console.log('📦 Received non-JSON data, treating as audio');
         }
         
-        // Handle audio data
-        if (initialized && pushStream && data instanceof Buffer) {
-          const audioSize = data.length;
-          console.log(`🎵 [${language}] Received audio chunk: ${audioSize} bytes`);
+        // Handle audio data (support both raw PCM and JSON with base64)
+        if (initialized && pushStream) {
+          let audioBuffer;
+          let audioSize;
+          
+          if (data instanceof Buffer) {
+            // Raw PCM data (from old app)
+            audioBuffer = data;
+            audioSize = data.length;
+            console.log(`🎵 [${language}] Received raw PCM audio chunk: ${audioSize} bytes`);
+          } else {
+            // JSON data with base64 (from new app)
+            try {
+              const jsonData = JSON.parse(data.toString());
+              if (jsonData.type === 'audio' && jsonData.data) {
+                // Convert base64 to buffer
+                audioBuffer = Buffer.from(jsonData.data, 'base64');
+                audioSize = audioBuffer.length;
+                console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${jsonData.format}`);
+              } else {
+                console.log(`📦 Received JSON message:`, jsonData);
+                return;
+              }
+            } catch (parseError) {
+              console.log('📦 Received non-JSON data, treating as audio');
+              audioBuffer = data;
+              audioSize = data.length;
+            }
+          }
           
           // Add detailed audio analysis
           const timestamp = new Date().toISOString();
@@ -815,7 +855,7 @@ function startWebSocketServer(server) {
               let hasSound = false;
               const samples = Math.min(100, Math.floor(audioSize / 2)); // Check first 100 samples
               for (let i = 0; i < samples * 2; i += 2) {
-                const sample = data.readInt16LE(i);
+                const sample = audioBuffer.readInt16LE(i);
                 if (Math.abs(sample) > 1000) { // Threshold for detecting sound
                   hasSound = true;
                   break;
@@ -824,11 +864,11 @@ function startWebSocketServer(server) {
               
               console.log(`🎵 [${language}] Audio content analysis:`, {
                 hasSound: hasSound,
-                firstFewBytes: data.slice(0, 16).toString('hex'),
-                maxSample: Math.max(...Array.from({length: Math.min(samples, 10)}, (_, i) => Math.abs(data.readInt16LE(i * 2))))
+                firstFewBytes: audioBuffer.slice(0, 16).toString('hex'),
+                maxSample: Math.max(...Array.from({length: Math.min(samples, 10)}, (_, i) => Math.abs(audioBuffer.readInt16LE(i * 2))))
               });
               
-              pushStream.write(data);
+              pushStream.write(audioBuffer);
               console.log(`✅ [${language}] Audio chunk written to Azure Speech SDK (has sound: ${hasSound})`);
             } catch (writeError) {
               console.error(`❌ [${language}] Failed to write audio to stream:`, writeError);
