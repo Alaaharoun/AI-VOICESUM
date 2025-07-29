@@ -91,12 +91,22 @@ export const LiveTranslation: React.FC = () => {
         sourceLanguage,
         targetLanguage,
         (transcriptionText: string) => {
-          console.log('📝 Real-time transcription:', transcriptionText);
-          setRealTimeTranscription(transcriptionText);
+          console.log('📝 Real-time transcription received:', transcriptionText);
+          if (transcriptionText && transcriptionText.trim()) {
+            setRealTimeTranscription(transcriptionText);
+            console.log('✅ Transcription updated in UI:', transcriptionText);
+          } else {
+            console.log('⚠️ Empty transcription received, ignoring');
+          }
         },
         (translationText: string) => {
-          console.log('🌍 Real-time translation:', translationText);
-          setRealTimeTranslation(translationText);
+          console.log('🌍 Real-time translation received:', translationText);
+          if (translationText && translationText.trim()) {
+            setRealTimeTranslation(translationText);
+            console.log('✅ Translation updated in UI:', translationText);
+          } else {
+            console.log('⚠️ Empty translation received, ignoring');
+          }
         }
       );
       
@@ -613,7 +623,9 @@ export const LiveTranslation: React.FC = () => {
               </h3>
               <div className="bg-white rounded-lg p-4 min-h-[200px] max-h-[400px] overflow-y-auto">
                 {realTimeTranscription || transcription || (
-                  <span className="text-gray-500">Transcription will appear here...</span>
+                  <span className="text-gray-500">
+                    {isRecording ? 'Listening... Speak now!' : 'Transcription will appear here...'}
+                  </span>
                 )}
               </div>
             </div>
