@@ -232,6 +232,8 @@ export const LiveTranslation: React.FC = () => {
       mediaRecorder.onstop = async () => {
         console.log('🛑 Media recorder stopped');
         setIsProcessing(false);
+        setIsRecording(false); // Ensure recording state is reset
+        setStreamingStatus('idle'); // Reset streaming status
         // Save final results to database
         await saveToDatabase();
       };
@@ -241,6 +243,10 @@ export const LiveTranslation: React.FC = () => {
         setError('Audio recording error occurred. Please try again.');
         setIsRecording(false);
         setIsProcessing(false);
+        setStreamingStatus('error');
+        // Force cleanup
+        audioStreamRef.current = null;
+        mediaRecorderRef.current = null;
       };
 
       // Start recording with 1-second chunks for real-time processing
@@ -259,6 +265,11 @@ export const LiveTranslation: React.FC = () => {
   const stopRecording = () => {
     try {
       console.log('🛑 Stopping recording...');
+      
+      // Immediately update UI state
+      setIsRecording(false);
+      setIsProcessing(false);
+      setStreamingStatus('idle');
       
       // Stop media recorder
       if (mediaRecorderRef.current) {
@@ -290,11 +301,6 @@ export const LiveTranslation: React.FC = () => {
       } else {
         console.log('⚠️ No media recorder found');
       }
-      
-      // Reset state
-      setIsRecording(false);
-      setIsProcessing(false);
-      setStreamingStatus('idle');
       
       // Clear stream reference
       audioStreamRef.current = null;
@@ -504,6 +510,11 @@ export const LiveTranslation: React.FC = () => {
                 console.log('Button clicked, isRecording:', isRecording);
                 if (isRecording) {
                   console.log('Stopping recording...');
+                  // Force immediate UI update
+                  setIsRecording(false);
+                  setIsProcessing(false);
+                  setStreamingStatus('idle');
+                  // Then stop recording
                   stopRecording();
                 } else {
                   console.log('Starting recording...');
