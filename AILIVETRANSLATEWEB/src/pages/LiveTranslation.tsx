@@ -314,6 +314,7 @@ export const LiveTranslation: React.FC = () => {
       
       // Clear stream reference
       audioStreamRef.current = null;
+      mediaRecorderRef.current = null; // Clear media recorder reference
       
       // Disconnect Render WebSocket service
       if (renderWebSocketServiceRef.current) {
@@ -330,6 +331,7 @@ export const LiveTranslation: React.FC = () => {
       setIsProcessing(false);
       setStreamingStatus('idle');
       audioStreamRef.current = null;
+      mediaRecorderRef.current = null;
       
       // Note: Stream cleanup is handled in the main try block above
     }
@@ -525,18 +527,18 @@ export const LiveTranslation: React.FC = () => {
                   setIsProcessing(false);
                   setStreamingStatus('idle');
                   // Then stop recording
-                  stopRecording();
+                  setTimeout(() => stopRecording(), 100); // Small delay to ensure UI updates first
                 } else {
                   console.log('Starting recording...');
                   startRecording();
                 }
               }}
-              disabled={isProcessing || isInitializing}
+              disabled={isInitializing && !isRecording} // Allow stopping even when processing
               className={`flex items-center justify-center w-20 h-20 rounded-full text-white font-bold text-lg transition-all duration-200 ${
                 isRecording 
-                  ? 'bg-red-500 hover:bg-red-600' 
+                  ? 'bg-red-500 hover:bg-red-600 cursor-pointer' 
                   : 'bg-blue-500 hover:bg-blue-600'
-              } ${(isProcessing || isInitializing) ? 'opacity-50 cursor-not-allowed' : ''}`}
+              } ${(isInitializing && !isRecording) ? 'opacity-50 cursor-not-allowed' : ''}`}
             >
               {isRecording ? <MicOff size={24} /> : <Mic size={24} />}
             </button>
