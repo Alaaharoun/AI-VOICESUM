@@ -667,6 +667,7 @@ function startWebSocketServer(server) {
     let clientSideTranslation = false;
     let realTimeMode = false;
     let initialized = false;
+    let pendingAudioChunks = []; // Store audio chunks until initialization is complete
     
     // Supported languages for Azure Speech real-time streaming
     const supportedStreamingLanguages = [
@@ -932,6 +933,42 @@ function startWebSocketServer(server) {
                   ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   console.log(`📤 [${language}] Sent ready status to client`);
                   
+                  // Process any pending audio chunks
+                  if (pendingAudioChunks.length > 0) {
+                    console.log(`🎵 [${language}] Processing ${pendingAudioChunks.length} stored audio chunks...`);
+                    pendingAudioChunks.forEach((chunk, index) => {
+                      console.log(`🎵 [${language}] Processing stored audio data: ${chunk.length} bytes, format: audio/pcm`);
+                      
+                      // Parse the stored chunk
+                      let jsonData = null;
+                      try {
+                        jsonData = JSON.parse(chunk.toString());
+                      } catch (parseError) {
+                        // Not JSON, treat as raw PCM data
+                        const audioBuffer = chunk;
+                        const audioSize = chunk.length;
+                        console.log(`✅ [${language}] Using stored PCM data directly: ${audioSize} bytes`);
+                        
+                        // Skip audio quality analysis for new app (client handles it)
+                        console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
+                        
+                        // More lenient criteria for PCM with longer chunks (~1 second optimal)
+                        if (audioSize >= 16000) { // At least 1 second of audio (optimal)
+                          console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
+                          
+                          // Write PCM data directly to Azure Speech SDK if available
+                          if (pushStream) {
+                            pushStream.write(audioBuffer);
+                            console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
+                          } else {
+                            console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                          }
+                        }
+                      }
+                    });
+                    pendingAudioChunks = []; // Clear the pending chunks
+                  }
+                  
                   // Also send a separate ready message to ensure client receives it
                   setTimeout(() => {
                     ws.send(JSON.stringify({ type: 'ready', message: 'Ready for audio input' }));
@@ -972,6 +1009,15 @@ function startWebSocketServer(server) {
           } else if (msg.type === 'audio') {
             // Handle audio data from new app
             console.log('🎵 Received audio data from new app');
+            
+            // If not initialized yet, store the audio chunk for later processing
+            if (!initialized) {
+              console.log('⚠️ Received audio data before initialization. Data size:', data.length, 'bytes');
+              console.log('📦 [en-US] Storing audio data for later processing...');
+              pendingAudioChunks.push(data);
+              return;
+            }
+            
             // Continue to audio processing below
           } else {
             // Unknown JSON message type
