@@ -26,7 +26,18 @@ console.log('Environment variables:', {
   AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION ? 'Present' : 'Missing'
 });
 
-// Helper function to convert audio format using ffmpeg
+// Helper function to convert MIME type to file extension
+function mimeToExtension(mimeType) {
+  if (mimeType.includes('webm')) return '.webm';
+  if (mimeType.includes('ogg')) return '.ogg';
+  if (mimeType.includes('mp3')) return '.mp3';
+  if (mimeType.includes('wav')) return '.wav';
+  if (mimeType.includes('m4a')) return '.m4a';
+  if (mimeType.includes('pcm')) return '.raw';
+  if (mimeType.includes('audio/pcm')) return '.raw';
+  return '.bin'; // fallback
+}
+
 async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav') {
   try {
     console.log(`🔄 Converting audio from ${inputFormat} to PCM WAV 16kHz...`);
@@ -34,22 +45,25 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
     // First try ffmpeg conversion
     try {
       // Create temporary files with proper extensions
-      let inputExtension = 'mp3'; // default
-      if (inputFormat.includes('webm')) inputExtension = 'webm';
-      else if (inputFormat.includes('ogg')) inputExtension = 'ogg';
-      else if (inputFormat.includes('wav')) inputExtension = 'wav';
-      else if (inputFormat.includes('mp3')) inputExtension = 'mp3';
-      else if (inputFormat.includes('m4a')) inputExtension = 'm4a';
-      
-      const inputFile = `/tmp/input_${Date.now()}.${inputExtension}`;
+      const inputExtension = mimeToExtension(inputFormat);
+      const inputFile = `/tmp/input_${Date.now()}${inputExtension}`;
       const outputFile = `/tmp/output_${Date.now()}.wav`;
       
       // Write input buffer to file
       fs.writeFileSync(inputFile, audioBuffer);
       
-      // Convert using ffmpeg to PCM WAV 16kHz 16-bit mono
-      const ffmpegCommand = `${ffmpegPath} -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
-      console.log(`🔧 FFmpeg command: ${ffmpegCommand}`);
+      // Build ffmpeg command based on input format
+      let ffmpegCommand;
+      
+      if (inputFormat === 'audio/pcm' || inputFormat.includes('pcm')) {
+        // For raw PCM data, specify format explicitly
+        ffmpegCommand = `${ffmpegPath} -f s16le -ar 16000 -ac 1 -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
+        console.log(`🔧 FFmpeg command (PCM raw): ${ffmpegCommand}`);
+      } else {
+        // For other formats, let ffmpeg auto-detect
+        ffmpegCommand = `${ffmpegPath} -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
+        console.log(`🔧 FFmpeg command (auto-detect): ${ffmpegCommand}`);
+      }
       
       await execAsync(ffmpegCommand);
       
@@ -499,7 +513,7 @@ app.post('/api/delete-account', async (req, res) => {
 
 // Helper: صيغة مدعومة من Azure
 const SUPPORTED_AUDIO_TYPES = [
-  'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/mpeg', 'audio/mp3', 'audio/m4a', 'audio/x-m4a', 'audio/ogg', 'audio/webm', 'audio/flac', 'audio/mp4'
+  'audio/wav', 'audio/x-wav', 'audio/wave', 'audio/mpeg', 'audio/mp3', 'audio/m4a', 'audio/x-m4a', 'audio/ogg', 'audio/webm', 'audio/flac', 'audio/mp4', 'audio/pcm'
 ];
 
 // دعم استقبال الصوت عبر form-data أو JSON
