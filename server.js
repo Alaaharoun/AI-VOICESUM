@@ -1023,8 +1023,8 @@ function startWebSocketServer(server) {
             const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
             console.log(`🔍 Audio quality result:`, audioQuality);
             
-            // More lenient criteria for PCM with longer chunks (3 seconds optimal)
-            if (audioSize >= 48000) { // At least 3 seconds of audio (optimal)
+            // More lenient criteria for PCM with longer chunks (~1 second optimal)
+            if (audioSize >= 16000) { // At least 1 second of audio (optimal)
               console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
               
               if (!audioQuality.hasSpeech) {
@@ -1041,7 +1041,7 @@ function startWebSocketServer(server) {
               pushStream.write(audioBuffer);
               console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
               return;
-            } else if (audioSize >= 24000) { // At least 1.5 seconds (acceptable)
+            } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
               console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
               
               if (!audioQuality.hasSpeech) {
