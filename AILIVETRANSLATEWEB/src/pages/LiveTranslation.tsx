@@ -25,6 +25,8 @@
     const renderWebSocketServiceRef = useRef<RenderWebSocketService | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioStreamRef = useRef<MediaStream | null>(null);
+    const audioContextRef = useRef<AudioContext | null>(null);
+    const processorRef = useRef<ScriptProcessorNode | null>(null);
     const { user } = useAuthStore();
 
     // Comprehensive language list from the old application
@@ -205,11 +207,14 @@
         });
         
         // Analyze microphone input for debugging
-        const audioContext = new AudioContext();
-        const source = audioContext.createMediaStreamSource(stream);
-        const analyser = audioContext.createAnalyser();
+        const testAudioContext = new AudioContext({
+          sampleRate: 16000,
+          latencyHint: 'interactive'
+        });
+        const testSource = testAudioContext.createMediaStreamSource(stream);
+        const analyser = testAudioContext.createAnalyser();
         analyser.fftSize = 256;
-        source.connect(analyser);
+        testSource.connect(analyser);
         
         const bufferLength = analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
@@ -225,70 +230,54 @@
           if (testDuration >= 1) {
             clearInterval(testInterval);
             console.log('✅ Microphone test completed');
-            audioContext.close();
+            testAudioContext.close();
           }
         }, 100);
         
         // Store stream reference for stopping later
         audioStreamRef.current = stream;
         
-        // Use optimal audio format for Azure Speech Service
-        const optimalFormat = AudioConverter.getOptimalAudioFormat();
-        console.log('🎵 Using optimal audio format:', optimalFormat);
+        // Use AudioContext to capture raw PCM data instead of MediaRecorder
+        console.log('🎵 Using AudioContext for raw PCM capture');
         
-        // Validate format compatibility
-        const formatInfo = AudioConverter.getFormatInfo(optimalFormat);
-        console.log('🎵 Format info:', formatInfo);
-        
-        if (!formatInfo.isCompatible) {
-          console.warn('⚠️ Audio format may not be optimal for Azure Speech Service');
-        }
-        
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: optimalFormat,
-          audioBitsPerSecond: optimalFormat.includes('pcm') ? 256000 : 128000 // Higher bitrate for PCM
+        const audioContext = new AudioContext({
+          sampleRate: 16000,
+          latencyHint: 'interactive'
         });
-        mediaRecorderRef.current = mediaRecorder;
-
-        mediaRecorder.ondataavailable = (event) => {
-          console.log('📦 Audio chunk received:', event.data.size, 'bytes');
+        
+        const source = audioContext.createMediaStreamSource(stream);
+        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        
+        // Store references for cleanup
+        audioContextRef.current = audioContext;
+        processorRef.current = processor;
+        
+        processor.onaudioprocess = (event) => {
+          const inputBuffer = event.inputBuffer;
+          const inputData = inputBuffer.getChannelData(0);
           
-          // Analyze audio chunk for debugging
-          const audioBlob = event.data;
-          console.log('🔍 Audio chunk analysis:', {
-            size: audioBlob.size,
-            type: audioBlob.type
-          });
+          // Convert Float32Array to Int16Array (PCM 16-bit)
+          const pcmData = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
+          }
+          
+          // Create blob from PCM data
+          const audioBlob = new Blob([pcmData], { type: 'audio/pcm' });
+          
+          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes');
           
           // Send audio chunk to Render WebSocket service
           if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
-            renderWebSocketServiceRef.current.sendAudioChunk(event.data);
+            renderWebSocketServiceRef.current.sendAudioChunk(audioBlob);
           }
         };
-
-        mediaRecorder.onstop = async () => {
-          console.log('🛑 Media recorder stopped');
-          setIsProcessing(false);
-          setIsRecording(false); // Ensure recording state is reset
-          setStreamingStatus('idle'); // Reset streaming status
-          // Save final results to database
-          await saveToDatabase();
-        };
-
-        mediaRecorder.onerror = (event) => {
-          console.error('❌ Media recorder error:', event);
-          setError('Audio recording error occurred. Please try again.');
-          setIsRecording(false);
-          setIsProcessing(false);
-          setStreamingStatus('error');
-          // Force cleanup
-          audioStreamRef.current = null;
-          mediaRecorderRef.current = null;
-        };
-
-        // Start recording with 1-second chunks for real-time processing
-        mediaRecorder.start(1000);
-        console.log('✅ Audio recording started successfully');
+        
+        // Connect the audio processing chain
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        
+        console.log('✅ Raw PCM recording started successfully');
         
       } catch (error) {
         console.error('❌ Error starting recording:', error);
@@ -308,40 +297,34 @@
         setIsProcessing(false);
         setStreamingStatus('idle');
         
-        // Stop media recorder
-        if (mediaRecorderRef.current) {
-          console.log('📹 Media recorder state:', mediaRecorderRef.current.state);
-          
-          if (mediaRecorderRef.current.state !== 'inactive') {
-            mediaRecorderRef.current.stop();
-            console.log('✅ Media recorder stopped');
-          } else {
-            console.log('⚠️ Media recorder already inactive');
-          }
-          
-          // Stop all tracks - try different ways to access stream
-          try {
-            let tracks: MediaStreamTrack[] = [];
-            if (mediaRecorderRef.current.stream) {
-              tracks = mediaRecorderRef.current.stream.getTracks();
-            } else if (audioStreamRef.current) {
-              tracks = audioStreamRef.current.getTracks();
-            }
-            
+        // Stop AudioContext processing
+        if (processorRef.current) {
+          processorRef.current.disconnect();
+          console.log('✅ Audio processor disconnected');
+        }
+        
+        if (audioContextRef.current) {
+          audioContextRef.current.close();
+          console.log('✅ Audio context closed');
+        }
+        
+        // Stop all tracks
+        try {
+          if (audioStreamRef.current) {
+            const tracks = audioStreamRef.current.getTracks();
             tracks.forEach((track: MediaStreamTrack) => {
               track.stop();
               console.log('🔇 Audio track stopped');
             });
-          } catch (error) {
-            console.warn('⚠️ Could not stop tracks:', error);
           }
-        } else {
-          console.log('⚠️ No media recorder found');
+        } catch (error) {
+          console.warn('⚠️ Could not stop tracks:', error);
         }
         
-        // Clear stream reference
+        // Clear references
         audioStreamRef.current = null;
-        mediaRecorderRef.current = null; // Clear media recorder reference
+        audioContextRef.current = null;
+        processorRef.current = null;
         
         // Disconnect Render WebSocket service
         if (renderWebSocketServiceRef.current) {
@@ -358,7 +341,8 @@
         setIsProcessing(false);
         setStreamingStatus('idle');
         audioStreamRef.current = null;
-        mediaRecorderRef.current = null;
+        audioContextRef.current = null;
+        processorRef.current = null;
         
         // Note: Stream cleanup is handled in the main try block above
       }
