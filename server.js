@@ -84,6 +84,19 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
     } catch (ffmpegError) {
       console.error('❌ FFmpeg conversion failed:', ffmpegError.message);
       
+      // ✅ تحسين معالجة أخطاء WebM الفاسدة
+      if (inputFormat.includes('webm') || inputFormat.includes('opus')) {
+        console.warn('⚠️ WebM/Opus conversion failed - likely corrupted chunk');
+        console.warn('📊 FFmpeg error details:', ffmpegError.message);
+        
+        // إذا كان الخطأ متعلق بـ EBML header parsing، ارفض الملف
+        if (ffmpegError.message.includes('EBML header parsing failed') || 
+            ffmpegError.message.includes('Invalid data found')) {
+          console.error('❌ WebM file is corrupted, cannot process');
+          throw new Error('Corrupted WebM file - EBML header invalid');
+        }
+      }
+      
       // If the input is already PCM data, try to create WAV header
       if (inputFormat === 'audio/pcm' || inputFormat.includes('pcm')) {
         console.log('🔄 Creating WAV header for PCM data...');
@@ -1071,6 +1084,17 @@ function startWebSocketServer(server) {
           if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
             try {
               console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
+              
+              // ✅ إضافة فحص للقطع الصغيرة المحتمل أن تكون فاسدة
+              if (audioFormat.includes('webm') && audioSize < 500) {
+                console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), likely corrupted - skipping`);
+                ws.send(JSON.stringify({ 
+                  type: 'warning', 
+                  message: 'Received corrupted audio chunk (too small). Please check your microphone.',
+                  audioStats: { size: audioSize, format: audioFormat, reason: 'chunk_too_small' }
+                }));
+                return;
+              }
               
                         // For PCM data, we can use it directly without conversion
           if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {

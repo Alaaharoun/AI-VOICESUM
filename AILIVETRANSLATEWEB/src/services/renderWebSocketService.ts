@@ -560,6 +560,91 @@ export class RenderWebSocketService {
     console.log('✅ Audio queue processed');
   }
 
+  // ✅ إضافة دالة فحص صحة البيانات الصوتية
+  private async validateAudioChunk(audioChunk: Blob): Promise<{isValid: boolean, reason?: string}> {
+    try {
+      // 1. فحص الحجم الأساسي
+      if (!audioChunk || audioChunk.size === 0) {
+        return { isValid: false, reason: 'Empty or null audio chunk' };
+      }
+
+      if (audioChunk.size < 100) {
+        return { isValid: false, reason: 'Audio chunk too small (< 100 bytes)' };
+      }
+
+      // 2. فحص نوع الصوت
+      const audioType = audioChunk.type;
+      if (!audioType) {
+        return { isValid: false, reason: 'No audio type specified' };
+      }
+
+      // 3. فحص WebM/Opus خاص
+      if (audioType.includes('webm') || audioType.includes('opus')) {
+        return await this.validateWebMChunk(audioChunk);
+      }
+
+      // 4. للأنواع الأخرى، فحص أساسي
+      console.log('✅ Audio chunk validation passed:', {
+        size: audioChunk.size,
+        type: audioType
+      });
+
+      return { isValid: true };
+
+    } catch (error) {
+      console.error('❌ Audio validation error:', error);
+      return { isValid: false, reason: `Validation error: ${error}` };
+    }
+  }
+
+  // ✅ فحص خاص لملفات WebM
+  private async validateWebMChunk(audioChunk: Blob): Promise<{isValid: boolean, reason?: string}> {
+    try {
+      // قراءة أول بضعة بايتات لفحص WebM header
+      const headerBuffer = await audioChunk.slice(0, 32).arrayBuffer();
+      const headerView = new Uint8Array(headerBuffer);
+
+      // WebM يجب أن يبدأ بـ EBML signature
+      // EBML magic number: 0x1A, 0x45, 0xDF, 0xA3
+      if (headerView.length >= 4) {
+        const ebmlSignature = [0x1A, 0x45, 0xDF, 0xA3];
+        const hasValidHeader = ebmlSignature.every((byte, index) => 
+          headerView[index] === byte
+        );
+
+        if (!hasValidHeader) {
+          // إذا لم يكن header صحيح، تحقق من الحد الأدنى للحجم
+          if (audioChunk.size < 1000) {
+            return { 
+              isValid: false, 
+              reason: `WebM chunk too small and no valid header (${audioChunk.size} bytes)` 
+            };
+          } else {
+            // إذا كان الحجم كبير، قد يكون chunk متوسط - اقبله
+            console.warn('⚠️ WebM chunk has no valid header but size is acceptable:', audioChunk.size);
+            return { isValid: true };
+          }
+        }
+      }
+
+      console.log('✅ WebM chunk validation passed:', {
+        size: audioChunk.size,
+        hasValidHeader: true
+      });
+
+      return { isValid: true };
+
+    } catch (error) {
+      console.error('❌ WebM validation error:', error);
+      // في حالة خطأ في الفحص، اقبل الـ chunk إذا كان الحجم معقول
+      if (audioChunk.size >= 1000) {
+        console.warn('⚠️ WebM validation failed but chunk size is reasonable, accepting...');
+        return { isValid: true };
+      }
+      return { isValid: false, reason: `WebM validation failed: ${error}` };
+    }
+  }
+
   private async sendAudioData(audioChunk: Blob) {
     try {
       console.log('📤 sendAudioData called with chunk:', audioChunk.size, 'bytes, format:', audioChunk.type);
@@ -567,6 +652,18 @@ export class RenderWebSocketService {
       // Last-minute check before sending
       if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
         console.warn('⚠️ WebSocket not ready in sendAudioData, skipping audio chunk');
+        return;
+      }
+
+      // ✅ إضافة فحص صحة البيانات الصوتية
+      const validationResult = await this.validateAudioChunk(audioChunk);
+      if (!validationResult.isValid) {
+        console.warn('⚠️ Audio chunk validation failed:', validationResult.reason);
+        console.warn('🔧 Skipping corrupted audio chunk:', {
+          size: audioChunk.size,
+          type: audioChunk.type,
+          reason: validationResult.reason
+        });
         return;
       }
       

@@ -352,10 +352,29 @@
           latencyHint: 'interactive'
         });
         
+        // ✅ تحسين إعدادات MediaRecorder مع fallback للPCM
+        let mediaRecorderOptions: MediaRecorderOptions = { mimeType: 'audio/webm;codecs=opus' };
+        
+        // فحص دعم WebM، وإذا فشل استخدم PCM
+        if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
+          console.warn('⚠️ WebM/Opus not supported, trying alternative formats...');
+          
+          if (MediaRecorder.isTypeSupported('audio/wav')) {
+            mediaRecorderOptions = { mimeType: 'audio/wav' };
+            console.log('✅ Using WAV format as fallback');
+          } else if (MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')) {
+            mediaRecorderOptions = { mimeType: 'audio/ogg;codecs=opus' };
+            console.log('✅ Using OGG/Opus format as fallback');
+          } else {
+            console.warn('⚠️ Using default MediaRecorder format');
+            mediaRecorderOptions = { mimeType: 'audio/webm' }; // fallback default
+          }
+        }
+        
+        console.log('🎵 MediaRecorder options:', mediaRecorderOptions);
+        
         // Use MediaRecorder for modern audio capture (replaces deprecated ScriptProcessorNode)
-        const mediaRecorder = new MediaRecorder(stream, {
-          mimeType: 'audio/webm;codecs=opus'
-        });
+        const mediaRecorder = new MediaRecorder(stream, mediaRecorderOptions);
         
         // Store references for cleanup
         audioContextRef.current = audioContext;
@@ -366,17 +385,28 @@
         mediaRecorder.ondataavailable = (event) => {
           if (event.data.size > 0) {
             chunks.push(event.data);
-            
+
             // Analyze audio level for debugging (approximate)
             const audioLevel = Math.sqrt(event.data.size / 100); // Rough estimate
             console.log('📦 Audio chunk received:', event.data.size, 'bytes, Level:', audioLevel.toFixed(2));
-            
+
+            // ✅ إضافة فحص أساسي للقطع الصوتية قبل الإرسال
+            if (event.data.size < 500) {
+              console.warn('⚠️ Audio chunk too small, may be corrupted:', {
+                size: event.data.size,
+                type: event.data.type,
+                level: audioLevel.toFixed(2)
+              });
+              console.warn('🔧 Skipping small chunk to prevent server errors');
+              return; // تخطي القطع الصغيرة المحتمل أن تكون فاسدة
+            }
+
             // تحليل مفصل لحالة الاتصال قبل إرسال الصوت
             const wsService = renderWebSocketServiceRef.current;
             const serviceExists = !!wsService;
             const isConnectedToWS = serviceExists ? wsService.isConnectedStatus() : false;
             const recordingState = isRecording;
-            
+
             console.log('🔍 Detailed status check before sending audio:', {
               serviceExists,
               isConnectedToWS,
@@ -431,17 +461,18 @@
           console.log('🛑 MediaRecorder stopped');
         };
         
-        // ✅ بدء التسجيل مباشرة مع تحسين التعامل مع init
+                // ✅ بدء التسجيل مباشرة مع تحسين التعامل مع init
         console.log('🎙️ Starting MediaRecorder...');
         
-        // Start recording with 1-second intervals
-        mediaRecorder.start(1000);
-        
+        // ✅ تحسين فترة التسجيل لتجنب القطع الصغيرة الفاسدة
+        // زيادة الفترة من 1000ms إلى 2000ms لضمان قطع أكبر وأكثر استقراراً
+        mediaRecorder.start(2000); // 2 seconds for more stable chunks
+
         // Set recording state to true to prevent auto-stop
         setIsRecording(true);
         setIsProcessing(true);
         setStreamingStatus('connected');
-        
+
         console.log('✅ MediaRecorder recording started successfully');
         
         // Start monitoring streaming status during recording
