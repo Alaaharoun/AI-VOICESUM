@@ -135,6 +135,55 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
   }
 }
 
+// Helper function to analyze audio quality
+function analyzeAudioQuality(audioBuffer) {
+  const samples = new Int16Array(audioBuffer);
+  const sampleCount = samples.length;
+  
+  // Calculate RMS (Root Mean Square) for volume
+  let sum = 0;
+  let maxAmplitude = 0;
+  let zeroCrossings = 0;
+  
+  for (let i = 0; i < sampleCount; i++) {
+    const sample = samples[i];
+    sum += sample * sample;
+    maxAmplitude = Math.max(maxAmplitude, Math.abs(sample));
+    
+    // Count zero crossings (indicates speech activity)
+    if (i > 0 && ((samples[i] >= 0 && samples[i-1] < 0) || (samples[i] < 0 && samples[i-1] >= 0))) {
+      zeroCrossings++;
+    }
+  }
+  
+  const rms = Math.sqrt(sum / sampleCount);
+  const averageAmplitude = rms;
+  const dynamicRange = maxAmplitude;
+  const zeroCrossingRate = zeroCrossings / sampleCount;
+  
+  // Speech typically has:
+  // - RMS > 1000 (not too quiet)
+  // - Dynamic range > 5000 (not too compressed)
+  // - Zero crossing rate > 0.1 (speech activity)
+  
+  const hasSpeech = averageAmplitude > 1000 && dynamicRange > 5000 && zeroCrossingRate > 0.1;
+  
+  console.log(`🔍 Audio Analysis:
+    - Duration: ${(sampleCount / 16000).toFixed(2)} seconds
+    - Average Amplitude: ${averageAmplitude.toFixed(0)}
+    - Dynamic Range: ${dynamicRange.toFixed(0)}
+    - Zero Crossing Rate: ${(zeroCrossingRate * 100).toFixed(1)}%
+    - Has Speech: ${hasSpeech ? 'YES' : 'NO'}`);
+  
+  return {
+    hasSpeech,
+    duration: sampleCount / 16000,
+    averageAmplitude,
+    dynamicRange,
+    zeroCrossingRate
+  };
+}
+
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
@@ -942,6 +991,23 @@ function startWebSocketServer(server) {
           if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
             try {
               console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
+              
+              // Analyze audio quality before conversion
+              const audioQuality = analyzeAudioQuality(audioBuffer);
+              
+              if (!audioQuality.hasSpeech) {
+                console.warn(`⚠️ [${language}] Audio appears to contain no speech or is too quiet`);
+                console.warn(`📊 Audio stats: Duration=${audioQuality.duration}s, Amplitude=${audioQuality.averageAmplitude}, Range=${audioQuality.dynamicRange}`);
+                
+                // Send warning to client
+                ws.send(JSON.stringify({ 
+                  type: 'warning', 
+                  message: 'No clear speech detected. Please speak louder or check your microphone.',
+                  audioStats: audioQuality
+                }));
+                
+                return; // Skip processing if no speech detected
+              }
               
               // Convert to PCM WAV using ffmpeg
               convertAudioFormat(audioBuffer, audioFormat, 'wav')
