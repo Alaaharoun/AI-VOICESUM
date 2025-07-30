@@ -867,10 +867,10 @@ function startWebSocketServer(server) {
               console.log('🌍 Auto-detecting from', AZURE_AUTO_DETECT_LANGUAGES.length, 'supported languages');
               language = null; // Auto-detect mode
             } else {
-              // Check if language is supported
+            // Check if language is supported
               if (!AZURE_AUTO_DETECT_LANGUAGES.includes(sourceLanguage)) {
                 console.warn(`⚠️ Language ${sourceLanguage} might not be supported, falling back to en-US`);
-                language = 'en-US';
+              language = 'en-US';
               } else {
                 language = sourceLanguage;
               }
@@ -894,7 +894,7 @@ function startWebSocketServer(server) {
               
               // Set custom endpoint for West Europe if available
               if (AZURE_SPEECH_ENDPOINT) {
-                speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
+              speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
               }
               
               // Enable continuous recognition for better results
@@ -914,8 +914,8 @@ function startWebSocketServer(server) {
                 
                 // ✅ Use normal SpeechRecognizer without auto-detect for specific language
                 speechConfig.speechRecognitionLanguage = language;
-                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-                
+              recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+              
                 console.log('✅ Recognizer created with specific language:', language);
               }
               
