@@ -931,6 +931,12 @@ function startWebSocketServer(server) {
                   initialized = true;
                   ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   console.log(`📤 [${language}] Sent ready status to client`);
+                  
+                  // Also send a separate ready message to ensure client receives it
+                  setTimeout(() => {
+                    ws.send(JSON.stringify({ type: 'ready', message: 'Ready for audio input' }));
+                    console.log(`📤 [${language}] Sent additional ready message`);
+                  }, 100);
                 },
                 (err) => {
                   console.error(`❌ [${language}] Failed to start recognition:`, err);
@@ -1159,6 +1165,91 @@ function startWebSocketServer(server) {
           }
         } else if (!initialized) {
           console.warn(`⚠️ Received audio data before initialization. Data size: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
+          // Store the data temporarily and process it once initialized
+          if (data instanceof Buffer) {
+            console.log(`📦 [${language}] Storing audio data for later processing...`);
+            // Process the audio data anyway, even if not fully initialized
+            try {
+              // Parse the data as JSON
+              const jsonData = JSON.parse(data.toString());
+              if (jsonData.type === 'audio' && jsonData.data) {
+                const audioBuffer = Buffer.from(jsonData.data, 'base64');
+                const audioSize = audioBuffer.length;
+                const audioFormat = jsonData.format || 'audio/pcm';
+                
+                console.log(`🎵 [${language}] Processing stored audio data: ${audioSize} bytes, format: ${audioFormat}`);
+                
+                // Process the audio data
+                if (audioSize > 0 && audioSize < 1000000) {
+                  // For PCM data, we can use it directly without conversion
+                  if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
+                    console.log(`✅ [${language}] Using stored PCM data directly: ${audioSize} bytes`);
+                    
+                    // Analyze PCM quality directly
+                    const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
+                    console.log(`🔍 Audio quality result:`, audioQuality);
+                    
+                    // More lenient criteria for PCM with longer chunks (~1 second optimal)
+                    if (audioSize >= 16000) { // At least 1 second of audio (optimal)
+                      console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
+                      
+                      if (!audioQuality.hasSpeech) {
+                        console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite sufficient duration`);
+                        ws.send(JSON.stringify({ 
+                          type: 'warning', 
+                          message: 'No clear speech detected. Please speak louder or check your microphone.',
+                          audioStats: audioQuality
+                        }));
+                        return;
+                      }
+                      
+                      // Write PCM data directly to Azure Speech SDK if available
+                      if (pushStream) {
+                        pushStream.write(audioBuffer);
+                        console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
+                      } else {
+                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                      }
+                      return;
+                    } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
+                      console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
+                      
+                      if (!audioQuality.hasSpeech) {
+                        console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite acceptable duration`);
+                        ws.send(JSON.stringify({ 
+                          type: 'warning', 
+                          message: 'No clear speech detected. Please speak louder or check your microphone.',
+                          audioStats: audioQuality
+                        }));
+                        return;
+                      }
+                      
+                      // Write PCM data directly to Azure Speech SDK if available
+                      if (pushStream) {
+                        pushStream.write(audioBuffer);
+                        console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
+                      } else {
+                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                      }
+                      return;
+                    } else {
+                      console.log(`⚠️ [${language}] Stored PCM chunk too short (${(audioSize / 32000).toFixed(2)}s), accumulating...`);
+                      // For short chunks, accumulate them or send anyway for testing
+                      if (pushStream) {
+                        pushStream.write(audioBuffer);
+                        console.log(`✅ [${language}] Short stored PCM chunk sent to Azure for testing`);
+                      } else {
+                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                      }
+                      return;
+                    }
+                  }
+                }
+              }
+            } catch (parseError) {
+              console.warn(`⚠️ [${language}] Could not parse stored audio data:`, parseError.message);
+            }
+          }
         } else if (!pushStream) {
           console.warn(`⚠️ Push stream not available. Initialized: ${initialized}, Data: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
         } else {
