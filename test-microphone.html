@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Microphone Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 10px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            margin: 10px 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 5px;
+        }
+        .success { background: #d4edda; color: #155724; }
+        .error { background: #f8d7da; color: #721c24; }
+        .warning { background: #fff3cd; color: #856404; }
+        .info { background: #d1ecf1; color: #0c5460; }
+        #audioLevel {
+            width: 100%;
+            height: 50px;
+            background: #eee;
+            border-radius: 5px;
+            margin: 10px 0;
+            position: relative;
+        }
+        #levelBar {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            width: 0%;
+            transition: width 0.1s;
+            border-radius: 5px;
+        }
+        #log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 5px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Microphone Test</h1>
+        
+        <div id="status" class="status info">
+            Click "Start Test" to begin microphone testing
+        </div>
+        
+        <button id="startBtn" onclick="startTest()">Start Test</button>
+        <button id="stopBtn" onclick="stopTest()" disabled>Stop Test</button>
+        <button id="clearBtn" onclick="clearLog()">Clear Log</button>
+        
+        <h3>Audio Level</h3>
+        <div id="audioLevel">
+            <div id="levelBar"></div>
+        </div>
+        <div id="levelText">Level: 0</div>
+        
+        <h3>Test Log</h3>
+        <div id="log"></div>
+    </div>
+
+    <script>
+        let mediaRecorder = null;
+        let audioStream = null;
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationId = null;
+        let testInterval = null;
+
+        function log(message, type = 'info') {
+            const logDiv = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> ${message}`;
+            logDiv.appendChild(logEntry);
+            logDiv.scrollTop = logDiv.scrollHeight;
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusDiv = document.getElementById('status');
+            statusDiv.textContent = message;
+            statusDiv.className = `status ${type}`;
+        }
+
+        function clearLog() {
+            document.getElementById('log').innerHTML = '';
+        }
+
+        async function startTest() {
+            try {
+                log('🎤 Starting microphone test...');
+                updateStatus('Requesting microphone permission...', 'info');
+                
+                // Request microphone permission
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                audioStream = stream;
+                log('✅ Microphone permission granted');
+                updateStatus('Microphone connected successfully', 'success');
+                
+                // Set up audio analysis
+                audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                log('🔧 Audio analysis setup complete');
+                
+                // Start recording
+                const options = {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 128000
+                };
+                
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options.mimeType = 'audio/webm';
+                    log('⚠️ Opus codec not supported, using default WebM');
+                }
+                
+                mediaRecorder = new MediaRecorder(stream, options);
+                log(`🎵 Using audio format: ${mediaRecorder.mimeType}`);
+                
+                let chunkCount = 0;
+                mediaRecorder.ondataavailable = (event) => {
+                    chunkCount++;
+                    log(`📦 Audio chunk #${chunkCount}: ${event.data.size} bytes`);
+                    
+                    // Analyze chunk
+                    const reader = new FileReader();
+                    reader.onload = () => {
+                        const base64Data = reader.result.split(',')[1];
+                        log(`📊 Base64 size: ${base64Data.length} characters`);
+                    };
+                    reader.readAsDataURL(event.data);
+                };
+                
+                mediaRecorder.onstart = () => {
+                    log('✅ Recording started');
+                    updateStatus('Recording... Speak into microphone', 'success');
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log('🛑 Recording stopped');
+                    updateStatus('Recording stopped', 'info');
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    log(`❌ Recording error: ${event.error}`, 'error');
+                    updateStatus('Recording error occurred', 'error');
+                };
+                
+                // Start recording with 1-second chunks
+                mediaRecorder.start(1000);
+                
+                // Start audio level monitoring
+                startLevelMonitoring();
+                
+                // Update UI
+                document.getElementById('startBtn').disabled = true;
+                document.getElementById('stopBtn').disabled = false;
+                
+            } catch (error) {
+                log(`❌ Error starting test: ${error.message}`, 'error');
+                updateStatus(`Error: ${error.message}`, 'error');
+            }
+        }
+
+        function startLevelMonitoring() {
+            const updateLevel = () => {
+                if (analyser && dataArray) {
+                    analyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                    
+                    // Update level bar
+                    const levelBar = document.getElementById('levelBar');
+                    const levelText = document.getElementById('levelText');
+                    const percentage = Math.min(100, (average / 255) * 100);
+                    
+                    levelBar.style.width = percentage + '%';
+                    levelText.textContent = `Level: ${average.toFixed(1)} (${percentage.toFixed(1)}%)`;
+                    
+                    // Log significant changes
+                    if (average > 50) {
+                        log(`🔊 High audio level detected: ${average.toFixed(1)}`);
+                    }
+                }
+                animationId = requestAnimationFrame(updateLevel);
+            };
+            updateLevel();
+        }
+
+        function stopTest() {
+            try {
+                log('🛑 Stopping microphone test...');
+                
+                if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                    mediaRecorder.stop();
+                }
+                
+                if (audioStream) {
+                    audioStream.getTracks().forEach(track => track.stop());
+                    audioStream = null;
+                }
+                
+                if (audioContext) {
+                    audioContext.close();
+                    audioContext = null;
+                }
+                
+                if (animationId) {
+                    cancelAnimationFrame(animationId);
+                    animationId = null;
+                }
+                
+                log('✅ Microphone test stopped');
+                updateStatus('Test stopped', 'info');
+                
+                // Update UI
+                document.getElementById('startBtn').disabled = false;
+                document.getElementById('stopBtn').disabled = true;
+                
+                // Reset level display
+                document.getElementById('levelBar').style.width = '0%';
+                document.getElementById('levelText').textContent = 'Level: 0';
+                
+            } catch (error) {
+                log(`❌ Error stopping test: ${error.message}`, 'error');
+            }
+        }
+
+        // Log browser capabilities
+        log('🔍 Browser Audio Capabilities:');
+        log(`- MediaRecorder supported: ${typeof MediaRecorder !== 'undefined'}`);
+        log(`- AudioContext supported: ${typeof AudioContext !== 'undefined'}`);
+        log(`- getUserMedia supported: ${typeof navigator.mediaDevices !== 'undefined'}`);
+        
+        if (typeof MediaRecorder !== 'undefined') {
+            log('📋 Supported audio formats:');
+            const formats = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/mp4',
+                'audio/wav'
+            ];
+            
+            formats.forEach(format => {
+                const supported = MediaRecorder.isTypeSupported(format);
+                log(`  - ${format}: ${supported ? '✅' : '❌'}`);
+            });
+        }
+    </script>
+</body>
+</html> 

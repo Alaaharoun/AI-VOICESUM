@@ -153,6 +153,14 @@ export class RenderWebSocketService {
         this.ws.send(JSON.stringify(initMessage));
       }
       
+      // Set initialization timeout - if server doesn't respond within 3 seconds, assume it's ready
+      setTimeout(() => {
+        if (!this.isInitialized && this.isConnected) {
+          console.log('⏰ Initialization timeout - assuming server is ready for audio input');
+          this.isInitialized = true;
+        }
+      }, 3000);
+      
       onConnect?.();
     };
 
@@ -183,10 +191,16 @@ export class RenderWebSocketService {
         } else if (data.type === 'status') {
           console.log('📊 Server status:', data.message);
           // Check if server is ready for audio input
-          if (data.message === 'Ready for audio input') {
+          if (data.message === 'Ready for audio input' || data.message === 'ready' || data.message === 'initialized') {
             this.isInitialized = true;
             console.log('✅ Server initialization completed, ready for audio input');
           }
+        } else if (data.type === 'ready') {
+          console.log('✅ Server ready message received');
+          this.isInitialized = true;
+        } else if (data.type === 'initialized') {
+          console.log('✅ Server initialized message received');
+          this.isInitialized = true;
         } else if (data.type === 'error') {
           console.error('❌ Server error:', data.message);
           // Don't reset isInitialized for quota exceeded errors
@@ -381,6 +395,13 @@ export class RenderWebSocketService {
     // Wait for initialization to complete before sending audio
     if (!this.isInitialized) {
       console.warn('⚠️ Waiting for initialization to complete before sending audio');
+      // Store the chunk temporarily and send it later
+      setTimeout(() => {
+        if (this.isInitialized) {
+          console.log('📤 Sending delayed audio chunk after initialization');
+          this.sendAudioData(audioChunk);
+        }
+      }, 100);
       return;
     }
 
