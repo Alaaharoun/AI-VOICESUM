@@ -837,7 +837,7 @@ export class RenderWebSocketService {
     console.log('✅ Audio queue processed');
   }
 
-  // ✅ إضافة دالة فحص صحة البيانات الصوتية
+  // ✅ دالة فحص محسنة للـ Raw PCM والبيانات الصوتية
   private async validateAudioChunk(audioChunk: Blob): Promise<{isValid: boolean, reason?: string}> {
     try {
       // 1. فحص الحجم الأساسي
@@ -845,23 +845,46 @@ export class RenderWebSocketService {
         return { isValid: false, reason: 'Empty or null audio chunk' };
       }
 
-      if (audioChunk.size < 100) {
-        return { isValid: false, reason: 'Audio chunk too small (< 100 bytes)' };
+      if (audioChunk.size < 32) { // Very minimal for Raw PCM
+        return { isValid: false, reason: 'Audio chunk too small (< 32 bytes)' };
       }
 
       // 2. فحص نوع الصوت
-      const audioType = audioChunk.type;
-      if (!audioType) {
-        return { isValid: false, reason: 'No audio type specified' };
+      const audioType = audioChunk.type || '';
+
+      // 3. ✅ معالجة خاصة للـ Raw PCM (الأولوية الأولى)
+      if (audioType.includes('pcm')) {
+        console.log('✅ Raw PCM audio detected - optimized for Azure Speech Service');
+        
+        // Basic PCM validation
+        if (audioChunk.size >= 1024) { // At least 1KB for good quality
+          console.log('✅ Raw PCM chunk size excellent:', audioChunk.size, 'bytes');
+        } else {
+          console.log('📤 Small PCM chunk:', audioChunk.size, 'bytes - acceptable for Azure');
+        }
+        
+        return { isValid: true };
       }
 
-      // 3. فحص WebM/Opus خاص
+      // 4. للـ WAV، فحص مبسط
+      if (audioType.includes('wav')) {
+        console.log('✅ WAV audio detected - good for Azure Speech Service');
+        return { isValid: true };
+      }
+
+      // 5. فحص WebM/Opus (legacy support مع تحذير)
       if (audioType.includes('webm') || audioType.includes('opus')) {
+        console.warn('⚠️ WebM detected - Raw PCM is strongly preferred for Azure Speech Service');
         return await this.validateWebMChunk(audioChunk);
       }
 
-      // 4. للأنواع الأخرى، فحص أساسي
-      console.log('✅ Audio chunk validation passed:', {
+      // 6. للأنواع الأخرى أو المجهولة، اقبلها مع تحذير
+      if (!audioType) {
+        console.log('⚠️ No audio type specified, assuming Raw PCM');
+        return { isValid: true };
+      }
+
+      console.log('✅ Audio chunk validation passed (unknown type):', {
         size: audioChunk.size,
         type: audioType
       });

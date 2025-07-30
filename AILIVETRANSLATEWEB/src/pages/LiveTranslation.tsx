@@ -362,64 +362,94 @@ export const LiveTranslation: React.FC = () => {
         return;
       }
       
-      // Start audio recording
-      const optimalSettings = AudioConverter.getOptimalRecordingSettings();
+      // ✅ Start Raw PCM audio recording using AudioContext for better compatibility
+      console.log('🎵 Starting Raw PCM recording for optimal Azure Speech compatibility...');
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
         audio: {
-          ...optimalSettings,
+          sampleRate: 16000,
+          channelCount: 1,
           autoGainControl: true,
           noiseSuppression: false,
-          echoCancellation: false,
-          sampleRate: 16000,
-          channelCount: 1
+          echoCancellation: false
         }
       });
       
       audioStreamRef.current = stream;
       
+      // Create AudioContext for Raw PCM processing
       const audioContext = new AudioContext({
         sampleRate: 16000,
         latencyHint: 'interactive'
       });
-      
-      let mediaRecorderOptions: MediaRecorderOptions = { 
-        mimeType: 'audio/webm;codecs=opus',
-        audioBitsPerSecond: 128000
-      };
-      
-      if (!MediaRecorder.isTypeSupported('audio/webm;codecs=opus')) {
-        const formats = [
-          { mimeType: 'audio/wav', audioBitsPerSecond: 128000 },
-          { mimeType: 'audio/ogg;codecs=opus', audioBitsPerSecond: 128000 },
-          { mimeType: 'audio/mp4', audioBitsPerSecond: 128000 },
-          { mimeType: 'audio/webm', audioBitsPerSecond: 128000 }
-        ];
-        
-        for (const format of formats) {
-          if (MediaRecorder.isTypeSupported(format.mimeType)) {
-            mediaRecorderOptions = format;
-            break;
-          }
-        }
-      }
-      
-      const mediaRecorder = new MediaRecorder(stream, mediaRecorderOptions);
       audioContextRef.current = audioContext;
-      mediaRecorderRef.current = mediaRecorder;
       
-      mediaRecorder.ondataavailable = (event) => {
-        if (event.data.size > 10240 && renderWebSocketServiceRef.current?.isConnectedStatus()) { // 10KB minimum
-          try {
-            renderWebSocketServiceRef.current.sendAudioChunk(event.data);
-            console.log('📤 Audio chunk sent for real-time translation');
-          } catch (error) {
-            console.error('❌ Error sending audio chunk:', error);
+      // Create audio source from microphone stream
+      const source = audioContext.createMediaStreamSource(stream);
+      
+      // ✅ Use ScriptProcessorNode for Raw PCM data extraction
+      const bufferSize = 4096; // Balance between latency and performance
+      const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+      
+      let pcmChunkBuffer = new Float32Array(0);
+      const targetChunkSize = 16000; // 1 second of 16kHz audio
+      
+      processor.onaudioprocess = (event) => {
+        if (!renderWebSocketServiceRef.current?.isConnectedStatus()) return;
+        
+        try {
+          // Get raw PCM data from audio processing event
+          const inputBuffer = event.inputBuffer;
+          const inputData = inputBuffer.getChannelData(0); // Mono channel
+          
+          // Convert Float32 to Int16 PCM (Azure Speech format)
+          const int16Data = new Int16Array(inputData.length);
+          for (let i = 0; i < inputData.length; i++) {
+            // Convert from [-1, 1] float range to [-32768, 32767] int16 range
+            const sample = Math.max(-1, Math.min(1, inputData[i]));
+            int16Data[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
           }
+          
+          // Accumulate PCM data into chunks
+          const newBuffer = new Float32Array(pcmChunkBuffer.length + inputData.length);
+          newBuffer.set(pcmChunkBuffer);
+          newBuffer.set(inputData, pcmChunkBuffer.length);
+          pcmChunkBuffer = newBuffer;
+          
+          // Send when we have enough data (1 second chunks for optimal Azure performance)
+          if (pcmChunkBuffer.length >= targetChunkSize) {
+            const chunkToSend = pcmChunkBuffer.slice(0, targetChunkSize);
+            pcmChunkBuffer = pcmChunkBuffer.slice(targetChunkSize);
+            
+            // Convert to Int16 for Azure Speech
+            const int16Chunk = new Int16Array(chunkToSend.length);
+            for (let i = 0; i < chunkToSend.length; i++) {
+              const sample = Math.max(-1, Math.min(1, chunkToSend[i]));
+              int16Chunk[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            }
+            
+            // Create blob from Int16 PCM data
+            const pcmBlob = new Blob([int16Chunk.buffer], { type: 'audio/pcm' });
+            
+            // Send Raw PCM directly to server
+            renderWebSocketServiceRef.current.sendAudioChunk(pcmBlob);
+            console.log('📤 Raw PCM chunk sent:', int16Chunk.length * 2, 'bytes (16kHz Int16)');
+          }
+          
+        } catch (error) {
+          console.error('❌ Error processing Raw PCM audio:', error);
         }
       };
       
-      mediaRecorder.start(3000); // 3 seconds for optimal chunk size
+      // Connect audio processing chain
+      source.connect(processor);
+      processor.connect(audioContext.destination);
+      
+      // Store processor reference for cleanup
+      (audioContextRef.current as any).processor = processor;
+      
       setStreamingStatus('connected');
+      console.log('✅ Raw PCM audio recording started successfully');
       
     } catch (error) {
       console.error('❌ Error starting recording:', error);
@@ -432,39 +462,54 @@ export const LiveTranslation: React.FC = () => {
 
   const stopRecording = () => {
     try {
-      console.log('🛑 Stopping real-time translation...');
+      console.log('🛑 Stopping Raw PCM real-time translation...');
       
       setIsRecording(false);
       setIsProcessing(false);
       setStreamingStatus('idle');
       
-      // Stop MediaRecorder
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        mediaRecorderRef.current.stop();
+      // ✅ Stop ScriptProcessorNode for Raw PCM recording
+      if (audioContextRef.current && (audioContextRef.current as any).processor) {
+        try {
+          const processor = (audioContextRef.current as any).processor;
+          processor.disconnect();
+          processor.onaudioprocess = null;
+          console.log('✅ Raw PCM processor stopped and disconnected');
+        } catch (processorError) {
+          console.warn('⚠️ Error stopping PCM processor:', processorError);
+        }
       }
       
-      // Close audio context
+      // Close AudioContext
       if (audioContextRef.current) {
-        audioContextRef.current.close();
+        audioContextRef.current.close().then(() => {
+          console.log('✅ AudioContext closed successfully');
+        }).catch(error => {
+          console.warn('⚠️ Error closing AudioContext:', error);
+        });
       }
       
-      // Stop audio tracks
+      // Stop audio tracks from microphone
       if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach(track => track.stop());
+        audioStreamRef.current.getTracks().forEach(track => {
+          track.stop();
+          console.log('✅ Audio track stopped:', track.kind);
+        });
       }
       
       // Stop streaming but keep connection alive
       if (renderWebSocketServiceRef.current) {
         renderWebSocketServiceRef.current.stopStreaming();
+        console.log('✅ WebSocket streaming stopped');
       }
       
       // Clear references
       audioStreamRef.current = null;
       audioContextRef.current = null;
-      mediaRecorderRef.current = null;
+      // Note: mediaRecorderRef is no longer used with Raw PCM
       
     } catch (error) {
-      console.error('❌ Error stopping recording:', error);
+      console.error('❌ Error stopping Raw PCM recording:', error);
       setIsRecording(false);
       setIsProcessing(false);
       setStreamingStatus('idle');

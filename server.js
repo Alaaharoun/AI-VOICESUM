@@ -900,7 +900,7 @@ function startWebSocketServer(server) {
               // Enable continuous recognition for better results
               speechConfig.enableDictation();
               
-              // ✅ Apply ChatGPT's AutoDetectSourceLanguageConfig vs manual language selection
+                            // ✅ Apply ChatGPT's AutoDetectSourceLanguageConfig vs manual language selection
               if (autoDetection) {
                 console.log('🔧 Creating recognizer with AutoDetectSourceLanguageConfig...');
                 
@@ -914,10 +914,14 @@ function startWebSocketServer(server) {
                 
                 // ✅ Use normal SpeechRecognizer without auto-detect for specific language
                 speechConfig.speechRecognitionLanguage = language;
-              recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-              
+                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                
                 console.log('✅ Recognizer created with specific language:', language);
               }
+
+              // ✅ Create PCM stream handler for continuous audio processing
+              const pcmStreamHandler = handleContinuousPCMStream(ws, language, pushStream);
+              console.log(`🔧 [${language}] PCM stream handler created for continuous audio processing`);
               
               // ✅ Enhanced event handlers with proper language detection support
               recognizer.recognizing = (s, e) => {
