@@ -29,68 +29,93 @@ console.log('Environment variables:', {
 // Helper function to convert audio format using ffmpeg
 async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav') {
   try {
+    console.log(`🔄 Converting audio from ${inputFormat} to PCM WAV 16kHz...`);
+    
     // First try ffmpeg conversion
     try {
-      // Create temporary files
-      const inputFile = `/tmp/input_${Date.now()}.${inputFormat.split('/')[1] || 'mp3'}`;
-      const outputFile = `/tmp/output_${Date.now()}.${outputFormat}`;
+      // Create temporary files with proper extensions
+      let inputExtension = 'mp3'; // default
+      if (inputFormat.includes('webm')) inputExtension = 'webm';
+      else if (inputFormat.includes('ogg')) inputExtension = 'ogg';
+      else if (inputFormat.includes('wav')) inputExtension = 'wav';
+      else if (inputFormat.includes('mp3')) inputExtension = 'mp3';
+      else if (inputFormat.includes('m4a')) inputExtension = 'm4a';
+      
+      const inputFile = `/tmp/input_${Date.now()}.${inputExtension}`;
+      const outputFile = `/tmp/output_${Date.now()}.wav`;
       
       // Write input buffer to file
       fs.writeFileSync(inputFile, audioBuffer);
       
-      // Convert using ffmpeg
+      // Convert using ffmpeg to PCM WAV 16kHz 16-bit mono
       const ffmpegCommand = `${ffmpegPath} -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
+      console.log(`🔧 FFmpeg command: ${ffmpegCommand}`);
+      
       await execAsync(ffmpegCommand);
       
       // Read converted file
       const convertedBuffer = fs.readFileSync(outputFile);
       
       // Clean up temporary files
-      fs.unlinkSync(inputFile);
-      fs.unlinkSync(outputFile);
+      try {
+        fs.unlinkSync(inputFile);
+        fs.unlinkSync(outputFile);
+      } catch (cleanupError) {
+        console.warn('⚠️ Could not clean up temporary files:', cleanupError.message);
+      }
       
+      console.log(`✅ FFmpeg conversion successful: ${audioBuffer.length} bytes → ${convertedBuffer.length} bytes`);
       return convertedBuffer;
+      
     } catch (ffmpegError) {
-      console.log('FFmpeg conversion failed, trying fallback method:', ffmpegError.message);
+      console.error('❌ FFmpeg conversion failed:', ffmpegError.message);
       
-      // Fallback: Create a simple WAV file from the original data
-      // This is a basic approach that might work for some cases
-      const sampleRate = 16000;
-      const channels = 1;
-      const bitsPerSample = 16;
+      // If the input is already PCM data, try to create WAV header
+      if (inputFormat === 'audio/pcm' || inputFormat.includes('pcm')) {
+        console.log('🔄 Creating WAV header for PCM data...');
+        
+        const sampleRate = 16000;
+        const channels = 1;
+        const bitsPerSample = 16;
+        
+        // Create WAV header
+        const headerSize = 44;
+        const dataSize = audioBuffer.length;
+        const fileSize = headerSize + dataSize - 8;
+        
+        const header = Buffer.alloc(headerSize);
+        
+        // RIFF header
+        header.write('RIFF', 0);
+        header.writeUInt32LE(fileSize, 4);
+        header.write('WAVE', 8);
+        
+        // fmt chunk
+        header.write('fmt ', 12);
+        header.writeUInt32LE(16, 16); // fmt chunk size
+        header.writeUInt16LE(1, 20); // audio format (PCM)
+        header.writeUInt16LE(channels, 22);
+        header.writeUInt32LE(sampleRate, 24);
+        header.writeUInt32LE(sampleRate * channels * bitsPerSample / 8, 28); // byte rate
+        header.writeUInt16LE(channels * bitsPerSample / 8, 32); // block align
+        header.writeUInt16LE(bitsPerSample, 34);
+        
+        // data chunk
+        header.write('data', 36);
+        header.writeUInt32LE(dataSize, 40);
+        
+        // Combine header with original data
+        const wavBuffer = Buffer.concat([header, audioBuffer]);
+        console.log(`✅ Created WAV header for PCM data: ${audioBuffer.length} bytes → ${wavBuffer.length} bytes`);
+        return wavBuffer;
+      }
       
-      // Create WAV header
-      const headerSize = 44;
-      const dataSize = audioBuffer.length;
-      const fileSize = headerSize + dataSize - 8;
-      
-      const header = Buffer.alloc(headerSize);
-      
-      // RIFF header
-      header.write('RIFF', 0);
-      header.writeUInt32LE(fileSize, 4);
-      header.write('WAVE', 8);
-      
-      // fmt chunk
-      header.write('fmt ', 12);
-      header.writeUInt32LE(16, 16); // fmt chunk size
-      header.writeUInt16LE(1, 20); // audio format (PCM)
-      header.writeUInt16LE(channels, 22);
-      header.writeUInt32LE(sampleRate, 24);
-      header.writeUInt32LE(sampleRate * channels * bitsPerSample / 8, 28); // byte rate
-      header.writeUInt16LE(channels * bitsPerSample / 8, 32); // block align
-      header.writeUInt16LE(bitsPerSample, 34);
-      
-      // data chunk
-      header.write('data', 36);
-      header.writeUInt32LE(dataSize, 40);
-      
-      // Combine header with original data
-      const wavBuffer = Buffer.concat([header, audioBuffer]);
-      return wavBuffer;
+      // For other formats, return original buffer as fallback
+      console.warn('⚠️ Using original audio buffer as fallback');
+      return audioBuffer;
     }
   } catch (error) {
-    console.error('Audio conversion failed:', error);
+    console.error('❌ Audio conversion failed:', error);
     // Return original buffer if conversion fails
     return audioBuffer;
   }
@@ -869,11 +894,13 @@ function startWebSocketServer(server) {
         if (initialized && pushStream) {
           let audioBuffer;
           let audioSize;
+          let audioFormat;
           
           if (data instanceof Buffer) {
             // Raw PCM data (from old app)
             audioBuffer = data;
             audioSize = data.length;
+            audioFormat = 'audio/pcm';
             console.log(`🎵 [${language}] Received raw PCM audio chunk: ${audioSize} bytes`);
           } else {
             // JSON data with base64 (from new app)
@@ -883,7 +910,8 @@ function startWebSocketServer(server) {
                 // Convert base64 to buffer
                 audioBuffer = Buffer.from(jsonData.data, 'base64');
                 audioSize = audioBuffer.length;
-                console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${jsonData.format}`);
+                audioFormat = jsonData.format || 'audio/webm;codecs=opus';
+                console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
               } else {
                 console.log(`📦 Received JSON message:`, jsonData);
                 return;
@@ -892,51 +920,45 @@ function startWebSocketServer(server) {
               console.log('📦 Received non-JSON data, treating as audio');
               audioBuffer = data;
               audioSize = data.length;
+              audioFormat = 'audio/pcm';
             }
           }
           
-          // Add detailed audio analysis
-          const timestamp = new Date().toISOString();
-          const audioStats = {
-            size: audioSize,
-            timestamp: timestamp,
-            sampleCount: Math.floor(audioSize / 2), // 16-bit = 2 bytes per sample
-            durationMs: Math.floor((audioSize / 2) / 16), // ~duration at 16kHz
-            isValid: audioSize > 0 && audioSize % 2 === 0,
-            initialized: initialized,
-            pushStreamAvailable: !!pushStream
-          };
-          
-          console.log(`🎵 [${language}] Audio analysis:`, audioStats);
-          
-          // Validate audio size (should be reasonable for streaming)
+          // Convert audio to PCM WAV 16kHz 16-bit mono using ffmpeg
           if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
             try {
-              // Check if audio contains actual sound (not just silence)
-              let hasSound = false;
-              const samples = Math.min(100, Math.floor(audioSize / 2)); // Check first 100 samples
-              for (let i = 0; i < samples * 2; i += 2) {
-                const sample = audioBuffer.readInt16LE(i);
-                if (Math.abs(sample) > 1000) { // Threshold for detecting sound
-                  hasSound = true;
-                  break;
-                }
-              }
+              console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
               
-              console.log(`🎵 [${language}] Audio content analysis:`, {
-                hasSound: hasSound,
-                firstFewBytes: audioBuffer.slice(0, 16).toString('hex'),
-                maxSample: Math.max(...Array.from({length: Math.min(samples, 10)}, (_, i) => Math.abs(audioBuffer.readInt16LE(i * 2))))
-              });
+              // Convert to PCM WAV using ffmpeg
+              convertAudioFormat(audioBuffer, audioFormat, 'wav')
+                .then(pcmBuffer => {
+                  console.log(`✅ [${language}] Audio converted successfully: ${audioSize} bytes → ${pcmBuffer.length} bytes`);
+                  
+                  // Write converted PCM data to Azure Speech SDK
+                  pushStream.write(pcmBuffer);
+                  console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                })
+                .catch(conversionError => {
+                  console.error(`❌ [${language}] Audio conversion failed:`, conversionError);
+                  ws.send(JSON.stringify({ 
+                    type: 'error', 
+                    error: `Audio conversion failed: ${conversionError.message}` 
+                  }));
+                });
               
-              pushStream.write(audioBuffer);
-              console.log(`✅ [${language}] Audio chunk written to Azure Speech SDK (has sound: ${hasSound})`);
-            } catch (writeError) {
-              console.error(`❌ [${language}] Failed to write audio to stream:`, writeError);
-              ws.send(JSON.stringify({ type: 'error', error: `Audio write failed: ${writeError.message}` }));
+            } catch (conversionError) {
+              console.error(`❌ [${language}] Audio conversion failed:`, conversionError);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                error: `Audio conversion failed: ${conversionError.message}` 
+              }));
             }
           } else {
             console.warn(`⚠️ [${language}] Invalid audio chunk size: ${audioSize} bytes`);
+            ws.send(JSON.stringify({ 
+              type: 'error', 
+              error: `Invalid audio chunk size: ${audioSize} bytes` 
+            }));
           }
         } else if (!initialized) {
           console.warn(`⚠️ Received audio data before initialization. Data size: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
