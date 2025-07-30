@@ -184,7 +184,8 @@ function analyzeAudioQuality(audioBuffer, audioFormat) {
   // - Zero crossing rate > 0.01 (speech activity) - reduced from 0.1
   // - Duration > 0.5 seconds (minimum speech duration)
   
-  const hasSpeech = averageAmplitude > 50 && dynamicRange > 100 && zeroCrossingRate > 0.01 && (sampleCount / 16000) > 0.5;
+          // More lenient criteria for PCM data
+        const hasSpeech = averageAmplitude > 30 && dynamicRange > 50 && zeroCrossingRate > 0.005 && (sampleCount / 16000) > 0.3;
   
   console.log(`🔍 Audio Analysis (PCM):
     - Duration: ${(sampleCount / 16000).toFixed(2)} seconds
@@ -1008,6 +1009,33 @@ function startWebSocketServer(server) {
           // Convert audio to PCM WAV 16kHz 16-bit mono using ffmpeg
           if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
             try {
+              console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
+              
+              // For PCM data, we can use it directly without conversion
+              if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
+                console.log(`✅ [${language}] Using PCM data directly: ${audioSize} bytes`);
+                
+                // Analyze PCM quality directly
+                const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
+                console.log(`🔍 Audio quality result:`, audioQuality);
+                
+                if (!audioQuality.hasSpeech) {
+                  console.warn(`⚠️ [${language}] PCM audio appears to contain no speech`);
+                  ws.send(JSON.stringify({ 
+                    type: 'warning', 
+                    message: 'No clear speech detected. Please speak louder or check your microphone.',
+                    audioStats: audioQuality
+                  }));
+                  return;
+                }
+                
+                // Write PCM data directly to Azure Speech SDK
+                pushStream.write(audioBuffer);
+                console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                return;
+              }
+              
+              // For other formats, convert using ffmpeg
               console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
               
               // Analyze audio quality before conversion

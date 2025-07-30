@@ -246,7 +246,7 @@
         
         const mediaRecorder = new MediaRecorder(stream, {
           mimeType: optimalFormat,
-          audioBitsPerSecond: 128000
+          audioBitsPerSecond: optimalFormat.includes('pcm') ? 256000 : 128000 // Higher bitrate for PCM
         });
         mediaRecorderRef.current = mediaRecorder;
 

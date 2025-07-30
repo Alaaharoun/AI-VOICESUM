@@ -232,8 +232,12 @@ export class AudioConverter {
    * Prioritizes formats that work well with Azure Speech Service
    */
   static getOptimalAudioFormat(): string {
+    // For real-time streaming, use PCM directly to avoid WebM header issues
+    // WebM requires complete headers which are problematic with small chunks
     const formats = [
-      'audio/webm;codecs=opus',    // Best for WebM with Opus
+      'audio/pcm',                 // Direct PCM - best for real-time streaming
+      'audio/raw',                 // Raw audio data
+      'audio/webm;codecs=opus',    // WebM with Opus (fallback)
       'audio/webm',                // WebM without codec specification
       'audio/ogg;codecs=opus',     // OGG with Opus
       'audio/mp4',                 // MP4 as fallback
