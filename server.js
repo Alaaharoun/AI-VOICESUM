@@ -184,8 +184,8 @@ function analyzeAudioQuality(audioBuffer, audioFormat) {
   // - Zero crossing rate > 0.01 (speech activity) - reduced from 0.1
   // - Duration > 0.5 seconds (minimum speech duration)
   
-          // More lenient criteria for PCM data
-        const hasSpeech = averageAmplitude > 30 && dynamicRange > 50 && zeroCrossingRate > 0.005 && (sampleCount / 16000) > 0.3;
+          // Very lenient criteria for PCM data to match Azure requirements
+        const hasSpeech = averageAmplitude > 20 && dynamicRange > 30 && zeroCrossingRate > 0.001 && (sampleCount / 16000) > 0.2;
   
   console.log(`🔍 Audio Analysis (PCM):
     - Duration: ${(sampleCount / 16000).toFixed(2)} seconds

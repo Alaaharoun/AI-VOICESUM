@@ -203,7 +203,14 @@
         // Test microphone before starting recording
         console.log('🔍 Testing microphone access...');
         const stream = await navigator.mediaDevices.getUserMedia({ 
-          audio: optimalSettings
+          audio: {
+            ...optimalSettings,
+            autoGainControl: true,      // Boost volume automatically
+            noiseSuppression: false,     // Disable noise suppression to preserve speech
+            echoCancellation: false,     // Disable echo cancellation to preserve speech
+            sampleRate: 16000,          // Ensure 16kHz sample rate
+            channelCount: 1             // Ensure mono
+          }
         });
         
         // Analyze microphone input for debugging
@@ -246,6 +253,12 @@
         });
         
         const source = audioContext.createMediaStreamSource(stream);
+        
+        // Add gain node to boost audio level
+        const gainNode = audioContext.createGain();
+        gainNode.gain.value = 3.0; // Boost audio by 3x
+        console.log('🔊 Audio gain set to 3.0x for better volume');
+        
         const processor = audioContext.createScriptProcessor(4096, 1, 1);
         
         // Store references for cleanup
@@ -265,7 +278,17 @@
           // Create blob from PCM data
           const audioBlob = new Blob([pcmData], { type: 'audio/pcm' });
           
-          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes');
+          // Analyze audio level for debugging
+          const audioLevel = Math.sqrt(pcmData.reduce((sum, sample) => sum + sample * sample, 0) / pcmData.length);
+          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes, Level:', audioLevel.toFixed(2));
+          
+          // Only send if audio level is sufficient
+          if (audioLevel > 50) {
+            console.log('✅ Audio level sufficient, sending to server');
+          } else {
+            console.log('⚠️ Audio level too low, skipping chunk');
+            return;
+          }
           
           // Send audio chunk to Render WebSocket service
           if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
@@ -273,8 +296,9 @@
           }
         };
         
-        // Connect the audio processing chain
-        source.connect(processor);
+        // Connect the audio processing chain with gain boost
+        source.connect(gainNode);
+        gainNode.connect(processor);
         processor.connect(audioContext.destination);
         
         console.log('✅ Raw PCM recording started successfully');
