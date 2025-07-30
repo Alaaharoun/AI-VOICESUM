@@ -3,7 +3,6 @@
   import { useNavigate } from 'react-router-dom';
   import { RenderWebSocketService } from '../services/renderWebSocketService';
   import { AudioConverter } from '../services/audioConverter';
-  import { supabase } from '../lib/supabase';
   import { useAuthStore } from '../stores/authStore';
   import { permissionHelper } from '../utils/permissionHelper';
 
@@ -26,7 +25,6 @@
     const audioStreamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
-    const { user } = useAuthStore();
 
     // Comprehensive language list from the old application
     const languages = [
