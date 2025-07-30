@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Conversion Test</title>
+</head>
+<body>
+    <h1>Audio Conversion Test</h1>
+    <button onclick="testAudioConversion()">Test Audio Conversion</button>
+    <div id="results"></div>
+
+    <script type="module">
+        import { AudioConverter } from './src/services/audioConverter.ts';
+
+        window.testAudioConversion = async function() {
+            const results = document.getElementById('results');
+            results.innerHTML = '<p>Testing audio conversion...</p>';
+
+            try {
+                const converter = new AudioConverter();
+                
+                // Create a test audio blob
+                const testBlob = new Blob([new ArrayBuffer(1024)], { 
+                    type: 'audio/webm;codecs=opus' 
+                });
+                
+                console.log('Testing with blob:', testBlob.type, testBlob.size);
+                
+                const pcmData = await converter.convertToPCM(testBlob);
+                
+                results.innerHTML = `
+                    <p>✅ Audio conversion successful!</p>
+                    <p>Input: ${testBlob.type}, ${testBlob.size} bytes</p>
+                    <p>Output: PCM, ${pcmData.byteLength} bytes</p>
+                `;
+                
+                console.log('Conversion successful:', pcmData.byteLength, 'bytes');
+                
+            } catch (error) {
+                results.innerHTML = `
+                    <p>❌ Audio conversion failed!</p>
+                    <p>Error: ${error.message}</p>
+                `;
+                console.error('Conversion failed:', error);
+            }
+        };
+    </script>
+</body>
+</html> 

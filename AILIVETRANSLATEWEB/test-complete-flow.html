@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Complete Flow Test</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .log { background: #f0f0f0; padding: 10px; margin: 10px 0; border-radius: 5px; max-height: 400px; overflow-y: auto; }
+        .success { color: green; }
+        .error { color: red; }
+        .info { color: blue; }
+        .warning { color: orange; }
+        button { padding: 10px 20px; margin: 5px; border-radius: 5px; border: none; cursor: pointer; }
+        .primary { background: #007bff; color: white; }
+        .success-btn { background: #28a745; color: white; }
+        .warning-btn { background: #ffc107; color: black; }
+        .error-btn { background: #dc3545; color: white; }
+    </style>
+</head>
+<body>
+    <h1>Complete Flow Test - Audio to Azure Speech</h1>
+    
+    <div>
+        <button class="primary" onclick="testConnection()">1. Test WebSocket Connection</button>
+        <button class="success-btn" onclick="testAudioRecording()">2. Test Audio Recording</button>
+        <button class="warning-btn" onclick="testAudioSending()">3. Test Audio Sending</button>
+        <button class="error-btn" onclick="clearLogs()">Clear Logs</button>
+    </div>
+    
+    <div id="logs"></div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioChunks = [];
+        const logs = document.getElementById('logs');
+
+        function log(message, type = 'info') {
+            const div = document.createElement('div');
+            div.className = `log ${type}`;
+            div.textContent = `${new Date().toLocaleTimeString()}: ${message}`;
+            logs.appendChild(div);
+            console.log(message);
+        }
+
+        async function testConnection() {
+            try {
+                log('🔗 Testing WebSocket connection...');
+                
+                ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected successfully', 'success');
+                    
+                    // Send init message
+                    const initMessage = {
+                        type: 'init',
+                        language: 'en-US',
+                        targetLanguage: 'ar-SA',
+                        clientSideTranslation: true,
+                        realTimeMode: true,
+                        autoDetection: true,
+                        audioConfig: {
+                            sampleRate: 16000,
+                            channels: 1,
+                            bitsPerSample: 16,
+                            encoding: 'pcm_s16le'
+                        }
+                    };
+                    
+                    ws.send(JSON.stringify(initMessage));
+                    log('📤 Sent init message', 'info');
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 Received: ${data.type} - ${JSON.stringify(data)}`, 'info');
+                        
+                        if (data.type === 'transcription' || data.type === 'final') {
+                            log(`🎤 Transcription: "${data.text}"`, 'success');
+                        }
+                    } catch (e) {
+                        log(`📨 Received raw data: ${event.data}`, 'info');
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log(`❌ WebSocket error: ${error}`, 'error');
+                };
+                
+                ws.onclose = (event) => {
+                    log(`🔌 WebSocket closed: ${event.code} - ${event.reason}`, 'warning');
+                };
+                
+            } catch (error) {
+                log(`❌ Connection test failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAudioRecording() {
+            try {
+                log('🎵 Testing audio recording...');
+                
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true
+                    } 
+                });
+                
+                log('✅ Audio stream obtained', 'success');
+                
+                // Try to use OGG Opus if supported, otherwise fallback to WebM
+                const mimeType = MediaRecorder.isTypeSupported('audio/ogg;codecs=opus')
+                    ? 'audio/ogg;codecs=opus'
+                    : 'audio/webm;codecs=opus';
+                
+                log(`📊 Using audio format: ${mimeType}`, 'info');
+                
+                mediaRecorder = new MediaRecorder(stream, { mimeType });
+                audioChunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        audioChunks.push(event.data);
+                        log(`📦 Audio chunk received: ${event.data.size} bytes, format: ${event.data.type}`, 'info');
+                    }
+                };
+                
+                mediaRecorder.onstart = () => {
+                    log('🎙️ Recording started', 'success');
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log('🛑 Recording stopped', 'warning');
+                    const audioBlob = new Blob(audioChunks, { type: mimeType });
+                    log(`📊 Total audio: ${audioBlob.size} bytes, format: ${audioBlob.type}`, 'info');
+                };
+                
+                // Start recording for 3 seconds
+                mediaRecorder.start(1000); // Collect data every second
+                
+                setTimeout(() => {
+                    if (mediaRecorder && mediaRecorder.state === 'recording') {
+                        mediaRecorder.stop();
+                        stream.getTracks().forEach(track => track.stop());
+                    }
+                }, 3000);
+                
+            } catch (error) {
+                log(`❌ Audio recording failed: ${error.message}`, 'error');
+            }
+        }
+
+        async function testAudioSending() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket not connected', 'error');
+                return;
+            }
+
+            if (audioChunks.length === 0) {
+                log('❌ No audio chunks available', 'error');
+                return;
+            }
+
+            try {
+                log('📤 Testing audio sending...');
+                
+                const audioBlob = new Blob(audioChunks, { 
+                    type: audioChunks[0].type 
+                });
+                
+                log(`📊 Sending audio: ${audioBlob.size} bytes, format: ${audioBlob.type}`, 'info');
+                
+                // Convert to base64
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64Audio = (reader.result).split(',')[1];
+                    
+                    // Send audio message
+                    const audioMessage = {
+                        type: 'audio',
+                        data: base64Audio,
+                        format: audioBlob.type
+                    };
+                    
+                    ws.send(JSON.stringify(audioMessage));
+                    log(`📤 Sent audio chunk: ${audioBlob.size} bytes, format: ${audioBlob.type}`, 'success');
+                };
+                reader.readAsDataURL(audioBlob);
+                
+            } catch (error) {
+                log(`❌ Audio sending failed: ${error.message}`, 'error');
+            }
+        }
+
+        function clearLogs() {
+            logs.innerHTML = '';
+        }
+    </script>
+</body>
+</html> 

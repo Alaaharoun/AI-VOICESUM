@@ -1,5 +1,6 @@
 // Render WebSocket Service for Real-time Transcription and Translation
 import { getServerConfig } from '../config/servers';
+import { AudioConverter } from './audioConverter';
 
 export class RenderWebSocketService {
   private ws: WebSocket | null = null;
@@ -21,6 +22,7 @@ export class RenderWebSocketService {
   private connectionTimeout: number | null = null;
   private isReconnecting = false;
   private shouldReconnect = true;
+  private audioConverter: AudioConverter;
 
   constructor() {
     this.isConnected = false;
@@ -28,6 +30,7 @@ export class RenderWebSocketService {
     this.isInitialized = false;
     this.currentTranscription = '';
     this.currentTranslation = '';
+    this.audioConverter = new AudioConverter();
   }
 
   async connect(
@@ -53,6 +56,18 @@ export class RenderWebSocketService {
       console.log('🔧 Using server:', serverConfig.name);
       console.log('🔧 WebSocket URL:', serverConfig.wsUrl);
       
+      // Test server health first
+      try {
+        const healthResponse = await fetch(serverConfig.healthUrl);
+        if (!healthResponse.ok) {
+          throw new Error(`Server health check failed: ${healthResponse.status}`);
+        }
+        console.log('✅ Server health check passed');
+      } catch (healthError) {
+        console.warn('⚠️ Server health check failed:', healthError);
+        // Continue anyway, as the WebSocket might still work
+      }
+      
       // Create WebSocket connection with timeout
       await this.createWebSocketConnection(serverConfig.wsUrl);
       
@@ -63,6 +78,20 @@ export class RenderWebSocketService {
       
     } catch (error) {
       console.error('❌ Error connecting to Render WebSocket service:', error);
+      
+      // Provide helpful error message
+      if (error instanceof Error && (error.message.includes('404') || error.message.includes('Not Found'))) {
+        console.error('🔧 Server issue detected: WebSocket endpoint not found');
+        console.error('💡 This might be because:');
+        console.error('   1. The server is running Faster Whisper instead of Azure Speech Service');
+        console.error('   2. The WebSocket endpoint path is incorrect');
+        console.error('   3. The server needs to be redeployed with Azure Speech Service');
+        console.error('💡 Solutions:');
+        console.error('   1. Deploy the Azure server using azure-server.js');
+        console.error('   2. Update the client to work with Faster Whisper');
+        console.error('   3. Check the server configuration');
+      }
+      
       throw new Error(`Failed to connect to Render WebSocket service: ${error}`);
     }
   }
@@ -294,22 +323,51 @@ export class RenderWebSocketService {
     }
   }
 
-  private sendInitMessage() {
-    const initMessage = {
-      type: 'init',
-      language: this.sourceLanguage,
-      targetLanguage: this.targetLanguage,
-      clientSideTranslation: true,
-      realTimeMode: true,
-      autoDetection: true,
-      audioConfig: {
-        sampleRate: 16000,
-        channels: 1,
-        bitsPerSample: 16,
-        encoding: 'pcm_s16le'
+  private async sendInitMessage() {
+    try {
+      console.log('📤 Sending init message:', {
+        type: 'init',
+        language: this.sourceLanguage,
+        targetLanguage: this.targetLanguage,
+        clientSideTranslation: true,
+        realTimeMode: true,
+        autoDetection: true,
+        audioConfig: {
+          sampleRate: 16000,
+          channels: 1,
+          bitsPerSample: 16,
+          encoding: 'pcm_s16le'
+        }
+      });
+
+      this.sendMessage({
+        type: 'init',
+        language: this.sourceLanguage,
+        targetLanguage: this.targetLanguage,
+        clientSideTranslation: true,
+        realTimeMode: true,
+        autoDetection: true,
+        audioConfig: {
+          sampleRate: 16000,
+          channels: 1,
+          bitsPerSample: 16,
+          encoding: 'pcm_s16le'
+        }
+      });
+
+      // Test audio conversion
+      console.log('🧪 Testing audio conversion...');
+      const testBlob = new Blob([new ArrayBuffer(1024)], { type: 'audio/webm;codecs=opus' });
+      try {
+        const pcmData = await this.audioConverter.convertToPCM(testBlob);
+        console.log('✅ Audio conversion test passed:', pcmData.byteLength, 'bytes');
+      } catch (error) {
+        console.warn('⚠️ Audio conversion test failed:', error);
       }
-    };
-    this.sendMessage(initMessage);
+
+    } catch (error) {
+      console.error('❌ Error sending init message:', error);
+    }
   }
 
   sendAudioChunk(audioChunk: Blob) {
@@ -324,21 +382,28 @@ export class RenderWebSocketService {
       return;
     }
 
-    // Convert audio to base64 and send as JSON (like the old app's fallback)
-    const reader = new FileReader();
-    reader.onload = () => {
-      const base64Audio = (reader.result as string).split(',')[1];
-      
-      // Send as JSON message like the old app
-      this.sendMessage({
-        type: 'audio',
-        data: base64Audio,
-        format: audioChunk.type
-      });
-      
-      console.log('📤 Sent audio chunk:', audioChunk.size, 'bytes, format:', audioChunk.type);
-    };
-    reader.readAsDataURL(audioChunk);
+    // Send audio data directly without complex conversion
+    this.sendAudioData(audioChunk);
+  }
+
+  private async sendAudioData(audioChunk: Blob) {
+    try {
+      console.log('📤 Sending audio chunk (raw):', audioChunk.size, 'bytes, format:', audioChunk.type);
+      // اقرأ Blob كـ base64
+      const reader = new FileReader();
+      reader.onload = () => {
+        const base64Audio = (reader.result as string).split(',')[1];
+        this.sendMessage({
+          type: 'audio',
+          data: base64Audio,
+          format: audioChunk.type // أرسل النوع الأصلي (webm/ogg)
+        });
+        console.log('📤 Sent raw audio chunk (base64):', audioChunk.size, 'bytes, format:', audioChunk.type);
+      };
+      reader.readAsDataURL(audioChunk);
+    } catch (error) {
+      console.error('❌ Error sending raw audio data:', error);
+    }
   }
 
   async stopStreaming() {

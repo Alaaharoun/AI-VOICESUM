@@ -3,6 +3,7 @@ import { Mic, MicOff, Download, Globe, Brain, Wifi, WifiOff } from 'lucide-react
 import { useNavigate } from 'react-router-dom';
 import { SummarizationService } from '../services/api';
 import { RenderWebSocketService } from '../services/renderWebSocketService';
+import { AudioConverter } from '../services/audioConverter';
 import { supabase } from '../lib/supabase';
 import { useAuthStore } from '../stores/authStore';
 import { permissionHelper } from '../utils/permissionHelper';
@@ -196,36 +197,31 @@ export const LiveTranslation: React.FC = () => {
       
       console.log('🎵 Starting audio recording for WebSocket...');
       
-      // Get microphone stream for WebSocket
+      // Get microphone stream with optimal settings for Azure Speech Service
+      const optimalSettings = AudioConverter.getOptimalRecordingSettings();
+      console.log('🎵 Using optimal recording settings:', optimalSettings);
+      
       const stream = await navigator.mediaDevices.getUserMedia({ 
-        audio: {
-          sampleRate: 16000,
-          channelCount: 1,
-          echoCancellation: true,
-          noiseSuppression: true,
-          autoGainControl: true,
-        }
+        audio: optimalSettings
       });
       
       // Store stream reference for stopping later
       audioStreamRef.current = stream;
       
-      // Use supported audio format for WebSocket
-      let mimeType = 'audio/webm;codecs=opus';
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/webm';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/mp4';
-      }
-      if (!MediaRecorder.isTypeSupported(mimeType)) {
-        mimeType = 'audio/ogg;codecs=opus';
-      }
+      // Use optimal audio format for Azure Speech Service
+      const optimalFormat = AudioConverter.getOptimalAudioFormat();
+      console.log('🎵 Using optimal audio format:', optimalFormat);
       
-      console.log('🎵 Using audio format:', mimeType);
+      // Validate format compatibility
+      const formatInfo = AudioConverter.getFormatInfo(optimalFormat);
+      console.log('🎵 Format info:', formatInfo);
+      
+      if (!formatInfo.isCompatible) {
+        console.warn('⚠️ Audio format may not be optimal for Azure Speech Service');
+      }
       
       const mediaRecorder = new MediaRecorder(stream, {
-        mimeType: mimeType,
+        mimeType: optimalFormat,
         audioBitsPerSecond: 128000
       });
       mediaRecorderRef.current = mediaRecorder;

@@ -1,288 +1,339 @@
-// Audio Converter Service - Enhanced Version
-// This version provides actual audio conversion using Web Audio API
+// Audio Converter Service for Azure Speech Service
+// Converts various audio formats to PCM 16kHz 16-bit mono
 
 export class AudioConverter {
-  private static isLoaded = false;
-  private static isLoading = false;
-  private static loadPromise: Promise<void> | null = null;
-  private static audioContext: AudioContext | null = null;
+  private audioContext: AudioContext | null = null;
+  private sampleRate = 16000;
+  private channels = 1;
+  private bitsPerSample = 16;
+
+  constructor() {
+    // Initialize AudioContext for conversion
+    if (typeof window !== 'undefined' && window.AudioContext) {
+      this.audioContext = new AudioContext({
+        sampleRate: this.sampleRate,
+        latencyHint: 'interactive'
+      });
+    }
+  }
 
   /**
-   * تحميل AudioConverter (محسن)
+   * Convert audio blob to PCM 16kHz 16-bit mono
+   * Azure Speech Service requires PCM format for best compatibility
    */
-  static async loadFFmpeg(): Promise<void> {
-    if (this.isLoaded) return;
-    if (this.isLoading && this.loadPromise) {
-      return this.loadPromise;
+  async convertToPCM(audioBlob: Blob): Promise<ArrayBuffer> {
+    if (!this.audioContext) {
+      throw new Error('AudioContext not available');
     }
 
-    this.isLoading = true;
-    this.loadPromise = new Promise(async (resolve) => {
-      try {
-        console.log('🔄 Loading audio converter (enhanced)...');
-        
-        // إنشاء AudioContext للتحويل
-        this.audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-        
-        this.isLoaded = true;
-        console.log('✅ Audio converter loaded successfully (enhanced mode)');
-        resolve();
-      } catch (error) {
-        console.error('❌ Error loading audio converter:', error);
-        this.isLoaded = true;
-        resolve();
-      } finally {
-        this.isLoading = false;
+    try {
+      console.log('🔄 Converting audio to PCM format...');
+      console.log('📊 Input format:', audioBlob.type, 'Size:', audioBlob.size, 'bytes');
+
+      // Check if the format is directly supported by AudioContext
+      if (this.isDirectlySupported(audioBlob.type)) {
+        return await this.convertDirectly(audioBlob);
+      } else {
+        // For unsupported formats like WebM/Opus, use alternative method
+        return await this.convertWithAlternativeMethod(audioBlob);
       }
+    } catch (error) {
+      console.error('❌ Error converting audio to PCM:', error);
+      throw new Error(`Audio conversion failed: ${error}`);
+    }
+  }
+
+  /**
+   * Check if format is directly supported by AudioContext
+   */
+  private isDirectlySupported(mimeType: string): boolean {
+    const supportedFormats = [
+      'audio/wav',
+      'audio/mp4',
+      'audio/aac',
+      'audio/mpeg'
+    ];
+    
+    return supportedFormats.some(format => 
+      mimeType.toLowerCase().includes(format.toLowerCase())
+    );
+  }
+
+  /**
+   * Convert directly using AudioContext (for supported formats)
+   */
+  private async convertDirectly(audioBlob: Blob): Promise<ArrayBuffer> {
+    const arrayBuffer = await audioBlob.arrayBuffer();
+    const audioBuffer = await this.audioContext!.decodeAudioData(arrayBuffer);
+    
+    console.log('📊 Decoded audio:', {
+      sampleRate: audioBuffer.sampleRate,
+      length: audioBuffer.length,
+      duration: audioBuffer.duration,
+      numberOfChannels: audioBuffer.numberOfChannels
     });
 
-    return this.loadPromise;
+    // Convert to mono if stereo
+    const monoChannel = this.convertToMono(audioBuffer);
+    
+    // Resample to 16kHz if needed
+    const resampledData = this.resampleTo16kHz(monoChannel, audioBuffer.sampleRate);
+    
+    // Convert to 16-bit PCM
+    const pcmData = this.convertTo16BitPCM(resampledData);
+    
+    console.log('✅ Audio converted to PCM:', {
+      sampleRate: this.sampleRate,
+      channels: this.channels,
+      bitsPerSample: this.bitsPerSample,
+      size: pcmData.byteLength,
+      duration: pcmData.byteLength / (this.sampleRate * this.channels * this.bitsPerSample / 8)
+    });
+
+    return pcmData;
   }
 
   /**
-   * تحويل Blob من webm/opus إلى WAV (فعلي)
+   * Convert using alternative method for unsupported formats (WebM/Opus)
    */
-  static async convertToWav(blob: Blob): Promise<Blob> {
-    try {
-      await this.loadFFmpeg();
+  private async convertWithAlternativeMethod(audioBlob: Blob): Promise<ArrayBuffer> {
+    console.log('🔄 Using alternative conversion method for:', audioBlob.type);
+    
+    // Create a temporary audio element to decode the audio
+    const audio = new Audio();
+    const url = URL.createObjectURL(audioBlob);
+    
+    return new Promise((resolve, reject) => {
+      audio.oncanplaythrough = async () => {
+        try {
+          // Create a MediaElementSource from the audio element
+          const source = this.audioContext!.createMediaElementSource(audio);
+          const destination = this.audioContext!.createMediaStreamDestination();
+          source.connect(destination);
+          
+          // Get the audio stream
+          const stream = destination.stream;
+          const mediaRecorder = new MediaRecorder(stream, {
+            mimeType: 'audio/wav'
+          });
+          
+          const chunks: Blob[] = [];
+          mediaRecorder.ondataavailable = (event) => {
+            chunks.push(event.data);
+          };
+          
+          mediaRecorder.onstop = async () => {
+            try {
+              const wavBlob = new Blob(chunks, { type: 'audio/wav' });
+              const pcmData = await this.convertDirectly(wavBlob);
+              URL.revokeObjectURL(url);
+              resolve(pcmData);
+            } catch (error) {
+              reject(error);
+            }
+          };
+          
+          // Start recording and play audio
+          mediaRecorder.start();
+          audio.play();
+          
+          // Stop after audio duration
+          setTimeout(() => {
+            mediaRecorder.stop();
+            audio.pause();
+          }, audio.duration * 1000);
+          
+        } catch (error) {
+          URL.revokeObjectURL(url);
+          reject(error);
+        }
+      };
       
-      console.log('🔄 Converting audio to WAV (enhanced)...');
-      console.log('📊 Input size:', blob.size, 'bytes');
-      console.log('📁 Input type:', blob.type);
+      audio.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error('Failed to load audio'));
+      };
       
-      if (!this.audioContext) {
-        console.warn('⚠️ AudioContext not available, returning original blob');
-        return blob;
-      }
+      audio.src = url;
+    });
+  }
 
-      // التحقق من الحد الأدنى للحجم
-      if (blob.size < 10240) { // أقل من 10KB
-        console.warn('⚠️ File too small for conversion, returning original');
-        return blob;
-      }
-      
-      // تحويل Blob إلى ArrayBuffer
-      const arrayBuffer = await blob.arrayBuffer();
-      
-      // فك تشفير الصوت
-      const audioBuffer = await this.audioContext.decodeAudioData(arrayBuffer);
-      
-      // إنشاء WAV من AudioBuffer
-      const wavBlob = await this.audioBufferToWav(audioBuffer);
-      
-      console.log('✅ Audio converted to WAV successfully');
-      console.log('📊 Output size:', wavBlob.size, 'bytes');
-      
-      return wavBlob;
-      
-    } catch (error) {
-      console.error('❌ Error converting audio to WAV:', error);
-      
-      // إذا كان الخطأ بسبب decodeAudioData، جرب تحويل بسيط
-      if (error instanceof Error && error.name === 'EncodingError') {
-        console.log('🔄 Trying simple format conversion...');
-        return this.simpleFormatConversion(blob, 'wav');
-      }
-      
-      console.log('🔄 Falling back to original blob');
-      return blob;
+  /**
+   * Alternative: Send raw audio data without conversion
+   * This is a fallback when conversion fails
+   */
+  async sendRawAudio(audioBlob: Blob): Promise<ArrayBuffer> {
+    console.log('🔄 Sending raw audio data without conversion...');
+    return await audioBlob.arrayBuffer();
+  }
+
+  /**
+   * Convert multi-channel audio to mono
+   */
+  private convertToMono(audioBuffer: AudioBuffer): Float32Array {
+    if (audioBuffer.numberOfChannels === 1) {
+      return audioBuffer.getChannelData(0);
     }
-  }
 
-  /**
-   * تحويل Blob من webm/opus إلى MP3 (مبسط)
-   */
-  static async convertToMp3(blob: Blob): Promise<Blob> {
-    try {
-      await this.loadFFmpeg();
-      
-      console.log('🔄 Converting audio to MP3 (enhanced)...');
-      console.log('📊 Input size:', blob.size, 'bytes');
-      console.log('📁 Input type:', blob.type);
-      
-      // تحويل إلى WAV أولاً ثم إعادة تسمية كـ MP3
-      const wavBlob = await this.convertToWav(blob);
-      
-      // إنشاء ملف MP3 (في هذه النسخة نعيد تسمية WAV)
-      const mp3Blob = new Blob([wavBlob], { type: 'audio/mpeg' });
-      
-      console.log('✅ Audio converted to MP3 successfully');
-      console.log('📊 Output size:', mp3Blob.size, 'bytes');
-      
-      return mp3Blob;
-      
-    } catch (error) {
-      console.error('❌ Error converting audio to MP3:', error);
-      console.log('🔄 Falling back to original blob');
-      return blob;
-    }
-  }
-
-  /**
-   * تحويل بسيط للتنسيق (fallback)
-   */
-  private static simpleFormatConversion(blob: Blob, targetFormat: 'wav' | 'mp3'): Blob {
-    try {
-      console.log(`🔄 Simple format conversion to ${targetFormat.toUpperCase()}...`);
-      
-      // إنشاء header بسيط
-      const header = this.createSimpleHeader(blob.size, targetFormat);
-      
-      // دمج header مع البيانات
-      const convertedBlob = new Blob([header, blob], { 
-        type: targetFormat === 'wav' ? 'audio/wav' : 'audio/mpeg' 
-      });
-      
-      console.log(`✅ Simple conversion to ${targetFormat.toUpperCase()} completed`);
-      return convertedBlob;
-      
-    } catch (error) {
-      console.error('❌ Error in simple format conversion:', error);
-      return blob;
-    }
-  }
-
-  /**
-   * إنشاء header بسيط
-   */
-  private static createSimpleHeader(dataSize: number, format: 'wav' | 'mp3'): ArrayBuffer {
-    if (format === 'wav') {
-      // WAV header بسيط
-      const buffer = new ArrayBuffer(44);
-      const view = new DataView(buffer);
-      
-      // RIFF header
-      this.writeString(view, 0, 'RIFF');
-      view.setUint32(4, 36 + dataSize, true);
-      this.writeString(view, 8, 'WAVE');
-      
-      // fmt chunk
-      this.writeString(view, 12, 'fmt ');
-      view.setUint32(16, 16, true);
-      view.setUint16(20, 1, true);
-      view.setUint16(22, 1, true); // mono
-      view.setUint32(24, 16000, true); // 16kHz
-      view.setUint32(28, 32000, true); // byte rate
-      view.setUint16(32, 2, true);
-      view.setUint16(34, 16, true);
-      
-      // data chunk
-      this.writeString(view, 36, 'data');
-      view.setUint32(40, dataSize, true);
-      
-      return buffer;
-    } else {
-      // MP3 header بسيط (فارغ)
-      return new ArrayBuffer(0);
-    }
-  }
-
-  /**
-   * تحويل AudioBuffer إلى WAV Blob
-   */
-  private static async audioBufferToWav(audioBuffer: AudioBuffer): Promise<Blob> {
+    const monoData = new Float32Array(audioBuffer.length);
     const numChannels = audioBuffer.numberOfChannels;
-    const sampleRate = audioBuffer.sampleRate;
-    const length = audioBuffer.length;
-    
-    // إنشاء WAV header
-    const wavHeader = this.createWavHeader(length, numChannels, sampleRate);
-    
-    // تحويل البيانات إلى 16-bit PCM
-    const pcmData = new Int16Array(length * numChannels);
-    let offset = 0;
-    
-    for (let i = 0; i < length; i++) {
+
+    for (let i = 0; i < audioBuffer.length; i++) {
+      let sum = 0;
       for (let channel = 0; channel < numChannels; channel++) {
-        const sample = Math.max(-1, Math.min(1, audioBuffer.getChannelData(channel)[i]));
-        pcmData[offset] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-        offset++;
+        sum += audioBuffer.getChannelData(channel)[i];
+      }
+      monoData[i] = sum / numChannels;
+    }
+
+    return monoData;
+  }
+
+  /**
+   * Resample audio to 16kHz
+   */
+  private resampleTo16kHz(audioData: Float32Array, originalSampleRate: number): Float32Array {
+    if (originalSampleRate === this.sampleRate) {
+      return audioData;
+    }
+
+    const ratio = originalSampleRate / this.sampleRate;
+    const newLength = Math.round(audioData.length / ratio);
+    const resampledData = new Float32Array(newLength);
+
+    for (let i = 0; i < newLength; i++) {
+      const originalIndex = Math.round(i * ratio);
+      if (originalIndex < audioData.length) {
+        resampledData[i] = audioData[originalIndex];
       }
     }
-    
-    // دمج header مع البيانات
-    const wavBlob = new Blob([wavHeader, pcmData], { type: 'audio/wav' });
-    
-    return wavBlob;
+
+    return resampledData;
   }
 
   /**
-   * إنشاء WAV header
+   * Convert float32 audio data to 16-bit PCM
    */
-  private static createWavHeader(length: number, numChannels: number, sampleRate: number): ArrayBuffer {
-    const buffer = new ArrayBuffer(44);
-    const view = new DataView(buffer);
+  private convertTo16BitPCM(audioData: Float32Array): ArrayBuffer {
+    const pcmData = new Int16Array(audioData.length);
     
-    // RIFF header
-    this.writeString(view, 0, 'RIFF');
-    view.setUint32(4, 36 + length * numChannels * 2, true);
-    this.writeString(view, 8, 'WAVE');
-    
-    // fmt chunk
-    this.writeString(view, 12, 'fmt ');
-    view.setUint32(16, 16, true);
-    view.setUint16(20, 1, true);
-    view.setUint16(22, numChannels, true);
-    view.setUint32(24, sampleRate, true);
-    view.setUint32(28, sampleRate * numChannels * 2, true);
-    view.setUint16(32, numChannels * 2, true);
-    view.setUint16(34, 16, true);
-    
-    // data chunk
-    this.writeString(view, 36, 'data');
-    view.setUint32(40, length * numChannels * 2, true);
-    
-    return buffer;
-  }
-
-  /**
-   * كتابة string إلى DataView
-   */
-  private static writeString(view: DataView, offset: number, string: string) {
-    for (let i = 0; i < string.length; i++) {
-      view.setUint8(offset + i, string.charCodeAt(i));
+    for (let i = 0; i < audioData.length; i++) {
+      // Clamp value between -1 and 1
+      const sample = Math.max(-1, Math.min(1, audioData[i]));
+      // Convert to 16-bit integer
+      pcmData[i] = Math.round(sample * 32767);
     }
+
+    return pcmData.buffer;
   }
 
   /**
-   * التحقق من دعم التنسيقات (محسن)
+   * Get optimal audio format for recording
+   * Prioritizes formats that work well with Azure Speech Service
    */
-  static async checkSupport(): Promise<{ wav: boolean; mp3: boolean }> {
-    try {
-      await this.loadFFmpeg();
-      
-      // التحقق من دعم Web Audio API
-      const hasWebAudio = !!(window.AudioContext || (window as any).webkitAudioContext);
-      
-      console.log('⚠️ Using enhanced converter - Web Audio API support:', hasWebAudio);
-      return { wav: hasWebAudio, mp3: hasWebAudio };
-      
-    } catch (error) {
-      console.error('❌ Error checking format support:', error);
-      return { wav: false, mp3: false };
-    }
-  }
+  static getOptimalAudioFormat(): string {
+    const formats = [
+      'audio/webm;codecs=opus',    // Best for WebM with Opus
+      'audio/webm',                // WebM without codec specification
+      'audio/ogg;codecs=opus',     // OGG with Opus
+      'audio/mp4',                 // MP4 as fallback
+      'audio/wav'                  // WAV as last resort
+    ];
 
-  /**
-   * تنظيف الذاكرة (محسن)
-   */
-  static cleanup(): void {
-    console.log('🧹 Audio converter cleanup (enhanced)');
-    
-    if (this.audioContext) {
-      try {
-        this.audioContext.close();
-        this.audioContext = null;
-      } catch (error) {
-        console.warn('⚠️ Error during cleanup:', error);
+    for (const format of formats) {
+      if (MediaRecorder.isTypeSupported(format)) {
+        console.log('🎵 Using audio format:', format);
+        return format;
       }
     }
+
+    // Fallback to default
+    console.warn('⚠️ No optimal audio format supported, using default');
+    return '';
   }
 
   /**
-   * التحقق من توفر FFmpeg (محسن)
+   * Get optimal recording settings for Azure Speech Service
    */
-  static isFFmpegAvailable(): boolean {
-    return !!(window.AudioContext || (window as any).webkitAudioContext);
+  static getOptimalRecordingSettings(): MediaTrackConstraints {
+    return {
+      sampleRate: 16000,
+      channelCount: 1,
+      echoCancellation: true,
+      noiseSuppression: true,
+      autoGainControl: true,
+      // Additional settings for better quality
+      latency: 0.01,
+      volume: 1.0
+    };
+  }
+
+  /**
+   * Validate audio format compatibility with Azure Speech Service
+   */
+  static isFormatCompatible(mimeType: string): boolean {
+    const compatibleFormats = [
+      'audio/webm;codecs=opus',
+      'audio/webm',
+      'audio/ogg;codecs=opus',
+      'audio/mp4',
+      'audio/wav',
+      'audio/pcm',
+      'audio/raw'
+    ];
+
+    return compatibleFormats.some(format => 
+      mimeType.toLowerCase().includes(format.toLowerCase())
+    );
+  }
+
+  /**
+   * Get audio format information for debugging
+   */
+  static getFormatInfo(mimeType: string): {
+    isCompatible: boolean;
+    recommended: boolean;
+    compression: string;
+    quality: string;
+  } {
+    const formatInfo: { [key: string]: any } = {
+      'audio/webm;codecs=opus': {
+        isCompatible: true,
+        recommended: true,
+        compression: 'Opus',
+        quality: 'High'
+      },
+      'audio/webm': {
+        isCompatible: true,
+        recommended: true,
+        compression: 'Variable',
+        quality: 'Good'
+      },
+      'audio/ogg;codecs=opus': {
+        isCompatible: true,
+        recommended: true,
+        compression: 'Opus',
+        quality: 'High'
+      },
+      'audio/mp4': {
+        isCompatible: true,
+        recommended: false,
+        compression: 'AAC',
+        quality: 'Medium'
+      },
+      'audio/wav': {
+        isCompatible: true,
+        recommended: false,
+        compression: 'None',
+        quality: 'High'
+      }
+    };
+
+    return formatInfo[mimeType] || {
+      isCompatible: false,
+      recommended: false,
+      compression: 'Unknown',
+      quality: 'Unknown'
+    };
   }
 } 

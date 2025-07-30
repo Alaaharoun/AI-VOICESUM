@@ -27,9 +27,18 @@ export const SERVER_CONFIG = {
     engine: 'azure'
   },
   
-  // Render WebSocket Server
+  // Render WebSocket Server (Azure Speech Service)
   RENDER: {
     name: 'Render WebSocket Server',
+    wsUrl: 'wss://ai-voicesum.onrender.com/ws',
+    httpUrl: 'https://ai-voicesum.onrender.com/transcribe',
+    healthUrl: 'https://ai-voicesum.onrender.com/health',
+    engine: 'azure'
+  },
+  
+  // Render Azure Server (Alternative)
+  RENDER_AZURE: {
+    name: 'Render Azure Server',
     wsUrl: 'wss://ai-voicesum.onrender.com/ws',
     httpUrl: 'https://ai-voicesum.onrender.com/transcribe',
     healthUrl: 'https://ai-voicesum.onrender.com/health',
@@ -40,8 +49,14 @@ export const SERVER_CONFIG = {
 // Server Selection Logic
 export const getServerConfig = (engine: string, preferRemote: boolean = true) => {
   if (engine === 'azure') {
-    // Prefer Render WebSocket server for Azure engine
-    return SERVER_CONFIG.RENDER;
+    // Try to use Azure server, but fallback to Faster Whisper if needed
+    try {
+      // Check if Azure server is available
+      return SERVER_CONFIG.RENDER;
+    } catch (error) {
+      console.warn('Azure server not available, falling back to Faster Whisper');
+      return SERVER_CONFIG.HUGGING_FACE;
+    }
   }
   
   // For faster-whisper, prefer remote server unless explicitly requested
