@@ -23,7 +23,6 @@
     const [streamingStatus, setStreamingStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
     
     const renderWebSocketServiceRef = useRef<RenderWebSocketService | null>(null);
-    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const audioStreamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
     const processorRef = useRef<ScriptProcessorNode | null>(null);
@@ -378,36 +377,7 @@
       }
     };
 
-    const saveToDatabase = async () => {
-      if (!user) return;
-
-      try {
-        const finalTranscription = realTimeTranscription || transcription;
-        const finalTranslation = realTimeTranslation || translation;
-
-        if (finalTranscription || finalTranslation) {
-          const { error } = await supabase
-            .from('transcriptions')
-            .insert({
-              user_id: user.id,
-              transcription: finalTranscription,
-              translation: finalTranslation,
-              source_language: sourceLanguage,
-              target_language: targetLanguage,
-              engine: 'azure', // Assuming engine is azure for now
-              created_at: new Date().toISOString(),
-            });
-
-          if (error) {
-            console.error('Error saving to database:', error);
-          } else {
-            console.log('Transcription saved to database');
-          }
-        }
-      } catch (error) {
-        console.error('Error saving to database:', error);
-      }
-    };
+    // Note: Database saving functionality removed as it's not currently used
 
     const downloadTranscription = () => {
       const content = `Transcription: ${transcription}\n\nTranslation: ${translation}`;

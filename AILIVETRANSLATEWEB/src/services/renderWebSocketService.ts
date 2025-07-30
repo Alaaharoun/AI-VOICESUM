@@ -396,13 +396,16 @@ export class RenderWebSocketService {
     // Wait for initialization to complete before sending audio
     if (!this.isInitialized) {
       console.warn('⚠️ Waiting for initialization to complete before sending audio');
-      // Store the chunk temporarily and send it later
+      // Store the chunk temporarily and send it later with longer timeout
       setTimeout(() => {
         if (this.isInitialized) {
           console.log('📤 Sending delayed audio chunk after initialization');
           this.sendAudioData(audioChunk);
+        } else {
+          console.warn('⚠️ Initialization timeout, sending audio anyway');
+          this.sendAudioData(audioChunk);
         }
-      }, 100);
+      }, 3000); // Wait 3 seconds for initialization
       return;
     }
 

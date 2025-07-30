@@ -973,7 +973,7 @@ function startWebSocketServer(server) {
                   setTimeout(() => {
                     ws.send(JSON.stringify({ type: 'ready', message: 'Ready for audio input' }));
                     console.log(`📤 [${language}] Sent additional ready message`);
-                  }, 100);
+                  }, 50); // Reduced timeout for faster response
                 },
                 (err) => {
                   console.error(`❌ [${language}] Failed to start recognition:`, err);
