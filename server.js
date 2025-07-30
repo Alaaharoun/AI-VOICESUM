@@ -1019,12 +1019,29 @@ function startWebSocketServer(server) {
             const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
             console.log(`🔍 Audio quality result:`, audioQuality);
             
-            // More lenient criteria for PCM with longer chunks
-            if (audioSize >= 16000) { // At least 1 second of audio
-              console.log(`✅ [${language}] PCM chunk duration sufficient (${(audioSize / 32000).toFixed(2)}s)`);
+            // More lenient criteria for PCM with longer chunks (3 seconds optimal)
+            if (audioSize >= 48000) { // At least 3 seconds of audio (optimal)
+              console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
               
               if (!audioQuality.hasSpeech) {
                 console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite sufficient duration`);
+                ws.send(JSON.stringify({ 
+                  type: 'warning', 
+                  message: 'No clear speech detected. Please speak louder or check your microphone.',
+                  audioStats: audioQuality
+                }));
+                return;
+              }
+              
+              // Write PCM data directly to Azure Speech SDK
+              pushStream.write(audioBuffer);
+              console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+              return;
+            } else if (audioSize >= 24000) { // At least 1.5 seconds (acceptable)
+              console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
+              
+              if (!audioQuality.hasSpeech) {
+                console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite acceptable duration`);
                 ws.send(JSON.stringify({ 
                   type: 'warning', 
                   message: 'No clear speech detected. Please speak louder or check your microphone.',
