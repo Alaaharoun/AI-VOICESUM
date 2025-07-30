@@ -176,12 +176,13 @@ function analyzeAudioQuality(audioBuffer, audioFormat) {
   const dynamicRange = maxAmplitude;
   const zeroCrossingRate = zeroCrossings / sampleCount;
   
-  // Speech typically has:
-  // - RMS > 1000 (not too quiet)
-  // - Dynamic range > 5000 (not too compressed)
-  // - Zero crossing rate > 0.1 (speech activity)
+  // Speech typically has (relaxed criteria for better detection):
+  // - RMS > 50 (not too quiet) - reduced from 1000
+  // - Dynamic range > 100 (not too compressed) - reduced from 5000
+  // - Zero crossing rate > 0.01 (speech activity) - reduced from 0.1
+  // - Duration > 0.5 seconds (minimum speech duration)
   
-  const hasSpeech = averageAmplitude > 1000 && dynamicRange > 5000 && zeroCrossingRate > 0.1;
+  const hasSpeech = averageAmplitude > 50 && dynamicRange > 100 && zeroCrossingRate > 0.01 && (sampleCount / 16000) > 0.5;
   
   console.log(`🔍 Audio Analysis (PCM):
     - Duration: ${(sampleCount / 16000).toFixed(2)} seconds
@@ -1012,10 +1013,19 @@ function startWebSocketServer(server) {
               // Analyze audio quality before conversion
               const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
               
-              // Skip quality check for WebM/Opus (will be checked after conversion)
+              // Save audio for debugging if it's PCM and seems to have issues
               if (!audioQuality.skipAnalysis && !audioQuality.hasSpeech) {
                 console.warn(`⚠️ [${language}] Audio appears to contain no speech or is too quiet`);
                 console.warn(`📊 Audio stats: Duration=${audioQuality.duration}s, Amplitude=${audioQuality.averageAmplitude}, Range=${audioQuality.dynamicRange}`);
+                
+                // Save problematic audio for debugging
+                try {
+                  const debugFileName = `/tmp/debug_audio_${Date.now()}.raw`;
+                  fs.writeFileSync(debugFileName, audioBuffer);
+                  console.log(`🔍 [${language}] Saved problematic audio for debugging: ${debugFileName}`);
+                } catch (debugError) {
+                  console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
+                }
                 
                 // Send warning to client
                 ws.send(JSON.stringify({ 
@@ -1051,6 +1061,17 @@ function startWebSocketServer(server) {
                   // Write converted PCM data to Azure Speech SDK
                   pushStream.write(pcmBuffer);
                   console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                  
+                  // Save successful audio for debugging (occasionally)
+                  if (Math.random() < 0.1) { // Save 10% of successful audio for debugging
+                    try {
+                      const debugFileName = `/tmp/success_audio_${Date.now()}.wav`;
+                      fs.writeFileSync(debugFileName, pcmBuffer);
+                      console.log(`🔍 [${language}] Saved successful audio for debugging: ${debugFileName}`);
+                    } catch (debugError) {
+                      console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
+                    }
+                  }
                 })
                 .catch(conversionError => {
                   console.error(`❌ [${language}] Audio conversion failed:`, conversionError);

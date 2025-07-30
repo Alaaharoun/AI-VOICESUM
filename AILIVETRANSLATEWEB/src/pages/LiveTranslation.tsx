@@ -198,9 +198,36 @@
         const optimalSettings = AudioConverter.getOptimalRecordingSettings();
         console.log('🎵 Using optimal recording settings:', optimalSettings);
         
+        // Test microphone before starting recording
+        console.log('🔍 Testing microphone access...');
         const stream = await navigator.mediaDevices.getUserMedia({ 
           audio: optimalSettings
         });
+        
+        // Analyze microphone input for debugging
+        const audioContext = new AudioContext();
+        const source = audioContext.createMediaStreamSource(stream);
+        const analyser = audioContext.createAnalyser();
+        analyser.fftSize = 256;
+        source.connect(analyser);
+        
+        const bufferLength = analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+        
+        // Quick microphone test
+        let testDuration = 0;
+        const testInterval = setInterval(() => {
+          analyser.getByteFrequencyData(dataArray);
+          const average = dataArray.reduce((a, b) => a + b) / bufferLength;
+          console.log(`🔍 Microphone test - Level: ${average}, Duration: ${testDuration}s`);
+          testDuration += 0.1;
+          
+          if (testDuration >= 1) {
+            clearInterval(testInterval);
+            console.log('✅ Microphone test completed');
+            audioContext.close();
+          }
+        }, 100);
         
         // Store stream reference for stopping later
         audioStreamRef.current = stream;
@@ -225,6 +252,13 @@
 
         mediaRecorder.ondataavailable = (event) => {
           console.log('📦 Audio chunk received:', event.data.size, 'bytes');
+          
+          // Analyze audio chunk for debugging
+          const audioBlob = event.data;
+          console.log('🔍 Audio chunk analysis:', {
+            size: audioBlob.size,
+            type: audioBlob.type
+          });
           
           // Send audio chunk to Render WebSocket service
           if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
