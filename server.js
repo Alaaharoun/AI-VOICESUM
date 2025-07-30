@@ -19,12 +19,12 @@ const upload = multer();
 
 const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
 const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
+const AZURE_SPEECH_ENDPOINT = 'https://westeurope.api.cognitive.microsoft.com/';
 
-console.log('Server starting with Azure Speech API key:', AZURE_SPEECH_KEY ? 'Present' : 'Missing');
-console.log('Environment variables:', {
-  AZURE_SPEECH_KEY: process.env.AZURE_SPEECH_KEY ? 'Present' : 'Missing',
-  AZURE_SPEECH_REGION: process.env.AZURE_SPEECH_REGION ? 'Present' : 'Missing'
-});
+console.log('Server starting with Azure Speech API configuration:');
+console.log('- Key:', AZURE_SPEECH_KEY ? 'Present' : 'Missing');
+console.log('- Region:', AZURE_SPEECH_REGION || 'Not set');
+console.log('- Endpoint:', AZURE_SPEECH_ENDPOINT);
 
 // Helper function to convert MIME type to file extension
 function mimeToExtension(mimeType) {
@@ -727,8 +727,12 @@ function startWebSocketServer(server) {
               pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
               audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
               
+              // Create Azure Speech Config with custom endpoint
               speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
               speechConfig.speechRecognitionLanguage = language;
+              
+              // Set custom endpoint for West Europe
+              speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
               
               // Enable continuous recognition for better results
               speechConfig.enableDictation();

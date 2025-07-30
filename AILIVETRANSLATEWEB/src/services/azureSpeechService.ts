@@ -172,11 +172,14 @@ export class AzureSpeechService {
       console.log('🔧 Using language:', this.sourceLanguage);
       console.log('🔧 Using region:', this.config.region);
       
-      // Create speech config
+      // Create speech config with custom endpoint
       const speechConfig = SpeechSDK.SpeechConfig.fromSubscription(
         this.config.subscriptionKey,
         this.config.region
       );
+
+      // Set custom endpoint for West Europe
+      speechConfig.endpointId = 'https://westeurope.api.cognitive.microsoft.com/';
 
       // Enable dictation mode
       speechConfig.enableDictation();
