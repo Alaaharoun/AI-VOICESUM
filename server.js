@@ -38,9 +38,96 @@ function mimeToExtension(mimeType) {
   return '.bin'; // fallback
 }
 
+// Helper function to validate WebM file before FFmpeg processing
+async function validateWebMFile(filePath) {
+  try {
+    console.log('🔍 Validating WebM file with ffprobe...');
+    
+    // Use ffprobe to check file validity
+    const ffprobeCommand = `${ffmpegPath.replace('ffmpeg', 'ffprobe')} -v quiet -print_format json -show_format -show_streams "${filePath}"`;
+    
+    const result = await execAsync(ffprobeCommand);
+    const probeData = JSON.parse(result.stdout);
+    
+    if (!probeData.format || !probeData.streams || probeData.streams.length === 0) {
+      return { isValid: false, reason: 'No valid streams found' };
+    }
+    
+    // Check for audio stream
+    const audioStream = probeData.streams.find(stream => stream.codec_type === 'audio');
+    if (!audioStream) {
+      return { isValid: false, reason: 'No audio stream found' };
+    }
+    
+    console.log('✅ WebM file validation passed:', {
+      duration: probeData.format.duration,
+      codec: audioStream.codec_name,
+      sampleRate: audioStream.sample_rate
+    });
+    
+    return { isValid: true, probeData };
+    
+  } catch (error) {
+    console.error('❌ ffprobe validation failed:', error.message);
+    return { isValid: false, reason: `ffprobe failed: ${error.message}` };
+  }
+}
+
+// Helper function to validate EBML header for WebM
+function validateEBMLHeader(buffer) {
+  try {
+    if (buffer.length < 4) {
+      return { isValid: false, reason: 'Buffer too small for EBML header' };
+    }
+    
+    // EBML magic number: 0x1A, 0x45, 0xDF, 0xA3
+    const ebmlSignature = [0x1A, 0x45, 0xDF, 0xA3];
+    const headerView = new Uint8Array(buffer.slice(0, 4));
+    
+    const hasValidHeader = ebmlSignature.every((byte, index) => 
+      headerView[index] === byte
+    );
+    
+    if (!hasValidHeader) {
+      return { isValid: false, reason: 'Invalid EBML header signature' };
+    }
+    
+    console.log('✅ Valid EBML header detected');
+    return { isValid: true };
+    
+  } catch (error) {
+    return { isValid: false, reason: `EBML validation error: ${error.message}` };
+  }
+}
+
 async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav') {
   try {
     console.log(`🔄 Converting audio from ${inputFormat} to PCM WAV 16kHz...`);
+    
+    // ✅ Enhanced validation for WebM/Opus files
+    if (inputFormat.includes('webm') || inputFormat.includes('opus')) {
+      console.log('🔍 Enhanced WebM validation starting...');
+      
+      // 1. Size validation - increased minimum size
+      if (audioBuffer.length < 1024) { // 1KB minimum instead of 500 bytes
+        console.warn(`⚠️ WebM chunk too small: ${audioBuffer.length} bytes (minimum 1KB required)`);
+        throw new Error(`WebM chunk too small: ${audioBuffer.length} bytes - likely corrupted`);
+      }
+      
+      // 2. EBML header validation
+      const ebmlValidation = validateEBMLHeader(audioBuffer);
+      if (!ebmlValidation.isValid) {
+        console.warn(`⚠️ EBML header validation failed: ${ebmlValidation.reason}`);
+        
+        // If the chunk is reasonably large but missing header, it might be a middle chunk
+        if (audioBuffer.length >= 5120) { // 5KB - probably a middle chunk
+          console.log('📦 Large chunk without header detected - treating as middle chunk');
+          // Continue processing for middle chunks
+        } else {
+          throw new Error(`Invalid EBML header: ${ebmlValidation.reason}`);
+        }
+      }
+    }
     
     // First try ffmpeg conversion
     try {
@@ -51,6 +138,23 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
       
       // Write input buffer to file
       fs.writeFileSync(inputFile, audioBuffer);
+      
+      // ✅ Enhanced validation for WebM files before FFmpeg
+      if (inputFormat.includes('webm') || inputFormat.includes('opus')) {
+        const validation = await validateWebMFile(inputFile);
+        if (!validation.isValid) {
+          console.error(`❌ WebM file validation failed: ${validation.reason}`);
+          
+          // Clean up the invalid file
+          try {
+            fs.unlinkSync(inputFile);
+          } catch (cleanupError) {
+            console.warn('⚠️ Could not clean up invalid input file:', cleanupError.message);
+          }
+          
+          throw new Error(`Corrupted WebM file: ${validation.reason}`);
+        }
+      }
       
       // Build ffmpeg command based on input format
       let ffmpegCommand;
@@ -84,17 +188,22 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
     } catch (ffmpegError) {
       console.error('❌ FFmpeg conversion failed:', ffmpegError.message);
       
-      // ✅ تحسين معالجة أخطاء WebM الفاسدة
+      // ✅ Enhanced error handling for WebM corruption
       if (inputFormat.includes('webm') || inputFormat.includes('opus')) {
         console.warn('⚠️ WebM/Opus conversion failed - likely corrupted chunk');
         console.warn('📊 FFmpeg error details:', ffmpegError.message);
         
-        // إذا كان الخطأ متعلق بـ EBML header parsing، ارفض الملف
+        // Check for specific corruption indicators
         if (ffmpegError.message.includes('EBML header parsing failed') || 
-            ffmpegError.message.includes('Invalid data found')) {
+            ffmpegError.message.includes('Invalid data found') ||
+            ffmpegError.message.includes('moov atom not found') ||
+            ffmpegError.message.includes('truncated data')) {
           console.error('❌ WebM file is corrupted, cannot process');
-          throw new Error('Corrupted WebM file - EBML header invalid');
+          throw new Error('Corrupted WebM file - EBML header invalid or truncated data');
         }
+        
+        // For other WebM errors, provide more context
+        throw new Error(`WebM processing failed: ${ffmpegError.message}`);
       }
       
       // If the input is already PCM data, try to create WAV header
@@ -1085,15 +1194,37 @@ function startWebSocketServer(server) {
             try {
               console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
               
-              // ✅ إضافة فحص للقطع الصغيرة المحتمل أن تكون فاسدة
-              if (audioFormat.includes('webm') && audioSize < 500) {
-                console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), likely corrupted - skipping`);
-                ws.send(JSON.stringify({ 
-                  type: 'warning', 
-                  message: 'Received corrupted audio chunk (too small). Please check your microphone.',
-                  audioStats: { size: audioSize, format: audioFormat, reason: 'chunk_too_small' }
-                }));
-                return;
+              // ✅ Enhanced corruption detection before processing
+              if (audioFormat.includes('webm') || audioFormat.includes('opus')) {
+                // Size validation - increased minimum from 500 to 1024 bytes
+                if (audioSize < 1024) {
+                  console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), skipping to prevent corruption`);
+                  ws.send(JSON.stringify({ 
+                    type: 'warning', 
+                    message: 'Audio chunk too small, please check your microphone settings.',
+                    audioStats: { size: audioSize, format: audioFormat, reason: 'chunk_too_small_enhanced' }
+                  }));
+                  return; // Skip processing small chunks gracefully
+                }
+                
+                // Quick EBML header validation for WebM
+                if (audioBuffer.length >= 4) {
+                  const headerView = new Uint8Array(audioBuffer.slice(0, 4));
+                  const ebmlSignature = [0x1A, 0x45, 0xDF, 0xA3];
+                  const hasValidHeader = ebmlSignature.every((byte, index) => 
+                    headerView[index] === byte
+                  );
+                  
+                  if (!hasValidHeader && audioSize < 5120) {
+                    console.warn(`⚠️ [${language}] WebM chunk lacks valid EBML header and is small (${audioSize} bytes), likely corrupted`);
+                    ws.send(JSON.stringify({ 
+                      type: 'warning', 
+                      message: 'Corrupted audio chunk detected, please restart recording if issues persist.',
+                      audioStats: { size: audioSize, format: audioFormat, reason: 'invalid_ebml_header' }
+                    }));
+                    return; // Skip processing corrupted chunks gracefully
+                  }
+                }
               }
               
                         // For PCM data, we can use it directly without conversion
@@ -1206,18 +1337,36 @@ function startWebSocketServer(server) {
                   }
                 })
                 .catch(conversionError => {
-                  console.error(`❌ [${language}] Audio conversion failed:`, conversionError);
-                  ws.send(JSON.stringify({ 
-                    type: 'error', 
-                    error: `Audio conversion failed: ${conversionError.message}` 
-                  }));
+                  console.error(`❌ [${language}] Audio conversion failed:`, conversionError.message);
+                  
+                  // ✅ Graceful error handling - don't crash the connection
+                  if (conversionError.message.includes('Corrupted WebM file') || 
+                      conversionError.message.includes('EBML header invalid') ||
+                      conversionError.message.includes('WebM chunk too small')) {
+                    console.warn(`⚠️ [${language}] Skipping corrupted chunk gracefully`);
+                    ws.send(JSON.stringify({ 
+                      type: 'warning', 
+                      message: 'Corrupted audio chunk skipped. Recording continues normally.',
+                      details: { error: conversionError.message, format: audioFormat }
+                    }));
+                  } else {
+                    // For other errors, send more detailed feedback
+                    ws.send(JSON.stringify({ 
+                      type: 'error', 
+                      message: 'Audio processing failed. Please check your microphone or try a different format.',
+                      details: { error: conversionError.message, format: audioFormat }
+                    }));
+                  }
                 });
               
-            } catch (conversionError) {
-              console.error(`❌ [${language}] Audio conversion failed:`, conversionError);
+            } catch (processingError) {
+              console.error(`❌ [${language}] Audio processing error:`, processingError);
+              
+              // ✅ Graceful error handling for any processing errors
               ws.send(JSON.stringify({ 
-                type: 'error', 
-                error: `Audio conversion failed: ${conversionError.message}` 
+                type: 'warning', 
+                message: 'Audio chunk processing failed, continuing with next chunk.',
+                details: { error: processingError.message, format: audioFormat }
               }));
             }
           } else {

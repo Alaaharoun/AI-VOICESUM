@@ -604,6 +604,14 @@ export class RenderWebSocketService {
       const headerBuffer = await audioChunk.slice(0, 32).arrayBuffer();
       const headerView = new Uint8Array(headerBuffer);
 
+      // ✅ Enhanced size validation - increased minimum from 1000 to 1024 bytes (1KB)
+      if (audioChunk.size < 1024) {
+        return { 
+          isValid: false, 
+          reason: `WebM chunk too small: ${audioChunk.size} bytes (minimum 1KB required)` 
+        };
+      }
+
       // WebM يجب أن يبدأ بـ EBML signature
       // EBML magic number: 0x1A, 0x45, 0xDF, 0xA3
       if (headerView.length >= 4) {
@@ -613,31 +621,63 @@ export class RenderWebSocketService {
         );
 
         if (!hasValidHeader) {
-          // إذا لم يكن header صحيح، تحقق من الحد الأدنى للحجم
-          if (audioChunk.size < 1000) {
+          // ✅ Enhanced logic for middle chunks - increased threshold to 5KB
+          if (audioChunk.size < 5120) { // 5KB instead of 1000 bytes
             return { 
               isValid: false, 
-              reason: `WebM chunk too small and no valid header (${audioChunk.size} bytes)` 
+              reason: `WebM chunk lacks valid EBML header and is too small: ${audioChunk.size} bytes` 
             };
           } else {
-            // إذا كان الحجم كبير، قد يكون chunk متوسط - اقبله
-            console.warn('⚠️ WebM chunk has no valid header but size is acceptable:', audioChunk.size);
+            // إذا كان الحجم كبير، قد يكون chunk متوسط - اقبله مع تحذير
+            console.warn('⚠️ WebM chunk has no valid EBML header but size is acceptable:', audioChunk.size);
+            console.warn('📦 Treating as middle chunk in stream');
             return { isValid: true };
+          }
+        } else {
+          // ✅ Additional header validation for WebM
+          console.log('✅ Valid EBML header detected');
+          
+          // Check for additional WebM markers if available
+          if (headerView.length >= 16) {
+            // Look for WebM identifier in the header
+            const webmIndicators = [
+              new Uint8Array([0x77, 0x65, 0x62, 0x6D]), // "webm" ASCII
+              new Uint8Array([0x1A, 0x45, 0xDF, 0xA3])  // EBML header
+            ];
+            
+            let hasWebMIndicator = false;
+            for (let i = 0; i <= headerView.length - 4; i++) {
+              const chunk = headerView.slice(i, i + 4);
+              for (const indicator of webmIndicators) {
+                if (chunk.every((byte, idx) => byte === indicator[idx])) {
+                  hasWebMIndicator = true;
+                  break;
+                }
+              }
+              if (hasWebMIndicator) break;
+            }
+            
+            if (hasWebMIndicator) {
+              console.log('✅ WebM file structure confirmed');
+            } else {
+              console.warn('⚠️ EBML header present but WebM structure unclear');
+            }
           }
         }
       }
 
       console.log('✅ WebM chunk validation passed:', {
         size: audioChunk.size,
-        hasValidHeader: true
+        hasValidHeader: true,
+        timestamp: new Date().toISOString()
       });
 
       return { isValid: true };
 
     } catch (error) {
       console.error('❌ WebM validation error:', error);
-      // في حالة خطأ في الفحص، اقبل الـ chunk إذا كان الحجم معقول
-      if (audioChunk.size >= 1000) {
+      // في حالة خطأ في الفحص، اقبل الـ chunk إذا كان الحجم معقول (5KB+)
+      if (audioChunk.size >= 5120) {
         console.warn('⚠️ WebM validation failed but chunk size is reasonable, accepting...');
         return { isValid: true };
       }

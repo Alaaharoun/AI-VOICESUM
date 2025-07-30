@@ -390,15 +390,40 @@
             const audioLevel = Math.sqrt(event.data.size / 100); // Rough estimate
             console.log('📦 Audio chunk received:', event.data.size, 'bytes, Level:', audioLevel.toFixed(2));
 
-            // ✅ إضافة فحص أساسي للقطع الصوتية قبل الإرسال
-            if (event.data.size < 500) {
+            // ✅ Enhanced validation for audio chunks before sending
+            const chunkSize = event.data.size;
+            const chunkType = event.data.type;
+            
+            // 1. Size validation - increased minimum from 500 to 1024 bytes (1KB)
+            if (chunkSize < 1024) {
               console.warn('⚠️ Audio chunk too small, may be corrupted:', {
-                size: event.data.size,
-                type: event.data.type,
-                level: audioLevel.toFixed(2)
+                size: chunkSize,
+                type: chunkType,
+                level: audioLevel.toFixed(2),
+                reason: 'Below 1KB minimum threshold'
               });
-              console.warn('🔧 Skipping small chunk to prevent server errors');
+              console.warn('🔧 Skipping small chunk to prevent server corruption errors');
               return; // تخطي القطع الصغيرة المحتمل أن تكون فاسدة
+            }
+
+            // 2. WebM-specific validation
+            if (chunkType && (chunkType.includes('webm') || chunkType.includes('opus'))) {
+              // For WebM, be extra strict about minimum size
+              if (chunkSize < 2048) { // 2KB minimum for WebM
+                console.warn('⚠️ WebM chunk too small for reliable processing:', {
+                  size: chunkSize,
+                  type: chunkType,
+                  minimumRequired: '2KB'
+                });
+                console.warn('🔧 Skipping small WebM chunk to prevent EBML header errors');
+                return;
+              }
+              
+              console.log('✅ WebM chunk accepted for processing:', {
+                size: chunkSize,
+                type: chunkType,
+                sizeCategory: chunkSize >= 5120 ? 'Large (likely complete)' : 'Medium (likely partial)'
+              });
             }
 
             // تحليل مفصل لحالة الاتصال قبل إرسال الصوت
@@ -411,8 +436,8 @@
               serviceExists,
               isConnectedToWS,
               recordingState,
-              chunkSize: event.data.size,
-              chunkType: event.data.type,
+              chunkSize: chunkSize,
+              chunkType: chunkType,
               timestamp: new Date().toISOString()
             });
             
