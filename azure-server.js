@@ -531,368 +531,236 @@ function validateAzureLanguage(language) {
   return language;
 }
 
+// ✅ Define Azure Speech Service supported languages for auto-detection
+const AZURE_AUTO_DETECT_LANGUAGES = [
+  // Primary auto-detect languages (most commonly used)
+  "ar-EG", "ar-SA", "ar-MA", // Arabic variants
+  "en-US", "en-GB", "en-AU", // English variants  
+  "fr-FR", "fr-CA", // French variants
+  "es-ES", "es-MX", // Spanish variants
+  "de-DE", "de-AT", // German variants
+  "it-IT", // Italian
+  "pt-BR", "pt-PT", // Portuguese variants
+  "ru-RU", // Russian
+  "zh-CN", "zh-TW", // Chinese variants
+  "ja-JP", // Japanese
+  "ko-KR", // Korean
+  "hi-IN", // Hindi
+  "tr-TR", // Turkish
+  "nl-NL", // Dutch
+  "sv-SE", // Swedish
+  "da-DK", // Danish
+  "nb-NO", // Norwegian
+  "fi-FI", // Finnish
+  "pl-PL", // Polish
+  "cs-CZ", // Czech
+  "hu-HU", // Hungarian
+  "th-TH", // Thai
+  "vi-VN", // Vietnamese
+  "id-ID", // Indonesian
+  "ms-MY", // Malay
+  "he-IL", // Hebrew
+  "fa-IR", // Persian
+  "ur-PK"  // Urdu
+];
+
 function startWebSocketServer(server) {
   wsServer = new WebSocket.Server({ server, path: '/ws' });
-  console.log('WebSocket server attached to main HTTP server');
 
   wsServer.on('connection', (ws) => {
-    console.log('[WebSocket] 🔗 New client connected');
+    console.log('[Azure] 🔗 New WebSocket connection established');
     
-    try {
-      const AZURE_SPEECH_KEY = process.env.AZURE_SPEECH_KEY;
-      const AZURE_SPEECH_REGION = process.env.AZURE_SPEECH_REGION;
-      
-      console.log('[WebSocket] 🔑 Checking Azure credentials...');
-      console.log('[WebSocket] Key present:', !!AZURE_SPEECH_KEY);
-      console.log('[WebSocket] Region present:', !!AZURE_SPEECH_REGION);
-      
-      if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
-        console.log('[WebSocket] ❌ Azure credentials missing!');
-        ws.send(JSON.stringify({ type: 'error', error: 'Azure Speech credentials missing!' }));
-        ws.close();
-        return;
-      }
-      
-      console.log('[WebSocket] ✅ Azure credentials OK, proceeding...');
+    let speechConfig;
+    let audioConfig;
+    let recognizer;
+    let pushStream;
+    let isInitialized = false;
     
-    // إعداد جلسة Azure Speech جديدة لكل عميل
-    // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
-    let pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
-    let audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
-    let speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-    speechConfig.speechRecognitionLanguage = 'ar-SA'; // Default language
-    
-    // تحسينات Azure لاستقبال chunks كبيرة
-    speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
-    speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "10000");
-    speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceResponse_RequestDetailedResultTrueFalse, "true");
-    
-    let recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-    recognizer.recognizing = (s, e) => {
-      console.log(`[Azure Speech] 🔄 Partial result: "${e.result.text}"`);
-      if (e.result.text && e.result.text.trim()) {
-        console.log(`[Azure Speech] 📤 Sending partial transcription: "${e.result.text}"`);
-        ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
-      }
-    };
-    recognizer.recognized = (s, e) => {
-      if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-        console.log(`[Azure Speech] ✅ Final result: "${e.result.text}"`);
-        if (e.result.text && e.result.text.trim()) {
-          console.log(`[Azure Speech] 📤 Sending final transcription: "${e.result.text}"`);
-          ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
-        } else {
-          console.log('Empty final result, not sending');
+    // Clean up function
+    const cleanup = () => {
+      try {
+        if (recognizer) {
+          recognizer.stopContinuousRecognitionAsync(() => {
+            recognizer.close();
+            console.log('[Azure] 🧹 Recognizer cleaned up');
+          });
         }
-      }
-    };
-    recognizer.canceled = (s, e) => {
-      console.log('[Azure Speech] ❌ Recognition canceled:', e.errorDetails);
-      console.log('[Azure Speech] ❌ Cancel reason:', e.reason);
-      console.log('[Azure Speech] ❌ Error code:', e.errorCode);
-      
-      // تحسين رسائل الخطأ لتكون أكثر وضوحاً
-      let errorMessage = e.errorDetails;
-      let errorType = 'general';
-      
-      if (e.reason === speechsdk.CancellationReason.Error) {
-        if (e.errorCode === 2) {
-          errorType = 'quota_exceeded';
-          errorMessage = 'Recognition canceled: Quota exceeded. Cid: websocket error code: 1007';
-        } else if (e.errorCode === 1007) {
-          errorType = 'format_error';
-          errorMessage = 'Recognition canceled: Invalid audio format. Cid: websocket error code: 1007';
-        } else {
-          errorType = 'azure_error';
-          errorMessage = `Recognition canceled: ${e.errorDetails}. Error code: ${e.errorCode}`;
+        if (pushStream) {
+          pushStream.close();
+          console.log('[Azure] 🧹 Audio stream cleaned up');
         }
-      } else if (e.reason === speechsdk.CancellationReason.NoMatch) {
-        errorType = 'no_match';
-        errorMessage = 'Recognition canceled: No speech detected';
-      } else {
-        errorType = 'cancelled';
-        errorMessage = `Recognition canceled: ${e.errorDetails}`;
+      } catch (error) {
+        console.log('[Azure] ⚠️ Cleanup error:', error.message);
       }
-      
-      console.log(`[Azure Speech] ❌ Error type: ${errorType}`);
-      ws.send(JSON.stringify({ 
-        type: 'error', 
-        error: errorMessage,
-        reason: e.reason,
-        errorCode: e.errorCode,
-        errorType: errorType
-      }));
     };
-    recognizer.sessionStopped = (s, e) => {
-      ws.send(JSON.stringify({ type: 'done' }));
-      recognizer.close();
-    };
-    recognizer.startContinuousRecognitionAsync();
+
+    // Handle connection close
+    ws.on('close', () => {
+      console.log('[Azure] 🔌 WebSocket connection closed');
+      cleanup();
+    });
+
+    // Handle connection error
+    ws.on('error', (error) => {
+      console.log('[Azure] ❌ WebSocket error:', error);
+      cleanup();
+    });
+    
+    // Handle messages
     ws.on('message', (data) => {
       try {
         // Check if it's a JSON message (init, language_update, etc.)
         if (typeof data === 'string') {
           const message = JSON.parse(data);
-          console.log('Received JSON message:', message.type, message);
+          console.log('📩 Received JSON message:', message.type, message);
           
           if (message.type === 'init') {
-            // تنظيف الجلسة السابقة قبل إعادة التهيئة
-            try {
-              recognizer.stopContinuousRecognitionAsync();
-              recognizer.close();
-              pushStream.close();
-              console.log('[Azure] 🧹 Cleaned up previous session before reinitialization');
-            } catch (error) {
-              console.log('[Azure] ⚠️ No previous session to cleanup:', error.message);
-            }
+            // Clean up previous session
+            cleanup();
             
-            // Handle auto detection or specific language
+            // Handle language configuration
             const rawLanguage = message.language;
-            const autoDetection = message.autoDetection || false;
+            const autoDetection = rawLanguage === 'auto' || message.autoDetection || false;
             
-            let language;
-            if (autoDetection || !rawLanguage) {
-              // Use auto detection - Azure will automatically detect from 10+ languages
-              language = null;
-              console.log('[Azure] 🔧 Initializing with AUTO DETECTION (no specific language)');
-            } else {
-              // Use specific language
-              language = validateAzureLanguage(rawLanguage);
-              console.log('[Azure] 🔧 Initializing with specific language:', rawLanguage, '→', language);
-            }
+            console.log('[Azure] 🔧 Language Configuration:', { rawLanguage, autoDetection });
             
-            // إنشاء جلسة جديدة مع اللغة الصحيحة
-            // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
-            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
+            // Create Azure Speech Configuration
+            pushStream = speechsdk.AudioInputStream.createPushStream(
+              speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1)
+            );
             audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
             
-            // Set language only if not using auto detection
-            if (language) {
-              speechConfig.speechRecognitionLanguage = language;
-            } else {
-              // For auto detection, don't set a specific language
-              // Azure will automatically detect from supported languages
-              console.log('[Azure] 🎯 Auto detection enabled - Azure will detect language automatically');
-            }
-            
-            // تحسينات Azure لاستقبال chunks كبيرة
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "10000");
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceResponse_RequestDetailedResultTrueFalse, "true");
-            
-            recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-            
-            // إعداد المستمعين الجدد
-            recognizer.recognizing = (s, e) => {
-              console.log(`[Azure Speech] 🔄 Partial result: "${e.result.text}"`);
-              if (e.result.text && e.result.text.trim()) {
-                console.log(`[Azure Speech] 📤 Sending partial transcription: "${e.result.text}"`);
-                ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
-              }
-            };
-            
-            recognizer.recognized = (s, e) => {
-              if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-                console.log(`[Azure Speech] ✅ Final result: "${e.result.text}"`);
-                if (e.result.text && e.result.text.trim()) {
-                  console.log(`[Azure Speech] 📤 Sending final transcription: "${e.result.text}"`);
-                  ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
-                } else {
-                  console.log('[Azure Speech] Empty final result, not sending');
-                }
-              }
-            };
-            
-            recognizer.canceled = (s, e) => {
-              console.log('[Azure Speech] ❌ Recognition canceled:', e.errorDetails);
-              ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
-            };
-            
-            recognizer.sessionStopped = (s, e) => {
-              console.log('[Azure Speech] 🛑 Session stopped');
-              ws.send(JSON.stringify({ type: 'done' }));
-            };
-            
-            // بدء التعرف الجديد
-            recognizer.startContinuousRecognitionAsync(
-              () => {
-                if (language) {
-                  console.log('[Azure Speech] ✅ Recognition started successfully with language:', language);
-                  ws.send(JSON.stringify({ type: 'status', message: 'Initialized with language: ' + language }));
-                } else {
-                  console.log('[Azure Speech] ✅ Recognition started successfully with AUTO DETECTION');
-                  ws.send(JSON.stringify({ type: 'status', message: 'Initialized with AUTO DETECTION - Azure will detect language automatically' }));
-                }
-              },
-              (error) => {
-                console.log('[Azure Speech] ❌ Failed to start recognition:', error);
-                ws.send(JSON.stringify({ type: 'error', error: 'Failed to start recognition: ' + error }));
-              }
-            );
-          } else if (message.type === 'language_update') {
-            // تنظيف الجلسة الحالية قبل تحديث اللغة
-            try {
-              recognizer.stopContinuousRecognitionAsync();
-              recognizer.close();
-              pushStream.close();
-              console.log('[Azure] 🔄 Cleaned up session before language update');
-            } catch (error) {
-              console.log('[Azure] ⚠️ No session to cleanup for language update:', error.message);
-            }
-            
-            // Handle auto detection or specific language update
-            const rawLanguage = message.sourceLanguage;
-            const autoDetection = message.autoDetection || false;
-            
-            let language;
-            if (autoDetection || !rawLanguage) {
-              // Use auto detection
-              language = null;
-              console.log('[Azure] 🔧 Updating to AUTO DETECTION (no specific language)');
-            } else {
-              // Use specific language
-              language = validateAzureLanguage(rawLanguage);
-              console.log('[Azure] 🔧 Updating language from:', rawLanguage, '→', language);
-            }
-            
-            // إنشاء جلسة جديدة مع اللغة المحدثة
-            // استخدام 16kHz بدلاً من 48kHz لتجنب مشاكل التنسيق
-            pushStream = speechsdk.AudioInputStream.createPushStream(speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1));
-            audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
-            speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-            
-            // Set language only if not using auto detection
-            if (language) {
-              speechConfig.speechRecognitionLanguage = language;
-            } else {
-              // For auto detection, don't set a specific language
-              console.log('[Azure] 🎯 Auto detection enabled for language update - Azure will detect language automatically');
-            }
-            
-            // تحسينات Azure لاستقبال chunks كبيرة
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "10000");
-            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceResponse_RequestDetailedResultTrueFalse, "true");
-            
-            recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-            
-            // إعداد المستمعين الجدد
-            recognizer.recognizing = (s, e) => {
-              console.log(`[Azure Speech] 🔄 Partial result: "${e.result.text}"`);
-              if (e.result.text && e.result.text.trim()) {
-                console.log(`[Azure Speech] 📤 Sending partial transcription: "${e.result.text}"`);
-                ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
-              }
-            };
-            
-            recognizer.recognized = (s, e) => {
-              if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
-                console.log(`[Azure Speech] ✅ Final result: "${e.result.text}"`);
-                if (e.result.text && e.result.text.trim()) {
-                  console.log(`[Azure Speech] 📤 Sending final transcription: "${e.result.text}"`);
-                  ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
-                } else {
-                  console.log('[Azure Speech] Empty final result, not sending');
-                }
-              }
-            };
-            
-            recognizer.canceled = (s, e) => {
-              console.log('[Azure Speech] ❌ Recognition canceled:', e.errorDetails);
-              ws.send(JSON.stringify({ type: 'error', error: e.errorDetails }));
-            };
-            
-            recognizer.sessionStopped = (s, e) => {
-              console.log('[Azure Speech] 🛑 Session stopped');
-              ws.send(JSON.stringify({ type: 'done' }));
-            };
-            
-            // بدء التعرف الجديد
-            recognizer.startContinuousRecognitionAsync(
-              () => {
-                console.log('[Azure Speech] ✅ Language updated successfully to:', language);
-                ws.send(JSON.stringify({ type: 'status', message: 'Language updated to: ' + language }));
-              },
-              (error) => {
-                console.log('[Azure Speech] ❌ Failed to update language:', error);
-                ws.send(JSON.stringify({ type: 'error', error: 'Failed to update language: ' + error }));
-              }
-            );
-          } else if (message.type === 'audio') {
-            // Handle audio data
-            const audioData = message.data;
-            if (audioData) {
-              const audioBuffer = Buffer.from(audioData, 'base64');
-              console.log('Received audio chunk from client. Size:', audioBuffer.length, 'SourceLang:', message.sourceLanguage, 'TargetLang:', message.targetLanguage);
+            // ✅ Implement proper auto-detection vs manual language selection
+            if (autoDetection) {
+              console.log('[Azure] 🎯 Using AutoDetectSourceLanguageConfig with supported languages');
+              console.log('[Azure] 🌍 Auto-detecting from', AZURE_AUTO_DETECT_LANGUAGES.length, 'languages');
               
-              // التحقق من أن البيانات ليست فارغة أو قديمة جداً
-              if (audioBuffer.length > 0) {
-                pushStream.write(audioBuffer);
-              } else {
-                console.log('Skipping empty audio buffer');
-              }
-            }
-          }
-        } else {
-          // Handle raw audio data (fallback)
-          console.log('Received raw audio chunk from client. Size:', data.length || data.byteLength);
-          
-          // التحقق من أن البيانات ليست فارغة
-          if (data && (data.length > 0 || data.byteLength > 0)) {
-            if (data instanceof Buffer) {
-              pushStream.write(data);
-            } else if (data instanceof ArrayBuffer) {
-              pushStream.write(Buffer.from(data));
+              // ✅ Use AutoDetectSourceLanguageConfig.fromLanguages() as recommended
+              const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(
+                AZURE_AUTO_DETECT_LANGUAGES
+              );
+              
+              // Create recognizer with auto-detection
+              recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectConfig, audioConfig);
+              console.log('[Azure] ✅ Recognizer created with AutoDetectSourceLanguageConfig');
+              
             } else {
-              pushStream.write(Buffer.from(data));
+              // Use specific language (manual selection)
+              const language = validateAzureLanguage(rawLanguage);
+              speechConfig.speechRecognitionLanguage = language;
+              console.log('[Azure] 🔧 Using specific language:', rawLanguage, '→', language);
+              
+              // Create recognizer with specific language
+              recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+              console.log('[Azure] ✅ Recognizer created with specific language');
             }
-          } else {
-            console.log('Skipping empty raw audio data');
+            
+            // Azure optimizations
+            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "15000");
+            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_EndSilenceTimeoutMs, "10000");
+            speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceResponse_RequestDetailedResultTrueFalse, "true");
+            
+            // ✅ Enhanced event handlers with language detection
+            recognizer.recognizing = (s, e) => {
+              console.log(`[Azure Speech] 🔄 Partial result: "${e.result.text}"`);
+              if (e.result.text && e.result.text.trim()) {
+                // Extract detected language if available
+                let detectedLanguage = null;
+                if (autoDetection && e.result.properties) {
+                  detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
+                }
+                
+                console.log(`[Azure Speech] 📤 Sending partial transcription: "${e.result.text}"`);
+                ws.send(JSON.stringify({ 
+                  type: 'transcription', 
+                  text: e.result.text,
+                  isPartial: true,
+                  detectedLanguage: detectedLanguage
+                }));
+              }
+            };
+            
+            recognizer.recognized = (s, e) => {
+              if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
+                console.log(`[Azure Speech] ✅ Final result: "${e.result.text}"`);
+                
+                // ✅ Extract detected language for auto-detection
+                let detectedLanguage = null;
+                if (autoDetection && e.result.properties) {
+                  detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
+                  console.log(`[Azure Speech] 🌍 Detected language: ${detectedLanguage}`);
+                }
+                
+                if (e.result.text && e.result.text.trim()) {
+                  ws.send(JSON.stringify({ 
+                    type: 'transcription', 
+                    text: e.result.text,
+                    isPartial: false,
+                    detectedLanguage: detectedLanguage
+                  }));
+                  console.log(`[Azure Speech] 📤 Final transcription sent with detected language: ${detectedLanguage}`);
+                }
+              } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
+                console.log('[Azure Speech] 🔇 No speech recognized');
+              } else {
+                console.log('[Azure Speech] ❌ Recognition error:', e.result.reason);
+              }
+            };
+            
+            recognizer.canceled = (s, e) => {
+              console.log(`[Azure Speech] ❌ Recognition canceled: ${e.reason}`);
+              if (e.reason === speechsdk.CancellationReason.Error) {
+                console.log(`[Azure Speech] ❌ Error details: ${e.errorDetails}`);
+                ws.send(JSON.stringify({ 
+                  type: 'error', 
+                  message: `Speech recognition error: ${e.errorDetails}` 
+                }));
+              }
+            };
+            
+            recognizer.sessionStarted = (s, e) => {
+              console.log('[Azure Speech] 🎙️ Recognition session started');
+              isInitialized = true;
+              ws.send(JSON.stringify({ type: 'status', message: 'ready' }));
+            };
+            
+            recognizer.sessionStopped = (s, e) => {
+              console.log('[Azure Speech] 🛑 Recognition session stopped');
+              isInitialized = false;
+            };
+            
+            // Start continuous recognition
+            recognizer.startContinuousRecognitionAsync(
+              () => {
+                console.log('[Azure Speech] ✅ Continuous recognition started');
+              },
+              (err) => {
+                console.log('[Azure Speech] ❌ Error starting recognition:', err);
+                ws.send(JSON.stringify({ type: 'error', message: `Failed to start recognition: ${err}` }));
+              }
+            );
+            
+          } else if (message.type === 'stop') {
+            console.log('[Azure] 🛑 Stop message received');
+            cleanup();
           }
-        }
-      } catch (error) {
-        console.error('Error processing WebSocket message:', error);
-        // Fallback to raw audio processing
-        if (data && (data.length > 0 || data.byteLength > 0)) {
-          const dataSize = data.length || data.byteLength || 0;
-          console.log(`[Azure Speech] 📥 Receiving audio chunk: ${dataSize} bytes (${dataSize > 100000 ? 'LARGE' : 'normal'} chunk)`);
           
-          if (data instanceof Buffer) {
-            pushStream.write(data);
-          } else if (data instanceof ArrayBuffer) {
-            pushStream.write(Buffer.from(data));
-          } else {
-            pushStream.write(Buffer.from(data));
-          }
         } else {
-          console.log('[Azure Speech] ⚠️ Skipping empty data in fallback processing');
+          // Binary audio data
+          if (isInitialized && pushStream && data.length > 0) {
+            try {
+              pushStream.write(data);
+              console.log(`[Azure] 📨 Audio chunk processed: ${data.length} bytes`);
+            } catch (error) {
+              console.log('[Azure] ❌ Error processing audio chunk:', error);
+            }
+          }
         }
-      }
-    });
-    ws.on('close', () => {
-      console.log('WS client disconnected');
-      
-      // تنظيف شامل للجلسة
-      try {
-        pushStream.close();
-        recognizer.stopContinuousRecognitionAsync();
-        recognizer.close();
-        console.log('[WebSocket] 🧹 Session cleaned up completely');
       } catch (error) {
-        console.error('[WebSocket] ❌ Error during session cleanup:', error);
+        console.log('[Azure] ❌ Message processing error:', error);
       }
     });
-    
-    } catch (error) {
-      console.error('[WebSocket] 💥 Fatal error in WebSocket handler:', error);
-      try {
-        ws.send(JSON.stringify({ type: 'error', error: 'Server error: ' + error.message }));
-        ws.close();
-      } catch (sendError) {
-        console.error('[WebSocket] ❌ Failed to send error message:', sendError);
-      }
-    }
   });
 }
 

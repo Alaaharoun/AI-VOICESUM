@@ -73,6 +73,30 @@ async function validateWebMFile(filePath) {
   }
 }
 
+// ✅ Enhanced WebM validation function
+function isValidWebMHeader(buffer) {
+  try {
+    if (buffer.length < 4) {
+      return false;
+    }
+    
+    // EBML magic number: 0x1A, 0x45, 0xDF, 0xA3
+    const headerHex = buffer.slice(0, 4).toString('hex').toLowerCase();
+    const isValidEBML = headerHex === '1a45dfa3';
+    
+    if (isValidEBML) {
+      console.log('✅ Valid EBML header detected:', headerHex);
+    } else {
+      console.warn('❌ Invalid EBML header:', headerHex, 'expected: 1a45dfa3');
+    }
+    
+    return isValidEBML;
+  } catch (error) {
+    console.error('❌ EBML header validation error:', error.message);
+    return false;
+  }
+}
+
 // Helper function to validate EBML header for WebM
 function validateEBMLHeader(buffer) {
   try {
@@ -80,16 +104,11 @@ function validateEBMLHeader(buffer) {
       return { isValid: false, reason: 'Buffer too small for EBML header' };
     }
     
-    // EBML magic number: 0x1A, 0x45, 0xDF, 0xA3
-    const ebmlSignature = [0x1A, 0x45, 0xDF, 0xA3];
-    const headerView = new Uint8Array(buffer.slice(0, 4));
-    
-    const hasValidHeader = ebmlSignature.every((byte, index) => 
-      headerView[index] === byte
-    );
+    const hasValidHeader = isValidWebMHeader(buffer);
     
     if (!hasValidHeader) {
-      return { isValid: false, reason: 'Invalid EBML header signature' };
+      const headerHex = buffer.slice(0, 4).toString('hex');
+      return { isValid: false, reason: `Invalid EBML header signature: ${headerHex} (expected: 1a45dfa3)` };
     }
     
     console.log('✅ Valid EBML header detected');
@@ -164,9 +183,9 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
         ffmpegCommand = `${ffmpegPath} -f s16le -ar 16000 -ac 1 -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
         console.log(`🔧 FFmpeg command (PCM raw): ${ffmpegCommand}`);
       } else {
-        // For other formats, let ffmpeg auto-detect
-        ffmpegCommand = `${ffmpegPath} -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
-        console.log(`🔧 FFmpeg command (auto-detect): ${ffmpegCommand}`);
+        // ✅ Enhanced FFmpeg command with error tolerance for WebM
+        ffmpegCommand = `${ffmpegPath} -err_detect ignore_err -i "${inputFile}" -acodec pcm_s16le -ar 16000 -ac 1 "${outputFile}" -y`;
+        console.log(`🔧 FFmpeg command (error-tolerant): ${ffmpegCommand}`);
       }
       
       await execAsync(ffmpegCommand);
@@ -785,20 +804,32 @@ function startWebSocketServer(server) {
 
     let recognizer, pushStream, speechConfig, audioConfig;
     let language = 'en-US'; // Default to English for better compatibility
-    let targetLanguage = 'ar-SA';
-    let clientSideTranslation = false;
-    let realTimeMode = false;
     let initialized = false;
     let pendingAudioChunks = []; // Store audio chunks until initialization is complete
     
-    // Supported languages for Azure Speech real-time streaming
-    const supportedStreamingLanguages = [
-      'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN',
-      'ar-SA', 'ar-EG', 'ar-AE',
-      'es-ES', 'es-MX', 'es-AR',
-      'fr-FR', 'fr-CA',
-      'de-DE', 'it-IT', 'pt-BR', 'pt-PT',
-      'ru-RU', 'ja-JP', 'ko-KR', 'zh-CN', 'zh-TW'
+    // ✅ Azure Speech Service supported languages for auto-detection (ChatGPT recommendation)
+    const AZURE_AUTO_DETECT_LANGUAGES = [
+      "en-US", "en-GB", "en-AU", "en-CA", "en-IN",
+      "ar-SA", "ar-EG", "ar-MA", "ar-AE", "ar-DZ", "ar-TN", "ar-JO", "ar-LB", "ar-KW", "ar-QA", "ar-BH", "ar-OM", "ar-YE", "ar-SY", "ar-IQ", "ar-LY", "ar-PS",
+      "fr-FR", "fr-CA", "fr-BE", "fr-CH",
+      "es-ES", "es-MX", "es-AR", "es-CO", "es-PE", "es-VE", "es-EC", "es-GT", "es-CR", "es-PA", "es-CU", "es-BO", "es-DO", "es-HN", "es-PY", "es-SV", "es-NI", "es-PR", "es-UY", "es-CL",
+      "de-DE", "de-AT", "de-CH",
+      "it-IT", "it-CH",
+      "pt-BR", "pt-PT",
+      "ru-RU",
+      "zh-CN", "zh-TW", "zh-HK",
+      "ja-JP",
+      "ko-KR",
+      "hi-IN", "bn-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "gu-IN", "mr-IN", "pa-IN",
+      "tr-TR",
+      "nl-NL", "nl-BE",
+      "sv-SE", "da-DK", "nb-NO", "fi-FI",
+      "pl-PL", "cs-CZ", "hu-HU", "ro-RO", "bg-BG", "hr-HR", "sk-SK", "sl-SI", "et-EE", "lv-LV", "lt-LT", "uk-UA",
+      "el-GR", "mt-MT", "is-IS", "ga-IE", "cy-GB",
+      "he-IL", "fa-IR", "ur-PK",
+      "th-TH", "vi-VN", "id-ID", "ms-MY", "fil-PH",
+      "sw-KE", "am-ET", "zu-ZA", "af-ZA",
+      "ka-GE", "hy-AM", "az-AZ", "kk-KZ", "ky-KG", "uz-UZ", "mn-MN", "my-MM", "km-KH", "lo-LA", "si-LK"
     ];
 
     ws.on('message', (data) => {
@@ -824,115 +855,170 @@ function startWebSocketServer(server) {
           
           // Handle initialization messages (only if not initialized)
           if (!initialized && msg.type === 'init') {
-            language = msg.language || 'en-US';
-            targetLanguage = msg.targetLanguage || 'ar-SA';
-            clientSideTranslation = msg.clientSideTranslation || false;
-            realTimeMode = msg.realTimeMode || false;
-            const autoDetection = msg.autoDetection || false;
+            const sourceLanguage = msg.language || msg.sourceLanguage || 'en-US';
+            const autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
+            const realTime = msg.realTime || true;
             
-            // Check if language is supported
-            if (!supportedStreamingLanguages.includes(language)) {
-              console.warn(`⚠️ Language ${language} might not be supported for streaming, falling back to en-US`);
-              language = 'en-US';
+            console.log('🔧 Initialization parameters:', { sourceLanguage, autoDetection, realTime });
+            
+            // ✅ Apply ChatGPT's instructions for auto-detection vs manual language
+            if (autoDetection) {
+              console.log('🧠 Auto Language Detection Enabled');
+              console.log('🌍 Auto-detecting from', AZURE_AUTO_DETECT_LANGUAGES.length, 'supported languages');
+              language = null; // Auto-detect mode
+            } else {
+              // Check if language is supported
+              if (!AZURE_AUTO_DETECT_LANGUAGES.includes(sourceLanguage)) {
+                console.warn(`⚠️ Language ${sourceLanguage} might not be supported, falling back to en-US`);
+                language = 'en-US';
+              } else {
+                language = sourceLanguage;
+              }
+              console.log(`🎯 Source Language set to: ${language}`);
             }
             
             console.log(`🌐 Initializing Azure Speech SDK with:
-              - Source Language: ${language} ${autoDetection ? '(Auto Detection Mode)' : ''}
-              - Target Language: ${targetLanguage}
-              - Client-side Translation: ${clientSideTranslation}
-              - Real-time Mode: ${realTimeMode}
-              - Auto Detection: ${autoDetection}`);
+              - Source Language: ${language || 'AUTO-DETECT'}
+              - Auto Detection: ${autoDetection}
+              - Real-time Mode: ${realTime}`);
             
-            // Initialize Azure Speech SDK with simplified configuration
+            // ✅ Initialize Azure Speech SDK following ChatGPT's instructions
             try {
               // Create push stream with specific audio format
               const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1); // 16kHz, 16-bit, mono
               pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
               audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
               
-              // Create Azure Speech Config with custom endpoint
+              // Create Azure Speech Config
               speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-              speechConfig.speechRecognitionLanguage = language;
               
-              // Set custom endpoint for West Europe
-              speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
+              // Set custom endpoint for West Europe if available
+              if (AZURE_SPEECH_ENDPOINT) {
+                speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
+              }
               
               // Enable continuous recognition for better results
               speechConfig.enableDictation();
               
-              // If auto detection is requested, try to enable auto language detection
+              // ✅ Apply ChatGPT's AutoDetectSourceLanguageConfig vs manual language selection
               if (autoDetection) {
-                console.log(`🔍 [${language}] Auto detection mode enabled - using ${language} as primary language`);
-                // Note: Azure requires a specific language to start, but will adapt
+                console.log('🔧 Creating recognizer with AutoDetectSourceLanguageConfig...');
+                
+                // ✅ Use AutoDetectSourceLanguageConfig.fromLanguages() as recommended by ChatGPT
+                const autoDetectSourceLanguageConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(AZURE_AUTO_DETECT_LANGUAGES);
+                recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectSourceLanguageConfig, audioConfig);
+                
+                console.log('✅ Recognizer created with AutoDetectSourceLanguageConfig for', AZURE_AUTO_DETECT_LANGUAGES.length, 'languages');
+              } else {
+                console.log('🔧 Creating recognizer with specific language:', language);
+                
+                // ✅ Use normal SpeechRecognizer without auto-detect for specific language
+                speechConfig.speechRecognitionLanguage = language;
+                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                
+                console.log('✅ Recognizer created with specific language:', language);
               }
               
-              recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-              
-              // Set up event handlers with simplified logging
+              // ✅ Enhanced event handlers with proper language detection support
               recognizer.recognizing = (s, e) => {
-                console.log(`🎤 [${language}] RECOGNIZING:`, {
+                // ✅ Extract detected language following ChatGPT's recommendation
+                let detectedLanguage = null;
+                if (autoDetection && e.result.properties) {
+                  detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
+                }
+                const displayLanguage = detectedLanguage || language || 'auto';
+                
+                console.log(`🎤 [${displayLanguage}] RECOGNIZING:`, {
                   text: e.result.text,
                   reason: e.result.reason,
-                  resultId: e.result.resultId
+                  resultId: e.result.resultId,
+                  detectedLanguage: detectedLanguage,
+                  autoDetection: autoDetection
                 });
                 
                 if (e.result.text && e.result.text.trim()) {
-                  console.log(`🎤 [${language}] Recognizing: "${e.result.text}"`);
+                  const logMsg = autoDetection 
+                    ? `🎤 [AUTO→${detectedLanguage || 'detecting...'}] Recognizing: "${e.result.text}"`
+                    : `🎤 [${language}] Recognizing: "${e.result.text}"`;
+                  console.log(logMsg);
+                  
                   ws.send(JSON.stringify({ 
                     type: 'transcription', 
-                    text: e.result.text
+                    text: e.result.text,
+                    isPartial: true,
+                    detectedLanguage: detectedLanguage
                   }));
                 }
               };
               
               recognizer.recognized = (s, e) => {
-                console.log(`✅ [${language}] RECOGNIZED:`, {
+                // ✅ Extract detected language for final result
+                let detectedLanguage = null;
+                if (autoDetection && e.result.properties) {
+                  detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
+                }
+                const displayLanguage = detectedLanguage || language || 'auto';
+                
+                console.log(`✅ [${displayLanguage}] RECOGNIZED:`, {
                   text: e.result.text,
                   reason: e.result.reason,
-                  reasonText: speechsdk.ResultReason[e.result.reason]
+                  reasonText: speechsdk.ResultReason[e.result.reason],
+                  detectedLanguage: detectedLanguage,
+                  autoDetection: autoDetection
                 });
                 
                 if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech) {
                   if (e.result.text && e.result.text.trim()) {
-                    console.log(`✅ [${language}] Final result: "${e.result.text}"`);
+                    const logMsg = autoDetection 
+                      ? `✅ [AUTO→${detectedLanguage}] Final result: "${e.result.text}"`
+                      : `✅ [${language}] Final result: "${e.result.text}"`;
+                    console.log(logMsg);
+                    
                     ws.send(JSON.stringify({ 
                       type: 'final', 
-                      text: e.result.text
+                      text: e.result.text,
+                      isPartial: false,
+                      detectedLanguage: detectedLanguage
                     }));
                   } else {
-                    console.log(`✅ [${language}] Recognized speech but no text content`);
+                    console.log(`✅ [${displayLanguage}] Recognized speech but no text content`);
                     ws.send(JSON.stringify({ 
                       type: 'final', 
                       text: '',
-                      reason: 'EmptyRecognition'
+                      reason: 'EmptyRecognition',
+                      detectedLanguage: detectedLanguage
                     }));
                   }
                 } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
-                  console.log(`⚪ [${language}] No speech could be recognized`);
+                  console.log(`⚪ [${displayLanguage}] No speech could be recognized`);
                   const noMatchDetails = speechsdk.NoMatchDetails.fromResult(e.result);
                   console.log(`No match reason: ${noMatchDetails.reason}`);
                   ws.send(JSON.stringify({ 
                     type: 'final', 
                     text: '',
                     reason: 'NoMatch',
-                    details: noMatchDetails.reason
+                    details: noMatchDetails.reason,
+                    detectedLanguage: detectedLanguage
                   }));
                 } else {
-                  console.log(`🔍 [${language}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
+                  console.log(`🔍 [${displayLanguage}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
                   ws.send(JSON.stringify({ 
                     type: 'final', 
                     text: e.result.text || '',
-                    reason: speechsdk.ResultReason[e.result.reason]
+                    reason: speechsdk.ResultReason[e.result.reason],
+                    detectedLanguage: detectedLanguage
                   }));
                 }
               };
               
               recognizer.canceled = (s, e) => {
-                console.error(`❌ [${language}] Recognition canceled:`, {
+                const displayLanguage = autoDetection ? 'AUTO-DETECT' : language;
+                console.error(`❌ [${displayLanguage}] Recognition canceled:`, {
                   errorDetails: e.errorDetails,
                   reason: e.reason,
                   reasonText: speechsdk.CancellationReason[e.reason],
-                  errorCode: e.errorCode
+                  errorCode: e.errorCode,
+                  autoDetection: autoDetection
                 });
                 console.error(`Cancel reason: ${e.reason}`);
                 
@@ -1156,8 +1242,8 @@ function startWebSocketServer(server) {
           console.log('📦 Received non-JSON data, treating as audio');
         }
         
-        // Handle audio data (support both raw PCM and JSON with base64)
-        if (initialized && pushStream) {
+        // ✅ Enhanced audio handling with continuous streaming support
+        if (initialized && pushStream && pcmStreamHandler) {
           let audioBuffer;
           let audioSize;
           let audioFormat;
@@ -1167,11 +1253,15 @@ function startWebSocketServer(server) {
           try {
             jsonData = JSON.parse(data.toString());
           } catch (parseError) {
-            // Not JSON, treat as raw PCM data (old app format)
+            // Not JSON, treat as raw PCM data (streaming format)
             audioBuffer = data;
             audioSize = data.length;
             audioFormat = 'audio/pcm';
-            console.log(`🎵 [${language}] Received raw PCM audio chunk: ${audioSize} bytes`);
+            console.log(`🎵 [${language}] Received streaming PCM data: ${audioSize} bytes`);
+            
+            // ✅ Process with continuous streaming handler
+            pcmStreamHandler.processStreamingPCM(audioBuffer);
+            return; // Handle streaming data immediately
           }
           
           if (jsonData) {
@@ -1194,37 +1284,33 @@ function startWebSocketServer(server) {
             try {
               console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
               
-              // ✅ Enhanced corruption detection before processing
+              // ✅ Strict WebM validation - reject files < 10KB without valid EBML header
               if (audioFormat.includes('webm') || audioFormat.includes('opus')) {
-                // Size validation - increased minimum from 500 to 1024 bytes
-                if (audioSize < 1024) {
-                  console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), skipping to prevent corruption`);
+                console.log(`🔍 [${language}] Validating WebM chunk: ${audioSize} bytes`);
+                
+                // 1. Strict size validation - minimum 10KB for WebM files
+                if (audioSize < 10240) { // 10KB minimum
+                  console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), minimum 10KB required`);
                   ws.send(JSON.stringify({ 
                     type: 'warning', 
-                    message: 'Audio chunk too small, please check your microphone settings.',
-                    audioStats: { size: audioSize, format: audioFormat, reason: 'chunk_too_small_enhanced' }
+                    message: 'WebM audio chunk too small. Please speak for at least 2-3 seconds.',
+                    audioStats: { size: audioSize, format: audioFormat, reason: 'webm_chunk_too_small', minimumRequired: '10KB' }
                   }));
-                  return; // Skip processing small chunks gracefully
+                  return; // Skip processing small WebM chunks
                 }
                 
-                // Quick EBML header validation for WebM
-                if (audioBuffer.length >= 4) {
-                  const headerView = new Uint8Array(audioBuffer.slice(0, 4));
-                  const ebmlSignature = [0x1A, 0x45, 0xDF, 0xA3];
-                  const hasValidHeader = ebmlSignature.every((byte, index) => 
-                    headerView[index] === byte
-                  );
-                  
-                  if (!hasValidHeader && audioSize < 5120) {
-                    console.warn(`⚠️ [${language}] WebM chunk lacks valid EBML header and is small (${audioSize} bytes), likely corrupted`);
-                    ws.send(JSON.stringify({ 
-                      type: 'warning', 
-                      message: 'Corrupted audio chunk detected, please restart recording if issues persist.',
-                      audioStats: { size: audioSize, format: audioFormat, reason: 'invalid_ebml_header' }
-                    }));
-                    return; // Skip processing corrupted chunks gracefully
-                  }
+                // 2. Mandatory EBML header validation for WebM
+                if (!isValidWebMHeader(audioBuffer)) {
+                  console.error(`❌ [${language}] WebM chunk lacks valid EBML header (${audioSize} bytes)`);
+                  ws.send(JSON.stringify({ 
+                    type: 'error', 
+                    message: 'Invalid WebM format detected. Please restart recording.',
+                    audioStats: { size: audioSize, format: audioFormat, reason: 'invalid_webm_header' }
+                  }));
+                  return; // Reject all WebM chunks without valid headers
                 }
+                
+                console.log(`✅ [${language}] WebM validation passed: ${audioSize} bytes with valid EBML header`);
               }
               
                         // For PCM data, we can use it directly without conversion
@@ -1271,34 +1357,47 @@ function startWebSocketServer(server) {
               // For other formats, convert using ffmpeg
               console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
               
-              // Analyze audio quality before conversion
+              // ✅ Enhanced audio quality analysis before conversion
               console.log(`🔍 Analyzing audio quality for format: ${audioFormat}`);
               const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
               console.log(`🔍 Audio quality result:`, audioQuality);
               
-              // Save audio for debugging if it's PCM and seems to have issues
-              if (!audioQuality.skipAnalysis && !audioQuality.hasSpeech) {
-                console.warn(`⚠️ [${language}] Audio appears to contain no speech or is too quiet`);
-                console.warn(`📊 Audio stats: Duration=${audioQuality.duration}s, Amplitude=${audioQuality.averageAmplitude}, Range=${audioQuality.dynamicRange}`);
+              // ✅ Strict speech detection filtering - reject ANY audio without speech
+              if (!audioQuality.hasSpeech) {
+                console.warn(`❌ [${language}] No speech detected in audio chunk (${audioSize} bytes)`);
+                console.warn(`📊 [${language}] Audio stats:`, {
+                  duration: audioQuality.duration,
+                  averageAmplitude: audioQuality.averageAmplitude,
+                  dynamicRange: audioQuality.dynamicRange,
+                  zeroCrossingRate: audioQuality.zeroCrossingRate
+                });
                 
                 // Save problematic audio for debugging
                 try {
-                  const debugFileName = `/tmp/debug_audio_${Date.now()}.raw`;
+                  const debugFileName = `/tmp/no_speech_audio_${Date.now()}.raw`;
                   fs.writeFileSync(debugFileName, audioBuffer);
-                  console.log(`🔍 [${language}] Saved problematic audio for debugging: ${debugFileName}`);
+                  console.log(`🔍 [${language}] Saved silent audio for debugging: ${debugFileName}`);
                 } catch (debugError) {
                   console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
                 }
                 
-                // Send warning to client
+                // Send informative warning to client
                 ws.send(JSON.stringify({ 
                   type: 'warning', 
-                  message: 'No clear speech detected. Please speak louder or check your microphone.',
-                  audioStats: audioQuality
+                  message: 'No speech detected. Please speak louder and closer to your microphone.',
+                  audioStats: {
+                    size: audioSize,
+                    format: audioFormat,
+                    duration: audioQuality.duration,
+                    amplitude: audioQuality.averageAmplitude,
+                    reason: 'no_speech_detected'
+                  }
                 }));
                 
-                return; // Skip processing if no speech detected
+                return; // Reject all audio without speech
               }
+              
+              console.log(`✅ [${language}] Speech detected, proceeding with audio conversion`);
               
               // Convert to PCM WAV using ffmpeg
               convertAudioFormat(audioBuffer, audioFormat, 'wav')
@@ -1503,6 +1602,69 @@ function startWebSocketServer(server) {
       ws.close();
     });
   });
+}
+
+// Helper function to handle continuous PCM streaming
+function handleContinuousPCMStream(ws, language, pushStream) {
+  // Buffer for accumulating streaming PCM data
+  let pcmBuffer = Buffer.alloc(0);
+  const TARGET_CHUNK_SIZE = 32000; // 1 second at 16kHz = 32KB of PCM data
+
+  return {
+    // Process incoming streaming PCM data
+    processStreamingPCM: (pcmData) => {
+      try {
+        // Accumulate PCM data
+        pcmBuffer = Buffer.concat([pcmBuffer, pcmData]);
+        
+        console.log(`📥 [${language}] Streaming PCM data: ${pcmData.length} bytes, Buffer: ${pcmBuffer.length} bytes`);
+        
+        // Process when we have enough data
+        while (pcmBuffer.length >= TARGET_CHUNK_SIZE) {
+          const chunk = pcmBuffer.slice(0, TARGET_CHUNK_SIZE);
+          pcmBuffer = pcmBuffer.slice(TARGET_CHUNK_SIZE);
+          
+          console.log(`🎵 [${language}] Processing PCM chunk: ${chunk.length} bytes`);
+          
+          // Quick quality check for continuous streaming
+          const quality = analyzeAudioQuality(chunk, 'audio/pcm');
+          
+          if (quality.hasSpeech) {
+            console.log(`✅ [${language}] Speech detected in stream, sending to Azure`);
+            
+            // Send directly to Azure Speech SDK
+            pushStream.write(chunk);
+          } else {
+            console.log(`🔕 [${language}] No speech in stream chunk, skipping`);
+          }
+        }
+        
+      } catch (error) {
+        console.error(`❌ [${language}] Error processing streaming PCM:`, error);
+      }
+    },
+
+    // Flush remaining buffer when stream ends
+    flushBuffer: () => {
+      if (pcmBuffer.length > 0) {
+        console.log(`🔄 [${language}] Flushing remaining PCM buffer: ${pcmBuffer.length} bytes`);
+        
+        const quality = analyzeAudioQuality(pcmBuffer, 'audio/pcm');
+        if (quality.hasSpeech) {
+          pushStream.write(pcmBuffer);
+        }
+        
+        pcmBuffer = Buffer.alloc(0);
+      }
+    },
+
+    // Get buffer status
+    getBufferStatus: () => ({
+      bufferSize: pcmBuffer.length,
+      targetSize: TARGET_CHUNK_SIZE,
+      bufferUtilization: (pcmBuffer.length / TARGET_CHUNK_SIZE * 100).toFixed(1)
+    })
+  };
 }
 
 const server = http.createServer(app);

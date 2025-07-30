@@ -60,24 +60,19 @@ export class TranscriptionService {
   }
 }
 
-// Translation Services - Updated to use enhanced translation service
-import { TranslationService as EnhancedTranslationService } from './translationService';
-
+// Translation Services - Using Google Translate API
 export class TranslationService {
   static async translateText(text: string, targetLang: string, service: 'google' | 'libre' = 'google', sourceLang?: string): Promise<string> {
     try {
-      console.log(`🌍 Starting translation: "${text}" from ${sourceLang || 'auto'} to ${targetLang}`);
+      console.log(`🌍 Starting Google translation: "${text}" from ${sourceLang || 'auto'} to ${targetLang}`);
       
-      const result = await EnhancedTranslationService.translateText(
-        text, 
-        targetLang, 
-        sourceLang || 'auto'
-      );
+      // Use Google Translate API
+      const result = await this.callGoogleTranslate(text, targetLang, sourceLang);
       
-      console.log(`✅ Translation successful using ${result.service}: "${result.translatedText}"`);
-      return result.translatedText;
+      console.log(`✅ Google translation successful: "${result}"`);
+      return result;
     } catch (error) {
-      console.error('❌ Translation error:', error);
+      console.error('❌ Google translation error:', error);
       
       // Fallback: return original text
       console.log('🔄 Fallback: returning original text');
@@ -85,16 +80,42 @@ export class TranslationService {
     }
   }
 
-  // Legacy method for backward compatibility
+  // Google Translate API method
   private static async callGoogleTranslate(text: string, targetLang: string, sourceLang?: string): Promise<string> {
-    const result = await EnhancedTranslationService.translateText(text, targetLang, sourceLang || 'auto');
-    return result.translatedText;
+    try {
+      // Use Google Translate API endpoint
+      const url = `https://translate.googleapis.com/translate_a/single?client=gtx&sl=${sourceLang || 'auto'}&tl=${targetLang}&dt=t&q=${encodeURIComponent(text)}`;
+      
+      const response = await fetch(url);
+      
+      if (!response.ok) {
+        throw new Error(`Google Translate API error: ${response.status}`);
+      }
+      
+      const data = await response.json();
+      
+      // Google Translate API returns an array where the first element contains translation segments
+      if (data && data[0] && Array.isArray(data[0])) {
+        const translatedText = data[0]
+          .map((segment: any) => segment[0])
+          .filter(Boolean)
+          .join('');
+        
+        return translatedText;
+      }
+      
+      throw new Error('Invalid response format from Google Translate API');
+      
+    } catch (error) {
+      console.error('❌ Google Translate API error:', error);
+      throw error;
+    }
   }
 
   // Legacy method for backward compatibility
   private static async callLibreTranslate(text: string, targetLang: string, sourceLang?: string): Promise<string> {
-    const result = await EnhancedTranslationService.translateText(text, targetLang, sourceLang || 'auto');
-    return result.translatedText;
+    // Fallback to Google Translate
+    return this.callGoogleTranslate(text, targetLang, sourceLang);
   }
 }
 

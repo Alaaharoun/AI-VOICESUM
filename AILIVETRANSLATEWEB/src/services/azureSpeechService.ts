@@ -12,55 +12,109 @@ export interface TranscriptionResult {
   isFinal: boolean;
   offset: number;
   duration: number;
-}
-
-export interface TranslationResult {
-  text: string;
-  language: string;
-  isFinal: boolean;
+  detectedLanguage?: string;
 }
 
 export class AzureSpeechService {
   private recognizer: SpeechSDK.SpeechRecognizer | null = null;
-  private translator: SpeechSDK.TranslationRecognizer | null = null;
   private isConnected = false;
   private isStreaming = false;
-  private onTranscriptionUpdate: ((text: string) => void) | null = null;
-  private onTranslationUpdate: ((text: string) => void) | null = null;
+  private onTranscriptionUpdate: ((text: string, detectedLanguage?: string) => void) | null = null;
   private currentTranscription = '';
-  private currentTranslation = '';
   private sourceLanguage = 'en-US';
-  private targetLanguage = 'ar';
   private config: AzureSpeechConfig | null = null;
   private originalSourceLanguage = 'auto';
+  private detectedLanguage = '';
+
+  // ✅ ACCURATE Azure Speech Service supported languages (verified 2024)
+  private static readonly SUPPORTED_LANGUAGES = [
+    // Arabic variants (verified Azure support)
+    'ar-EG', 'ar-SA', 'ar-AE', 'ar-MA', 'ar-DZ', 'ar-TN', 'ar-JO', 'ar-LB', 'ar-KW', 'ar-QA', 'ar-BH', 'ar-OM', 'ar-YE', 'ar-SY', 'ar-IQ', 'ar-LY', 'ar-PS',
+    
+    // English variants
+    'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN', 'en-IE', 'en-NZ', 'en-ZA', 'en-PH', 'en-HK', 'en-SG',
+    
+    // French variants
+    'fr-FR', 'fr-CA', 'fr-BE', 'fr-CH',
+    
+    // Spanish variants
+    'es-ES', 'es-MX', 'es-AR', 'es-CO', 'es-PE', 'es-VE', 'es-EC', 'es-GT', 'es-CR', 'es-PA', 'es-CU', 'es-BO', 'es-DO', 'es-HN', 'es-PY', 'es-SV', 'es-NI', 'es-PR', 'es-UY', 'es-CL',
+    
+    // German variants
+    'de-DE', 'de-AT', 'de-CH',
+    
+    // Italian variants
+    'it-IT', 'it-CH',
+    
+    // Portuguese variants
+    'pt-BR', 'pt-PT',
+    
+    // Russian
+    'ru-RU',
+    
+    // Chinese variants
+    'zh-CN', 'zh-TW', 'zh-HK',
+    
+    // Japanese
+    'ja-JP',
+    
+    // Korean
+    'ko-KR',
+    
+    // Hindi and Indian languages
+    'hi-IN', 'bn-IN', 'ta-IN', 'te-IN', 'kn-IN', 'ml-IN', 'gu-IN', 'mr-IN', 'pa-IN',
+    
+    // Turkish
+    'tr-TR',
+    
+    // Dutch variants
+    'nl-NL', 'nl-BE',
+    
+    // Scandinavian languages
+    'sv-SE', 'da-DK', 'nb-NO', 'fi-FI',
+    
+    // Eastern European languages
+    'pl-PL', 'cs-CZ', 'hu-HU', 'ro-RO', 'bg-BG', 'hr-HR', 'sk-SK', 'sl-SI', 'et-EE', 'lv-LV', 'lt-LT', 'uk-UA',
+    
+    // Other European languages
+    'el-GR', 'mt-MT', 'is-IS', 'ga-IE', 'cy-GB',
+    
+    // Middle Eastern languages
+    'he-IL', 'fa-IR', 'ur-PK',
+    
+    // Southeast Asian languages
+    'th-TH', 'vi-VN', 'id-ID', 'ms-MY', 'fil-PH',
+    
+    // African languages
+    'sw-KE', 'am-ET', 'zu-ZA', 'af-ZA',
+    
+    // Other languages
+    'ka-GE', 'hy-AM', 'az-AZ', 'kk-KZ', 'ky-KG', 'uz-UZ', 'mn-MN', 'my-MM', 'km-KH', 'lo-LA', 'si-LK'
+  ];
 
   constructor() {
     this.isConnected = false;
     this.isStreaming = false;
     this.currentTranscription = '';
-    this.currentTranslation = '';
+    this.detectedLanguage = '';
   }
 
   async connect(
     sourceLanguage: string,
-    targetLanguage: string,
-    onTranscriptionUpdate: (text: string) => void,
-    onTranslationUpdate: (text: string) => void
+    onTranscriptionUpdate: (text: string, detectedLanguage?: string) => void
   ) {
     try {
       console.log('🔧 Initializing Azure Speech Service...');
       
       this.onTranscriptionUpdate = onTranscriptionUpdate;
-      this.onTranslationUpdate = onTranslationUpdate;
       this.currentTranscription = '';
-      this.currentTranslation = '';
+      this.detectedLanguage = '';
       
       // Store original language for auto detection logic
       this.originalSourceLanguage = sourceLanguage;
       
       // Map language codes properly - ensure we never pass "auto" to Azure
       this.sourceLanguage = this.mapLanguageCode(sourceLanguage);
-      this.targetLanguage = this.mapLanguageCode(targetLanguage);
       
       console.log('🔧 Original source language:', sourceLanguage);
       console.log('🔧 Mapped source language:', this.sourceLanguage);
@@ -74,7 +128,6 @@ export class AzureSpeechService {
 
       console.log('🌐 Azure Speech Service connected successfully');
       console.log('📝 Source Language:', this.sourceLanguage);
-      console.log('🎯 Target Language:', this.targetLanguage);
       
       this.isConnected = true;
       this.isStreaming = true;
@@ -189,13 +242,6 @@ export class AzureSpeechService {
       speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_InitialSilenceTimeoutMs, "10000");
       speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_RecoMode, "INTERACTIVE");
       
-      // Configure auto language detection if needed
-      if (this.originalSourceLanguage === 'auto') {
-        // Enable auto language detection
-        speechConfig.setProperty(SpeechSDK.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguages, "true");
-        console.log('🔧 Auto language detection enabled');
-      }
-      
       // Create audio config from microphone
       const audioConfig = SpeechSDK.AudioConfig.fromDefaultMicrophoneInput();
       console.log('🔧 Audio config created');
@@ -206,22 +252,16 @@ export class AzureSpeechService {
       if (this.originalSourceLanguage === 'auto') {
         console.log('🔧 Using AutoDetectSourceLanguageConfig for language detection');
         
-        // Create auto language detection config with supported languages
-        const autoDetectConfig = SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages([
-          'en-US', 'ar-SA', 'es-ES', 'fr-FR', 'de-DE', 'it-IT', 'pt-PT', 'ru-RU',
-          'ja-JP', 'ko-KR', 'zh-CN', 'hi-IN', 'tr-TR', 'nl-NL', 'sv-SE', 'da-DK',
-          'no-NO', 'fi-FI', 'pl-PL', 'cs-CZ', 'hu-HU', 'ro-RO', 'bg-BG', 'hr-HR',
-          'sk-SK', 'sl-SI', 'et-EE', 'lv-LV', 'lt-LT', 'mt-MT', 'el-GR', 'he-IL',
-          'th-TH', 'vi-VN', 'id-ID', 'ms-MY', 'fil-PH', 'sw-KE', 'am-ET', 'yo-NG', 'zu-ZA'
-        ]);
+        // Create auto language detection config with all supported languages
+        const autoDetectConfig = SpeechSDK.AutoDetectSourceLanguageConfig.fromLanguages(
+          AzureSpeechService.SUPPORTED_LANGUAGES
+        );
         
         // Create recognizer with auto language detection
-        // According to Azure Speech SDK documentation
         recognizer = new SpeechSDK.SpeechRecognizer(speechConfig, audioConfig);
         console.log('🔧 Recognizer created with auto language detection');
+        console.log(`🔧 Auto-detecting from ${AzureSpeechService.SUPPORTED_LANGUAGES.length} supported languages`);
         
-        // Note: Auto language detection is configured through the speech config
-        // The recognizer will automatically detect the language from the audio
       } else {
         // Use specific language
         speechConfig.speechRecognitionLanguage = this.sourceLanguage;
@@ -260,10 +300,8 @@ export class AzureSpeechService {
         console.log('🎤 Final transcription:', text);
         console.log('🌐 Detected language:', detectedLanguage);
         this.currentTranscription = text;
-        this.onTranscriptionUpdate?.(text);
-        
-        // Translate the final result
-        this.translateText(text);
+        this.detectedLanguage = detectedLanguage || '';
+        this.onTranscriptionUpdate?.(text, detectedLanguage);
       }
     };
 
@@ -273,7 +311,8 @@ export class AzureSpeechService {
       const detectedLanguage = e.result.language;
       console.log('📝 Interim transcription:', text);
       console.log('🌐 Detected language (interim):', detectedLanguage);
-      this.onTranscriptionUpdate?.(text);
+      this.detectedLanguage = detectedLanguage || '';
+      this.onTranscriptionUpdate?.(text, detectedLanguage);
     };
 
     // Session started
@@ -303,27 +342,6 @@ export class AzureSpeechService {
     };
   }
 
-  private async translateText(text: string) {
-    if (!text.trim() || !this.config) return;
-
-    try {
-      console.log('🌍 Translating text:', text);
-      
-      // For now, we'll use a simple translation service
-      // In a real implementation, you might want to use Azure Translator API
-      // or another translation service
-      
-      // Simulate translation for demonstration
-      const translation = `[Translated: ${text}]`;
-      console.log('🌍 Translation result:', translation);
-      this.currentTranslation = translation;
-      this.onTranslationUpdate?.(translation);
-      
-    } catch (error) {
-      console.error('❌ Error translating text:', error);
-    }
-  }
-
   async stopStreaming() {
     try {
       console.log('🛑 Stopping Azure Speech streaming...');
@@ -332,11 +350,6 @@ export class AzureSpeechService {
         await this.recognizer.stopContinuousRecognitionAsync();
         this.recognizer.close();
         this.recognizer = null;
-      }
-      
-      if (this.translator) {
-        this.translator.close();
-        this.translator = null;
       }
       
       this.isStreaming = false;
@@ -354,7 +367,7 @@ export class AzureSpeechService {
     this.isConnected = false;
     this.isStreaming = false;
     this.currentTranscription = '';
-    this.currentTranslation = '';
+    this.detectedLanguage = '';
     
     console.log('✅ Azure Speech Service disconnected');
   }
@@ -367,8 +380,13 @@ export class AzureSpeechService {
     return this.currentTranscription;
   }
 
-  getCurrentTranslation(): string {
-    return this.currentTranslation;
+  getDetectedLanguage(): string {
+    return this.detectedLanguage;
+  }
+
+  // Get all supported languages
+  static getSupportedLanguages(): string[] {
+    return [...AzureSpeechService.SUPPORTED_LANGUAGES];
   }
 
   // Method to set Azure configuration manually

@@ -1,4 +1,4 @@
-// Render WebSocket Service for Real-time Transcription and Translation
+// Render WebSocket Service for Real-time Transcription
 import { getServerConfig } from '../config/servers';
 
 export class RenderWebSocketService {
@@ -6,12 +6,9 @@ export class RenderWebSocketService {
   private isConnected = false;
   private isStreaming = false;
   private isInitialized = false;
-  private onTranscriptionUpdate: ((text: string) => void) | null = null;
-  private onTranslationUpdate: ((text: string) => void) | null = null;
+  private onTranscriptionUpdate: ((text: string, detectedLanguage?: string) => void) | null = null;
   private currentTranscription = '';
-  private currentTranslation = '';
   private sourceLanguage = 'auto';
-  private targetLanguage = 'en';
   private reconnectAttempts = 0;
   private maxReconnectAttempts = 5;
   private reconnectTimeout: number | null = null;
@@ -22,37 +19,320 @@ export class RenderWebSocketService {
   private shouldReconnect = true;
   private audioQueue: Blob[] = []; // Queue for audio chunks before initialization
   private isInitMessageSent = false; // Track if init message has been sent
+  private detectedLanguage = '';
+  private serverSupportedLanguages: string[] = []; // Languages supported by server
+  private languageValidationResult: { isValid: boolean; message?: string; supportedLanguages?: string[] } | null = null;
 
   constructor() {
     this.isConnected = false;
     this.isStreaming = false;
     this.isInitialized = false;
     this.currentTranscription = '';
-    this.currentTranslation = '';
     this.audioQueue = [];
     this.isInitMessageSent = false;
+    this.detectedLanguage = '';
+    this.serverSupportedLanguages = [];
+    this.languageValidationResult = null;
+  }
+
+  // ✅ Azure Speech Service supported languages (verified 2024)
+  private static readonly AZURE_SUPPORTED_LANGUAGES = [
+    // Auto-detect (special value)
+    'auto',
+    // Arabic variants (verified Azure support)
+    'ar-EG', 'ar-SA', 'ar-AE', 'ar-MA', 'ar-DZ', 'ar-TN', 'ar-JO', 'ar-LB', 'ar-KW', 'ar-QA', 'ar-BH', 'ar-OM', 'ar-YE', 'ar-SY', 'ar-IQ', 'ar-LY', 'ar-PS',
+    // English variants
+    'en-US', 'en-GB', 'en-AU', 'en-CA', 'en-IN', 'en-IE', 'en-NZ', 'en-ZA', 'en-PH',
+    // French variants
+    'fr-FR', 'fr-CA', 'fr-BE', 'fr-CH', 'fr-LU', 'fr-MC',
+    // Spanish variants
+    'es-ES', 'es-MX', 'es-AR', 'es-CO', 'es-PE', 'es-VE', 'es-EC', 'es-GT', 'es-CR', 'es-PA', 'es-CU', 'es-BO', 'es-DO', 'es-HN', 'es-PY', 'es-SV', 'es-NI', 'es-PR', 'es-UY', 'es-GQ', 'es-CL',
+    // German variants
+    'de-DE', 'de-AT', 'de-CH', 'de-LU', 'de-LI',
+    // Italian variants
+    'it-IT', 'it-CH',
+    // Portuguese variants
+    'pt-BR', 'pt-PT',
+    // Russian
+    'ru-RU',
+    // Chinese variants
+    'zh-CN', 'zh-TW', 'zh-HK',
+    // Japanese
+    'ja-JP',
+    // Korean
+    'ko-KR',
+    // Hindi
+    'hi-IN',
+    // Turkish
+    'tr-TR',
+    // Dutch
+    'nl-NL', 'nl-BE',
+    // Swedish
+    'sv-SE', 'sv-FI',
+    // Danish
+    'da-DK',
+    // Norwegian
+    'nb-NO', 'nn-NO',
+    // Finnish
+    'fi-FI',
+    // Polish
+    'pl-PL',
+    // Czech
+    'cs-CZ',
+    // Hungarian
+    'hu-HU',
+    // Romanian
+    'ro-RO',
+    // Bulgarian
+    'bg-BG',
+    // Croatian
+    'hr-HR',
+    // Slovak
+    'sk-SK',
+    // Slovenian
+    'sl-SI',
+    // Estonian
+    'et-EE',
+    // Latvian
+    'lv-LV',
+    // Lithuanian
+    'lt-LT',
+    // Maltese
+    'mt-MT',
+    // Greek
+    'el-GR',
+    // Hebrew
+    'he-IL',
+    // Thai
+    'th-TH',
+    // Vietnamese
+    'vi-VN',
+    // Indonesian
+    'id-ID',
+    // Malay
+    'ms-MY',
+    // Filipino
+    'fil-PH',
+    // Persian
+    'fa-IR',
+    // Urdu
+    'ur-PK',
+    // Bengali
+    'bn-IN',
+    // Tamil
+    'ta-IN',
+    // Telugu
+    'te-IN',
+    // Kannada
+    'kn-IN',
+    // Malayalam
+    'ml-IN',
+    // Gujarati
+    'gu-IN',
+    // Marathi
+    'mr-IN',
+    // Punjabi
+    'pa-IN'
+  ];
+
+  /**
+   * ✅ Validate source language support
+   */
+  validateSourceLanguage(sourceLanguage: string): { isValid: boolean; message?: string; suggestion?: string } {
+    // Check if language is in Azure supported languages
+    const isSupported = RenderWebSocketService.AZURE_SUPPORTED_LANGUAGES.includes(sourceLanguage);
+    
+    if (isSupported) {
+      console.log('✅ Language validation passed:', sourceLanguage);
+      return { 
+        isValid: true, 
+        message: `Language ${sourceLanguage} is supported by Azure Speech Service` 
+      };
+    }
+    
+    // Try to find similar language or suggest alternatives
+    const baseLang = sourceLanguage.split('-')[0]; // e.g., 'ar' from 'ar-EG'
+    const similarLanguages = RenderWebSocketService.AZURE_SUPPORTED_LANGUAGES.filter(lang => 
+      lang.startsWith(baseLang + '-') || lang === baseLang
+    );
+    
+    console.warn('⚠️ Language validation failed:', sourceLanguage);
+    console.log('💡 Similar supported languages:', similarLanguages);
+    
+    let suggestion = '';
+    if (similarLanguages.length > 0) {
+      suggestion = similarLanguages[0]; // Suggest first similar language
+    } else if (baseLang === 'ar') {
+      suggestion = 'ar-SA'; // Default Arabic
+    } else if (baseLang === 'en') {
+      suggestion = 'en-US'; // Default English
+    } else if (baseLang === 'fr') {
+      suggestion = 'fr-FR'; // Default French
+    } else if (baseLang === 'es') {
+      suggestion = 'es-ES'; // Default Spanish
+    } else if (baseLang === 'de') {
+      suggestion = 'de-DE'; // Default German
+    } else {
+      suggestion = 'auto'; // Auto-detect as fallback
+    }
+    
+    return {
+      isValid: false,
+      message: `Language '${sourceLanguage}' is not supported by Azure Speech Service. ${similarLanguages.length} similar languages found.`,
+      suggestion: suggestion
+    };
+  }
+
+  /**
+   * ✅ Test server language support
+   */
+  async testLanguageSupport(sourceLanguage: string): Promise<{ isSupported: boolean; serverResponse?: any; error?: string }> {
+    try {
+      console.log('🔍 Testing server language support for:', sourceLanguage);
+      
+      // First validate client-side
+      const clientValidation = this.validateSourceLanguage(sourceLanguage);
+      if (!clientValidation.isValid) {
+        console.warn('⚠️ Client-side language validation failed:', clientValidation.message);
+        return {
+          isSupported: false,
+          error: `Client validation failed: ${clientValidation.message}. Suggested: ${clientValidation.suggestion}`
+        };
+      }
+      
+      const serverConfig = getServerConfig('azure', true);
+      
+      // Test with a simple WebSocket connection
+      const testWs = new WebSocket(serverConfig.wsUrl);
+      
+      const result = await new Promise<{ isSupported: boolean; serverResponse?: any; error?: string }>((resolve) => {
+        const timeout = setTimeout(() => {
+          console.log('⏰ Language support test timeout');
+          testWs.close();
+          resolve({ 
+            isSupported: false, 
+            error: 'Timeout waiting for server response' 
+          });
+        }, 8000);
+        
+        testWs.onopen = () => {
+          console.log('🔗 Test WebSocket opened for language validation');
+          
+          // Send language test message
+          const testMessage = {
+            type: 'language_test',
+            sourceLanguage: sourceLanguage,
+            test: true
+          };
+          
+          console.log('📤 Sending language test message:', testMessage);
+          testWs.send(JSON.stringify(testMessage));
+        };
+        
+        testWs.onmessage = (event) => {
+          try {
+            const data = JSON.parse(event.data);
+            console.log('📨 Language test response:', data);
+            
+            clearTimeout(timeout);
+            testWs.close();
+            
+            if (data.type === 'language_support') {
+              resolve({
+                isSupported: data.supported === true,
+                serverResponse: data,
+                error: data.supported ? undefined : data.message || 'Language not supported by server'
+              });
+            } else if (data.type === 'error' && data.message?.includes('language')) {
+              resolve({
+                isSupported: false,
+                serverResponse: data,
+                error: data.message
+              });
+            } else {
+              // If server doesn't respond with language_support, assume it's supported
+              // (older server versions might not have this feature)
+              console.log('💡 Server does not support language testing, assuming language is supported');
+              resolve({
+                isSupported: true,
+                serverResponse: data,
+                error: undefined
+              });
+            }
+          } catch (parseError) {
+            console.error('❌ Error parsing language test response:', parseError);
+            clearTimeout(timeout);
+            testWs.close();
+            resolve({
+              isSupported: false,
+              error: 'Invalid server response format'
+            });
+          }
+        };
+        
+        testWs.onerror = (error) => {
+          console.error('❌ Language test WebSocket error:', error);
+          clearTimeout(timeout);
+          resolve({
+            isSupported: false,
+            error: 'WebSocket connection error during language test'
+          });
+        };
+        
+        testWs.onclose = (event) => {
+          console.log('🔌 Language test WebSocket closed:', event.code, event.reason);
+          clearTimeout(timeout);
+          if (event.code !== 1000) {
+            resolve({
+              isSupported: false,
+              error: `WebSocket closed unexpectedly: ${event.code} ${event.reason}`
+            });
+          }
+        };
+      });
+      
+      console.log('✅ Language support test completed:', result);
+      return result;
+      
+    } catch (error) {
+      console.error('❌ Language support test error:', error);
+      return {
+        isSupported: false,
+        error: `Language test failed: ${error}`
+      };
+    }
   }
 
   async connect(
     sourceLanguage: string,
-    targetLanguage: string,
-    onTranscriptionUpdate: (text: string) => void,
-    onTranslationUpdate: (text: string) => void
+    onTranscriptionUpdate: (text: string, detectedLanguage?: string) => void
   ) {
     try {
       console.log('🔧 Initializing Render WebSocket service...');
-      console.log('🔧 Connect called with sourceLanguage:', sourceLanguage, 'targetLanguage:', targetLanguage);
+      console.log('🔧 Connect called with sourceLanguage:', sourceLanguage);
+      
+      // ✅ Validate language before connecting
+      console.log('🔍 Validating source language before connection...');
+      const languageValidation = this.validateSourceLanguage(sourceLanguage);
+      this.languageValidationResult = languageValidation;
+      
+      if (!languageValidation.isValid) {
+        console.warn('⚠️ Language validation warning:', languageValidation.message);
+        console.log('💡 Suggested language:', languageValidation.suggestion);
+        
+        // Don't fail connection, but warn user
+        console.log('🔄 Continuing with suggested language:', languageValidation.suggestion);
+        sourceLanguage = languageValidation.suggestion || 'auto';
+      }
       
       this.onTranscriptionUpdate = onTranscriptionUpdate;
-      this.onTranslationUpdate = onTranslationUpdate;
       this.currentTranscription = '';
-      this.currentTranslation = '';
       this.sourceLanguage = sourceLanguage;
-      this.targetLanguage = targetLanguage;
       this.isInitialized = false;
       this.isInitMessageSent = false;
       this.shouldReconnect = true;
       this.audioQueue = []; // Clear audio queue
+      this.detectedLanguage = '';
       
       // Get server configuration
       const serverConfig = getServerConfig('azure', true);
@@ -170,18 +450,17 @@ export class RenderWebSocketService {
         // Handle different message types
         if (data.type === 'transcription') {
           console.log('📝 Received transcription:', data.text);
+          const detectedLanguage = data.detectedLanguage || data.language;
+          this.detectedLanguage = detectedLanguage || '';
           if (this.onTranscriptionUpdate) {
-            this.onTranscriptionUpdate(data.text);
+            this.onTranscriptionUpdate(data.text, detectedLanguage);
           }
         } else if (data.type === 'final') {
           console.log('✅ Received final transcription:', data.text);
+          const detectedLanguage = data.detectedLanguage || data.language;
+          this.detectedLanguage = detectedLanguage || '';
           if (this.onTranscriptionUpdate) {
-            this.onTranscriptionUpdate(data.text);
-          }
-        } else if (data.type === 'translation') {
-          console.log('🌐 Received translation:', data.text);
-          if (this.onTranslationUpdate) {
-            this.onTranslationUpdate(data.text);
+            this.onTranscriptionUpdate(data.text, detectedLanguage);
           }
         } else if (data.type === 'status') {
           console.log('📊 Server status:', data.message);
@@ -190,6 +469,25 @@ export class RenderWebSocketService {
             this.isInitialized = true;
             console.log('✅ Server initialization completed, ready for audio input');
             this.processAudioQueue(); // Process any queued audio
+          }
+        } else if (data.type === 'language_support') {
+          console.log('🌍 Server language support response:', data);
+          if (data.supported) {
+            console.log('✅ Server confirmed language support for:', this.sourceLanguage);
+            this.serverSupportedLanguages.push(this.sourceLanguage);
+          } else {
+            console.warn('⚠️ Server does not support language:', this.sourceLanguage);
+            console.log('💡 Server suggested languages:', data.suggestions);
+          }
+        } else if (data.type === 'language_detected') {
+          console.log('🔍 Server detected language:', data.language);
+          this.detectedLanguage = data.language;
+          // Validate detected language
+          const detectedValidation = this.validateSourceLanguage(data.language);
+          if (detectedValidation.isValid) {
+            console.log('✅ Detected language is supported:', data.language);
+          } else {
+            console.warn('⚠️ Detected language may not be fully supported:', data.language);
           }
         } else if (data.type === 'ready') {
           console.log('✅ Server ready message received');
@@ -404,32 +702,14 @@ export class RenderWebSocketService {
 
       console.log('📤 Sending init message:', {
         type: 'init',
-        language: this.sourceLanguage,
-        targetLanguage: this.targetLanguage,
-        clientSideTranslation: true,
-        realTimeMode: true,
-        autoDetection: true,
-        audioConfig: {
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          encoding: 'pcm_s16le'
-        }
+        sourceLanguage: this.sourceLanguage,
+        realTime: true
       });
 
       const initMessage = {
         type: 'init',
-        language: this.sourceLanguage === 'auto' ? null : this.sourceLanguage,
-        targetLanguage: this.targetLanguage,
-        clientSideTranslation: true,
-        realTimeMode: true,
-        autoDetection: this.sourceLanguage === 'auto',
-        audioConfig: {
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          encoding: 'pcm_s16le'
-        }
+        sourceLanguage: this.sourceLanguage,
+        realTime: true
       };
 
       this.sendMessage(initMessage);
@@ -437,11 +717,8 @@ export class RenderWebSocketService {
       console.log('✅ Init message sent successfully');
       console.log('📤 Sent init message to server:', {
         type: 'init',
-        language: this.sourceLanguage,
-        targetLanguage: this.targetLanguage,
-        clientSideTranslation: true,
-        realTimeMode: true,
-        autoDetection: this.sourceLanguage === 'auto'
+        sourceLanguage: this.sourceLanguage,
+        realTime: true
       });
       
       // Add a small delay to ensure the message is sent
@@ -604,11 +881,11 @@ export class RenderWebSocketService {
       const headerBuffer = await audioChunk.slice(0, 32).arrayBuffer();
       const headerView = new Uint8Array(headerBuffer);
 
-      // ✅ Enhanced size validation - increased minimum from 1000 to 1024 bytes (1KB)
-      if (audioChunk.size < 1024) {
+      // ✅ Strict size validation - minimum 10KB for WebM chunks
+      if (audioChunk.size < 10240) { // 10KB minimum to match server validation
         return { 
           isValid: false, 
-          reason: `WebM chunk too small: ${audioChunk.size} bytes (minimum 1KB required)` 
+          reason: `WebM chunk too small: ${audioChunk.size} bytes (minimum 10KB required)` 
         };
       }
 
@@ -621,18 +898,12 @@ export class RenderWebSocketService {
         );
 
         if (!hasValidHeader) {
-          // ✅ Enhanced logic for middle chunks - increased threshold to 5KB
-          if (audioChunk.size < 5120) { // 5KB instead of 1000 bytes
-            return { 
-              isValid: false, 
-              reason: `WebM chunk lacks valid EBML header and is too small: ${audioChunk.size} bytes` 
-            };
-          } else {
-            // إذا كان الحجم كبير، قد يكون chunk متوسط - اقبله مع تحذير
-            console.warn('⚠️ WebM chunk has no valid EBML header but size is acceptable:', audioChunk.size);
-            console.warn('📦 Treating as middle chunk in stream');
-            return { isValid: true };
-          }
+          // ✅ Strict validation - reject ALL WebM chunks without valid EBML header
+          console.error('❌ WebM chunk lacks valid EBML header:', audioChunk.size, 'bytes');
+          return { 
+            isValid: false, 
+            reason: `WebM chunk lacks valid EBML header (${audioChunk.size} bytes). All WebM files must have proper headers.` 
+          };
         } else {
           // ✅ Additional header validation for WebM
           console.log('✅ Valid EBML header detected');
@@ -789,9 +1060,7 @@ export class RenderWebSocketService {
    */
   async restartStreaming(
     sourceLanguage: string,
-    targetLanguage: string,
-    onTranscriptionUpdate: (text: string) => void,
-    onTranslationUpdate: (text: string) => void
+    onTranscriptionUpdate: (text: string, detectedLanguage?: string) => void
   ) {
     try {
       console.log('🔄 Restarting WebSocket streaming...');
@@ -802,15 +1071,13 @@ export class RenderWebSocketService {
       
       // Update callbacks
       this.onTranscriptionUpdate = onTranscriptionUpdate;
-      this.onTranslationUpdate = onTranslationUpdate;
       this.sourceLanguage = sourceLanguage;
-      this.targetLanguage = targetLanguage;
       
       // Reset state
       this.currentTranscription = '';
-      this.currentTranslation = '';
       this.audioQueue = [];
       this.isInitMessageSent = false;
+      this.detectedLanguage = '';
       
       // Restart streaming
       this.isStreaming = true;
@@ -879,7 +1146,6 @@ export class RenderWebSocketService {
        isInitMessageSent: this.isInitMessageSent,
        isInitialized: this.isInitialized,
        sourceLanguage: this.sourceLanguage,
-       targetLanguage: this.targetLanguage,
        audioQueueLength: this.audioQueue.length
      };
    }
@@ -897,8 +1163,8 @@ export class RenderWebSocketService {
     this.isInitialized = false;
     this.isInitMessageSent = false;
     this.currentTranscription = '';
-    this.currentTranslation = '';
     this.audioQueue = []; // Clear audio queue
+    this.detectedLanguage = '';
     
     // Close WebSocket connection
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
@@ -943,11 +1209,59 @@ export class RenderWebSocketService {
     return this.currentTranscription;
   }
 
-  getCurrentTranslation(): string {
-    return this.currentTranslation;
+  getDetectedLanguage(): string {
+    return this.detectedLanguage;
   }
 
-  // Method to test connection
+  /**
+   * ✅ Get supported languages list
+   */
+  getSupportedLanguages(): string[] {
+    return [...RenderWebSocketService.AZURE_SUPPORTED_LANGUAGES];
+  }
+
+  /**
+   * ✅ Get language validation result
+   */
+  getLanguageValidationResult(): { isValid: boolean; message?: string; suggestion?: string } | null {
+    return this.languageValidationResult;
+  }
+
+  /**
+   * ✅ Get server confirmed supported languages
+   */
+  getServerSupportedLanguages(): string[] {
+    return [...this.serverSupportedLanguages];
+  }
+
+  /**
+   * ✅ Check if a specific language is supported
+   */
+  isLanguageSupported(language: string): boolean {
+    return RenderWebSocketService.AZURE_SUPPORTED_LANGUAGES.includes(language);
+  }
+
+  /**
+   * ✅ Get language information
+   */
+  getLanguageInfo(language: string): { 
+    isClientSupported: boolean; 
+    isServerConfirmed: boolean; 
+    validation: { isValid: boolean; message?: string; suggestion?: string }; 
+    currentSource: string;
+    detectedLanguage: string;
+  } {
+    const validation = this.validateSourceLanguage(language);
+    return {
+      isClientSupported: RenderWebSocketService.AZURE_SUPPORTED_LANGUAGES.includes(language),
+      isServerConfirmed: this.serverSupportedLanguages.includes(language),
+      validation: validation,
+      currentSource: this.sourceLanguage,
+      detectedLanguage: this.detectedLanguage
+    };
+  }
+
+  // Method to test connection with language validation
   async testConnection(): Promise<boolean> {
     try {
       const serverConfig = getServerConfig('azure', true);
@@ -966,24 +1280,16 @@ export class RenderWebSocketService {
           console.log('✅ WebSocket connection opened for test');
           clearTimeout(timeout);
           
-          // Send a test message to verify the connection is working
+          // Send a test message with current language to verify the connection is working
           const testMessage = {
             type: 'init',
-            language: null,
-            targetLanguage: 'en',
-            clientSideTranslation: true,
-            realTimeMode: true,
-            autoDetection: true,
-            audioConfig: {
-              sampleRate: 16000,
-              channels: 1,
-              bitsPerSample: 16,
-              encoding: 'pcm_s16le'
-            }
+            sourceLanguage: this.sourceLanguage,
+            realTime: true,
+            test: true
           };
           
           ws.send(JSON.stringify(testMessage));
-          console.log('📤 Sent test init message');
+          console.log('📤 Sent test init message with language:', this.sourceLanguage);
           
           // Wait a bit for response, then close
           setTimeout(() => {

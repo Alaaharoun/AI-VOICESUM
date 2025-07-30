@@ -460,20 +460,24 @@ export class StreamingService {
     if (!text.trim()) return;
     
     try {
-      // Import the enhanced translation service
-      const { TranslationService } = await import('./translationService');
+      // Import the translation service from api.ts
+      const { TranslationService } = await import('./api');
       
-      const result = await TranslationService.translateText(
+      const translatedText = await TranslationService.translateText(
         text,
         this.targetLanguage,
+        'google',
         this.sourceLanguage
       );
       
-      this.currentTranslation = result.translatedText;
-      this.onTranslationUpdate?.(result.translatedText);
-      console.log('🌍 Translation completed:', result.translatedText);
+      this.currentTranslation = translatedText;
+      this.onTranslationUpdate?.(translatedText);
+      console.log('🌍 Google translation completed:', translatedText);
     } catch (error) {
       console.error('❌ Error in translation:', error);
+      // Fallback to original text
+      this.currentTranslation = text;
+      this.onTranslationUpdate?.(text);
     }
   }
 
