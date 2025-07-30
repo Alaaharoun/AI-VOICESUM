@@ -802,7 +802,7 @@ function startWebSocketServer(server) {
       return;
     }
 
-    let recognizer, pushStream, speechConfig, audioConfig;
+    let recognizer, pushStream, speechConfig, audioConfig, pcmStreamHandler;
     let language = 'en-US'; // Default to English for better compatibility
     let initialized = false;
     let pendingAudioChunks = []; // Store audio chunks until initialization is complete
@@ -943,8 +943,13 @@ function startWebSocketServer(server) {
               }
 
               // ✅ Create PCM stream handler for continuous audio processing
-              const pcmStreamHandler = handleContinuousPCMStream(ws, language, pushStream);
-              console.log(`🔧 [${language}] PCM stream handler created for continuous audio processing`);
+              try {
+                pcmStreamHandler = handleContinuousPCMStream(ws, language, pushStream);
+                console.log(`🔧 [${language}] PCM stream handler created for continuous audio processing`);
+              } catch (pcmHandlerError) {
+                console.error('❌ Failed to create PCM stream handler:', pcmHandlerError);
+                pcmStreamHandler = null; // Ensure it's null if creation fails
+              }
               
               // ✅ Enhanced event handlers with proper language detection support
               recognizer.recognizing = (s, e) => {
@@ -1070,6 +1075,9 @@ function startWebSocketServer(server) {
                     pushStream.close();
                     pushStream = null;
                   }
+                  if (pcmStreamHandler) {
+                    pcmStreamHandler = null;
+                  }
                   
                   // Try to reinitialize after a delay
                   setTimeout(() => {
@@ -1123,6 +1131,9 @@ function startWebSocketServer(server) {
                   if (pushStream) {
                     pushStream.close();
                     pushStream = null;
+                  }
+                  if (pcmStreamHandler) {
+                    pcmStreamHandler = null;
                   }
                 }
               };
@@ -1261,6 +1272,12 @@ function startWebSocketServer(server) {
                   console.error('❌ Error during pushStream cleanup:', cleanupError);
                 }
               }
+              
+              // Clean up PCM stream handler
+              if (pcmStreamHandler) {
+                pcmStreamHandler = null;
+                console.log('✅ PCM stream handler cleaned up');
+              }
             }
             
             return;
@@ -1323,8 +1340,18 @@ function startWebSocketServer(server) {
             console.log(`🎵 [${language}] Received streaming PCM data: ${audioSize} bytes`);
             
             // ✅ Process with continuous streaming handler
-            pcmStreamHandler.processStreamingPCM(audioBuffer);
-            return; // Handle streaming data immediately
+            try {
+              pcmStreamHandler.processStreamingPCM(audioBuffer);
+              return; // Handle streaming data immediately
+            } catch (pcmProcessError) {
+              console.error('❌ Error processing PCM stream:', pcmProcessError);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                error: `PCM processing failed: ${pcmProcessError.message}`,
+                details: { phase: 'pcm_processing', errorType: pcmProcessError.name }
+              }));
+              return;
+            }
           }
           
           if (jsonData) {
