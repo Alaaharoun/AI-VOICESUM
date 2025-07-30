@@ -509,9 +509,35 @@ export class RenderWebSocketService {
             console.log('✅ Server considered ready after pong');
           }
         } else if (data.type === 'error') {
-          console.error('❌ Server error:', data.message);
+          const errorDetails = data.details || {};
+          const errorPhase = errorDetails.phase || 'unknown';
+          const errorType = errorDetails.errorType || 'UnknownError';
+          
+          console.error('❌ Server error:', {
+            message: data.error || data.message,
+            phase: errorPhase,
+            type: errorType,
+            details: errorDetails
+          });
+          
+          // Enhanced error reporting for Azure Speech SDK issues
+          if (errorPhase === 'azure_initialization') {
+            console.error('🔧 Azure Speech SDK initialization failed:', {
+              language: errorDetails.language,
+              autoDetection: errorDetails.autoDetection,
+              errorType: errorType
+            });
+            
+            // Suggest potential fixes based on error type
+            if (errorType.includes('AudioSource') || errorType.includes('privAudioSource')) {
+              console.error('💡 Potential fix: Audio configuration issue - try restarting the connection or check Azure Speech SDK compatibility');
+            } else if (errorType.includes('AutoDetect')) {
+              console.error('💡 Potential fix: Auto-detection issue - try using a specific language instead of auto-detect');
+            }
+          }
+          
           // Don't reset isInitialized for quota exceeded errors
-          if (data.error && data.error.includes('Quota exceeded')) {
+          if ((data.error || data.message || '').includes('Quota exceeded')) {
             console.warn('⚠️ Azure quota exceeded, but keeping connection alive');
             // Keep isInitialized true to continue audio processing
             // Try to reinitialize after a delay

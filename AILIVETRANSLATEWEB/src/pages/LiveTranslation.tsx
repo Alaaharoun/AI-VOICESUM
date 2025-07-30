@@ -387,66 +387,95 @@ export const LiveTranslation: React.FC = () => {
       // Create audio source from microphone stream
       const source = audioContext.createMediaStreamSource(stream);
       
-      // ✅ Use ScriptProcessorNode for Raw PCM data extraction
-      const bufferSize = 4096; // Balance between latency and performance
-      const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
-      
-      let pcmChunkBuffer = new Float32Array(0);
-      const targetChunkSize = 16000; // 1 second of 16kHz audio
-      
-      processor.onaudioprocess = (event) => {
-        if (!renderWebSocketServiceRef.current?.isConnectedStatus()) return;
+      // ✅ Use AudioWorkletNode for Raw PCM data extraction (Modern replacement for deprecated ScriptProcessorNode)
+      try {
+        console.log('🔧 Loading AudioWorklet processor for Raw PCM...');
         
-        try {
-          // Get raw PCM data from audio processing event
-          const inputBuffer = event.inputBuffer;
-          const inputData = inputBuffer.getChannelData(0); // Mono channel
+        // Load the AudioWorklet processor
+        await audioContext.audioWorklet.addModule('/src/services/pcmWorkletProcessor.js');
+        console.log('✅ AudioWorklet processor loaded successfully');
+        
+        // Create AudioWorkletNode
+        const workletNode = new AudioWorkletNode(audioContext, 'pcm-worklet-processor');
+        
+        // Handle PCM data from the worklet
+        workletNode.port.onmessage = (event) => {
+          if (!renderWebSocketServiceRef.current?.isConnectedStatus()) return;
           
-          // Convert Float32 to Int16 PCM (Azure Speech format)
-          const int16Data = new Int16Array(inputData.length);
-          for (let i = 0; i < inputData.length; i++) {
-            // Convert from [-1, 1] float range to [-32768, 32767] int16 range
-            const sample = Math.max(-1, Math.min(1, inputData[i]));
-            int16Data[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
-          }
-          
-          // Accumulate PCM data into chunks
-          const newBuffer = new Float32Array(pcmChunkBuffer.length + inputData.length);
-          newBuffer.set(pcmChunkBuffer);
-          newBuffer.set(inputData, pcmChunkBuffer.length);
-          pcmChunkBuffer = newBuffer;
-          
-          // Send when we have enough data (1 second chunks for optimal Azure performance)
-          if (pcmChunkBuffer.length >= targetChunkSize) {
-            const chunkToSend = pcmChunkBuffer.slice(0, targetChunkSize);
-            pcmChunkBuffer = pcmChunkBuffer.slice(targetChunkSize);
+          try {
+            const { type, data, size } = event.data;
             
-            // Convert to Int16 for Azure Speech
-            const int16Chunk = new Int16Array(chunkToSend.length);
-            for (let i = 0; i < chunkToSend.length; i++) {
-              const sample = Math.max(-1, Math.min(1, chunkToSend[i]));
-              int16Chunk[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+            if (type === 'pcmData') {
+              // Create blob from Int16 PCM data received from worklet
+              const pcmBlob = new Blob([data], { type: 'audio/pcm' });
+              
+              // Send Raw PCM directly to server
+              renderWebSocketServiceRef.current.sendAudioChunk(pcmBlob);
+              console.log('📤 Raw PCM chunk sent from AudioWorklet:', size, 'bytes (16kHz Int16)');
             }
             
-            // Create blob from Int16 PCM data
-            const pcmBlob = new Blob([int16Chunk.buffer], { type: 'audio/pcm' });
-            
-            // Send Raw PCM directly to server
-            renderWebSocketServiceRef.current.sendAudioChunk(pcmBlob);
-            console.log('📤 Raw PCM chunk sent:', int16Chunk.length * 2, 'bytes (16kHz Int16)');
+          } catch (error) {
+            console.error('❌ Error processing AudioWorklet PCM data:', error);
           }
+        };
+        
+        // Connect audio processing chain
+        source.connect(workletNode);
+        workletNode.connect(audioContext.destination);
+        
+        // Store worklet reference for cleanup
+        (audioContextRef.current as any).workletNode = workletNode;
+        console.log('✅ AudioWorklet PCM processing chain established');
+        
+      } catch (workletError) {
+        console.warn('⚠️ AudioWorklet not supported, falling back to ScriptProcessorNode...');
+        
+        // Fallback to ScriptProcessorNode for older browsers
+        const bufferSize = 4096;
+        const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+        
+        let pcmChunkBuffer = new Float32Array(0);
+        const targetChunkSize = 16000; // 1 second of 16kHz audio
+        
+        processor.onaudioprocess = (event) => {
+          if (!renderWebSocketServiceRef.current?.isConnectedStatus()) return;
           
-        } catch (error) {
-          console.error('❌ Error processing Raw PCM audio:', error);
-        }
-      };
-      
-      // Connect audio processing chain
-      source.connect(processor);
-      processor.connect(audioContext.destination);
-      
-      // Store processor reference for cleanup
-      (audioContextRef.current as any).processor = processor;
+          try {
+            const inputBuffer = event.inputBuffer;
+            const inputData = inputBuffer.getChannelData(0);
+            
+            // Accumulate PCM data into chunks
+            const newBuffer = new Float32Array(pcmChunkBuffer.length + inputData.length);
+            newBuffer.set(pcmChunkBuffer);
+            newBuffer.set(inputData, pcmChunkBuffer.length);
+            pcmChunkBuffer = newBuffer;
+            
+            // Send when we have enough data
+            if (pcmChunkBuffer.length >= targetChunkSize) {
+              const chunkToSend = pcmChunkBuffer.slice(0, targetChunkSize);
+              pcmChunkBuffer = pcmChunkBuffer.slice(targetChunkSize);
+              
+              // Convert to Int16 for Azure Speech
+              const int16Chunk = new Int16Array(chunkToSend.length);
+              for (let i = 0; i < chunkToSend.length; i++) {
+                const sample = Math.max(-1, Math.min(1, chunkToSend[i]));
+                int16Chunk[i] = sample < 0 ? sample * 0x8000 : sample * 0x7FFF;
+              }
+              
+              const pcmBlob = new Blob([int16Chunk.buffer], { type: 'audio/pcm' });
+              renderWebSocketServiceRef.current.sendAudioChunk(pcmBlob);
+              console.log('📤 Raw PCM chunk sent (fallback):', int16Chunk.length * 2, 'bytes');
+            }
+            
+          } catch (error) {
+            console.error('❌ Error processing fallback PCM audio:', error);
+          }
+        };
+        
+        source.connect(processor);
+        processor.connect(audioContext.destination);
+        (audioContextRef.current as any).processor = processor;
+      }
       
       setStreamingStatus('connected');
       console.log('✅ Raw PCM audio recording started successfully');
@@ -468,15 +497,30 @@ export const LiveTranslation: React.FC = () => {
       setIsProcessing(false);
       setStreamingStatus('idle');
       
-      // ✅ Stop ScriptProcessorNode for Raw PCM recording
-      if (audioContextRef.current && (audioContextRef.current as any).processor) {
-        try {
-          const processor = (audioContextRef.current as any).processor;
-          processor.disconnect();
-          processor.onaudioprocess = null;
-          console.log('✅ Raw PCM processor stopped and disconnected');
-        } catch (processorError) {
-          console.warn('⚠️ Error stopping PCM processor:', processorError);
+      // ✅ Stop AudioWorkletNode or ScriptProcessorNode for Raw PCM recording
+      if (audioContextRef.current) {
+        // Clean up AudioWorkletNode (modern approach)
+        if ((audioContextRef.current as any).workletNode) {
+          try {
+            const workletNode = (audioContextRef.current as any).workletNode;
+            workletNode.disconnect();
+            workletNode.port.onmessage = null;
+            console.log('✅ AudioWorklet PCM processor stopped and disconnected');
+          } catch (workletError) {
+            console.warn('⚠️ Error stopping AudioWorklet processor:', workletError);
+          }
+        }
+        
+        // Clean up ScriptProcessorNode (fallback approach)
+        if ((audioContextRef.current as any).processor) {
+          try {
+            const processor = (audioContextRef.current as any).processor;
+            processor.disconnect();
+            processor.onaudioprocess = null;
+            console.log('✅ ScriptProcessor PCM processor stopped and disconnected');
+          } catch (processorError) {
+            console.warn('⚠️ Error stopping ScriptProcessor:', processorError);
+          }
         }
       }
       

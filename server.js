@@ -884,10 +884,19 @@ function startWebSocketServer(server) {
             
             // ✅ Initialize Azure Speech SDK following ChatGPT's instructions
             try {
-              // Create push stream with specific audio format
+              // Create push stream with specific audio format for Raw PCM
+              console.log('🔧 Creating Azure Speech audio configuration...');
               const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1); // 16kHz, 16-bit, mono
               pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
-              audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+              
+              // ✅ Enhanced audio config creation with error handling
+              try {
+                audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
+                console.log('✅ AudioConfig created successfully');
+              } catch (audioConfigError) {
+                console.error('❌ AudioConfig creation failed:', audioConfigError);
+                throw new Error(`Failed to create AudioConfig: ${audioConfigError.message}`);
+              }
               
               // Create Azure Speech Config
               speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
@@ -904,19 +913,33 @@ function startWebSocketServer(server) {
               if (autoDetection) {
                 console.log('🔧 Creating recognizer with AutoDetectSourceLanguageConfig...');
                 
-                // ✅ Use AutoDetectSourceLanguageConfig.fromLanguages() as recommended by ChatGPT
-                const autoDetectSourceLanguageConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(AZURE_AUTO_DETECT_LANGUAGES);
-                recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectSourceLanguageConfig, audioConfig);
+                try {
+                  // ✅ Use AutoDetectSourceLanguageConfig.fromLanguages() as recommended by ChatGPT
+                  const autoDetectSourceLanguageConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(AZURE_AUTO_DETECT_LANGUAGES);
+                  console.log('✅ AutoDetectSourceLanguageConfig created for', AZURE_AUTO_DETECT_LANGUAGES.length, 'languages');
+                  
+                  // ✅ Create recognizer with proper error handling
+                  recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectSourceLanguageConfig, audioConfig);
+                  console.log('✅ Recognizer created with AutoDetectSourceLanguageConfig successfully');
+                  
+                } catch (recognizerError) {
+                  console.error('❌ Failed to create AutoDetect recognizer:', recognizerError);
+                  throw new Error(`AutoDetect recognizer creation failed: ${recognizerError.message}`);
+                }
                 
-                console.log('✅ Recognizer created with AutoDetectSourceLanguageConfig for', AZURE_AUTO_DETECT_LANGUAGES.length, 'languages');
               } else {
                 console.log('🔧 Creating recognizer with specific language:', language);
                 
-                // ✅ Use normal SpeechRecognizer without auto-detect for specific language
-                speechConfig.speechRecognitionLanguage = language;
-                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-                
-                console.log('✅ Recognizer created with specific language:', language);
+                try {
+                  // ✅ Use normal SpeechRecognizer without auto-detect for specific language
+                  speechConfig.speechRecognitionLanguage = language;
+                  recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                  console.log('✅ Recognizer created with specific language:', language);
+                  
+                } catch (recognizerError) {
+                  console.error('❌ Failed to create specific language recognizer:', recognizerError);
+                  throw new Error(`Specific language recognizer creation failed: ${recognizerError.message}`);
+                }
               }
 
               // ✅ Create PCM stream handler for continuous audio processing
@@ -1201,7 +1224,43 @@ function startWebSocketServer(server) {
               
             } catch (initError) {
               console.error('❌ Azure Speech SDK initialization error:', initError);
-              ws.send(JSON.stringify({ type: 'error', error: `Initialization failed: ${initError.message}` }));
+              console.error('❌ Error details:', {
+                message: initError.message,
+                stack: initError.stack,
+                name: initError.name
+              });
+              
+              // ✅ Send detailed error message to client
+              const errorMessage = `Azure Speech SDK initialization failed: ${initError.message || initError}`;
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                error: errorMessage,
+                details: {
+                  phase: 'azure_initialization',
+                  errorType: initError.name || 'UnknownError',
+                  language: language || 'auto',
+                  autoDetection: autoDetection
+                }
+              }));
+              
+              // Clean up any partial initialization
+              if (recognizer) {
+                try {
+                  recognizer.close();
+                  recognizer = null;
+                } catch (cleanupError) {
+                  console.error('❌ Error during recognizer cleanup:', cleanupError);
+                }
+              }
+              
+              if (pushStream) {
+                try {
+                  pushStream.close();
+                  pushStream = null;
+                } catch (cleanupError) {
+                  console.error('❌ Error during pushStream cleanup:', cleanupError);
+                }
+              }
             }
             
             return;
