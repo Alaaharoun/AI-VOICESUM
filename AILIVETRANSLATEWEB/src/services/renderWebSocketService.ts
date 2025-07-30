@@ -153,13 +153,13 @@ export class RenderWebSocketService {
         this.ws.send(JSON.stringify(initMessage));
       }
       
-      // Set initialization timeout - if server doesn't respond within 3 seconds, assume it's ready
-      setTimeout(() => {
-        if (!this.isInitialized && this.isConnected) {
-          console.log('⏰ Initialization timeout - assuming server is ready for audio input');
-          this.isInitialized = true;
-        }
-      }, 3000);
+              // Set initialization timeout - if server doesn't respond within 5 seconds, assume it's ready
+        setTimeout(() => {
+          if (!this.isInitialized && this.isConnected) {
+            console.log('⏰ Initialization timeout - assuming server is ready for audio input');
+            this.isInitialized = true;
+          }
+        }, 5000);
       
       onConnect?.();
     };

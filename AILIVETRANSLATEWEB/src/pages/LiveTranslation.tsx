@@ -259,7 +259,9 @@
         gainNode.gain.value = 3.0; // Boost audio by 3x
         console.log('🔊 Audio gain set to 3.0x for better volume');
         
-        const processor = audioContext.createScriptProcessor(4096, 1, 1);
+        // Use larger buffer size for longer chunks (1 second = 16000 samples)
+        const bufferSize = 16000; // 1 second at 16kHz
+        const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
         
         // Store references for cleanup
         audioContextRef.current = audioContext;
@@ -280,19 +282,18 @@
           
           // Analyze audio level for debugging
           const audioLevel = Math.sqrt(pcmData.reduce((sum, sample) => sum + sample * sample, 0) / pcmData.length);
-          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes, Level:', audioLevel.toFixed(2));
+          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes, Level:', audioLevel.toFixed(2), 'Duration:', (pcmData.length / 16000).toFixed(2), 's');
           
-          // Only send if audio level is sufficient
-          if (audioLevel > 50) {
-            console.log('✅ Audio level sufficient, sending to server');
+          // Only send if audio level is sufficient and duration is adequate
+          if (audioLevel > 30 && pcmData.length >= 8000) { // At least 0.5 seconds
+            console.log('✅ Audio level and duration sufficient, sending to server');
+            
+            // Send audio chunk to Render WebSocket service
+            if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
+              renderWebSocketServiceRef.current.sendAudioChunk(audioBlob);
+            }
           } else {
-            console.log('⚠️ Audio level too low, skipping chunk');
-            return;
-          }
-          
-          // Send audio chunk to Render WebSocket service
-          if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
-            renderWebSocketServiceRef.current.sendAudioChunk(audioBlob);
+            console.log('⚠️ Audio level too low or duration too short, skipping chunk');
           }
         };
         
