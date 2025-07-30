@@ -178,14 +178,14 @@ function analyzeAudioQuality(audioBuffer, audioFormat) {
   const dynamicRange = maxAmplitude;
   const zeroCrossingRate = zeroCrossings / sampleCount;
   
-  // Speech typically has (relaxed criteria for better detection):
-  // - RMS > 50 (not too quiet) - reduced from 1000
-  // - Dynamic range > 100 (not too compressed) - reduced from 5000
-  // - Zero crossing rate > 0.01 (speech activity) - reduced from 0.1
-  // - Duration > 0.5 seconds (minimum speech duration)
+  // Speech typically has (very lenient criteria for real-world audio):
+  // - RMS > 10 (very low threshold for quiet speech)
+  // - Dynamic range > 10 (very low threshold for compressed audio)
+  // - Zero crossing rate > 0.0001 (very low threshold for speech activity)
+  // - Duration > 0.2 seconds (minimum speech duration)
   
-          // Very lenient criteria for PCM data to match Azure requirements
-        const hasSpeech = averageAmplitude > 20 && dynamicRange > 30 && zeroCrossingRate > 0.001 && (sampleCount / 16000) > 0.2;
+  // Ultra-lenient criteria for PCM data to match real-world microphone levels
+  const hasSpeech = averageAmplitude > 10 && dynamicRange > 10 && zeroCrossingRate > 0.0001 && (sampleCount / 16000) > 0.2;
   
   console.log(`🔍 Audio Analysis (PCM):
     - Duration: ${(sampleCount / 16000).toFixed(2)} seconds
@@ -1025,23 +1025,12 @@ function startWebSocketServer(server) {
           if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
             console.log(`✅ [${language}] Using PCM data directly: ${audioSize} bytes`);
             
-            // Analyze PCM quality directly
-            const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
-            console.log(`🔍 Audio quality result:`, audioQuality);
-            
-            // More lenient criteria for PCM with longer chunks (~1 second optimal)
-            if (audioSize >= 16000) { // At least 1 second of audio (optimal)
-              console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
-              
-              if (!audioQuality.hasSpeech) {
-                console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite sufficient duration`);
-                ws.send(JSON.stringify({ 
-                  type: 'warning', 
-                  message: 'No clear speech detected. Please speak louder or check your microphone.',
-                  audioStats: audioQuality
-                }));
-                return;
-              }
+                                // Skip audio quality analysis for new app (client handles it)
+                    console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
+                    
+                    // More lenient criteria for PCM with longer chunks (~1 second optimal)
+                    if (audioSize >= 16000) { // At least 1 second of audio (optimal)
+                      console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
               
               // Write PCM data directly to Azure Speech SDK
               pushStream.write(audioBuffer);
@@ -1185,23 +1174,12 @@ function startWebSocketServer(server) {
                   if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
                     console.log(`✅ [${language}] Using stored PCM data directly: ${audioSize} bytes`);
                     
-                    // Analyze PCM quality directly
-                    const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
-                    console.log(`🔍 Audio quality result:`, audioQuality);
+                    // Skip audio quality analysis for new app (client handles it)
+                    console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
                     
                     // More lenient criteria for PCM with longer chunks (~1 second optimal)
                     if (audioSize >= 16000) { // At least 1 second of audio (optimal)
                       console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
-                      
-                      if (!audioQuality.hasSpeech) {
-                        console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite sufficient duration`);
-                        ws.send(JSON.stringify({ 
-                          type: 'warning', 
-                          message: 'No clear speech detected. Please speak louder or check your microphone.',
-                          audioStats: audioQuality
-                        }));
-                        return;
-                      }
                       
                       // Write PCM data directly to Azure Speech SDK if available
                       if (pushStream) {
