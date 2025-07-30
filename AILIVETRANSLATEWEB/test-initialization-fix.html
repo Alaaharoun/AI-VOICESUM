@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Initialization Fix Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 400px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+        .step {
+            margin: 10px 0;
+            padding: 10px;
+            border-left: 4px solid #007bff;
+            background: #f8f9fa;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Initialization Fix Test</h1>
+        <p>This page tests the initialization fixes applied to the WebSocket service.</p>
+        
+        <div id="status" class="status info">
+            Ready to test initialization...
+        </div>
+        
+        <div class="step">
+            <h3>📋 Test Steps:</h3>
+            <ol>
+                <li>Click "Test WebSocket Connection" to establish connection</li>
+                <li>Check logs for proper init message sending</li>
+                <li>Click "Test Audio Recording" to simulate audio data</li>
+                <li>Verify that audio is queued until initialization is complete</li>
+            </ol>
+        </div>
+        
+        <div>
+            <button id="testConnection">🔌 Test WebSocket Connection</button>
+            <button id="testAudioRecording">🎤 Test Audio Recording</button>
+            <button id="testInitSequence">📤 Test Init Sequence</button>
+            <button id="clearLog">🗑️ Clear Log</button>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+        // Import the WebSocket service
+        import { RenderWebSocketService } from './src/services/renderWebSocketService.ts';
+        
+        const logElement = document.getElementById('log');
+        const statusElement = document.getElementById('status');
+        let wsService = null;
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> ${message}`;
+            logElement.appendChild(logEntry);
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(message, type = 'info') {
+            statusElement.textContent = message;
+            statusElement.className = `status ${type}`;
+        }
+        
+        // Test 1: WebSocket Connection
+        document.getElementById('testConnection').addEventListener('click', async () => {
+            log('🔌 Testing WebSocket connection...');
+            updateStatus('Testing WebSocket connection...', 'info');
+            
+            try {
+                wsService = new RenderWebSocketService();
+                
+                await wsService.connect(
+                    'auto', // sourceLanguage
+                    'en',   // targetLanguage
+                    (text) => log('📝 Transcription: ' + text),
+                    (text) => log('🌐 Translation: ' + text)
+                );
+                
+                log('✅ WebSocket connection established');
+                updateStatus('WebSocket connection successful!', 'success');
+                
+                // Check initialization status after a delay
+                setTimeout(() => {
+                    const isConnected = wsService.isConnectedStatus();
+                    const isInitialized = wsService.isInitializedStatus();
+                    log(`📊 Connection status: Connected=${isConnected}, Initialized=${isInitialized}`);
+                }, 2000);
+                
+            } catch (error) {
+                updateStatus('WebSocket connection failed!', 'error');
+                log('❌ WebSocket connection failed: ' + error.message);
+            }
+        });
+        
+        // Test 2: Audio Recording
+        document.getElementById('testAudioRecording').addEventListener('click', async () => {
+            log('🎤 Testing audio recording...');
+            updateStatus('Testing audio recording...', 'info');
+            
+            if (!wsService) {
+                log('❌ WebSocket service not initialized');
+                updateStatus('WebSocket service not initialized!', 'error');
+                return;
+            }
+            
+            try {
+                // Request microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                log('✅ Microphone access granted');
+                
+                // Create MediaRecorder
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                const chunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        chunks.push(event.data);
+                        log('📦 Audio chunk received: ' + event.data.size + ' bytes');
+                        
+                        // Send to WebSocket service
+                        wsService.sendAudioChunk(event.data);
+                    }
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log('🛑 Recording stopped');
+                    stream.getTracks().forEach(track => track.stop());
+                    
+                    const audioBlob = new Blob(chunks, { type: 'audio/webm;codecs=opus' });
+                    log('📊 Total audio size: ' + audioBlob.size + ' bytes');
+                    
+                    updateStatus('Audio recording test completed!', 'success');
+                };
+                
+                // Record for 3 seconds
+                mediaRecorder.start();
+                log('🎙️ Recording started...');
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                }, 3000);
+                
+            } catch (error) {
+                updateStatus('Audio recording test failed!', 'error');
+                log('❌ Audio recording test failed: ' + error.message);
+            }
+        });
+        
+        // Test 3: Init Sequence
+        document.getElementById('testInitSequence').addEventListener('click', async () => {
+            log('📤 Testing init sequence...');
+            updateStatus('Testing init sequence...', 'info');
+            
+            if (!wsService) {
+                log('❌ WebSocket service not initialized');
+                updateStatus('WebSocket service not initialized!', 'error');
+                return;
+            }
+            
+            try {
+                // Check current status
+                const isConnected = wsService.isConnectedStatus();
+                const isInitialized = wsService.isInitializedStatus();
+                
+                log(`📊 Current status: Connected=${isConnected}, Initialized=${isInitialized}`);
+                
+                if (isConnected && !isInitialized) {
+                    log('⏳ Waiting for initialization...');
+                    
+                    // Wait for initialization
+                    let attempts = 0;
+                    const maxAttempts = 10;
+                    
+                    const checkInit = setInterval(() => {
+                        attempts++;
+                        const currentInitialized = wsService.isInitializedStatus();
+                        
+                        log(`🔄 Check ${attempts}/${maxAttempts}: Initialized=${currentInitialized}`);
+                        
+                        if (currentInitialized) {
+                            clearInterval(checkInit);
+                            log('✅ Initialization completed successfully!');
+                            updateStatus('Init sequence test passed!', 'success');
+                        } else if (attempts >= maxAttempts) {
+                            clearInterval(checkInit);
+                            log('⏰ Initialization timeout');
+                            updateStatus('Init sequence timeout!', 'error');
+                        }
+                    }, 1000);
+                } else {
+                    log('✅ Already initialized or not connected');
+                    updateStatus('Init sequence test completed!', 'success');
+                }
+                
+            } catch (error) {
+                updateStatus('Init sequence test failed!', 'error');
+                log('❌ Init sequence test failed: ' + error.message);
+            }
+        });
+        
+        // Clear log
+        document.getElementById('clearLog').addEventListener('click', () => {
+            logElement.innerHTML = '';
+            updateStatus('Log cleared', 'info');
+        });
+        
+        // Initial log
+        log('🚀 Initialization Fix Test loaded');
+        log('📋 Available tests:');
+        log('  1. WebSocket Connection - Tests connection establishment');
+        log('  2. Audio Recording - Tests audio data handling');
+        log('  3. Init Sequence - Tests initialization sequence');
+    </script>
+</body>
+</html> 

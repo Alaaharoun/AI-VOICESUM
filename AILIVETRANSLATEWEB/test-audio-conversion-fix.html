@@ -1,0 +1,298 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Audio Conversion Fix Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        button {
+            background: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover {
+            background: #0056b3;
+        }
+        button:disabled {
+            background: #ccc;
+            cursor: not-allowed;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+        }
+        .success {
+            background: #d4edda;
+            color: #155724;
+            border: 1px solid #c3e6cb;
+        }
+        .error {
+            background: #f8d7da;
+            color: #721c24;
+            border: 1px solid #f5c6cb;
+        }
+        .info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+        .log {
+            background: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            margin: 10px 0;
+            max-height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎵 Audio Conversion Fix Test</h1>
+        <p>This page tests the audio conversion fixes applied to the system.</p>
+        
+        <div id="status" class="status info">
+            Ready to test audio conversion...
+        </div>
+        
+        <div>
+            <button id="testBlobValidation">🧪 Test Blob Validation</button>
+            <button id="testAudioContext">🎧 Test AudioContext</button>
+            <button id="testMediaRecorder">📹 Test MediaRecorder</button>
+            <button id="testRealRecording">🎤 Test Real Recording</button>
+            <button id="clearLog">🗑️ Clear Log</button>
+        </div>
+        
+        <div id="log" class="log"></div>
+    </div>
+
+    <script type="module">
+        // Import the AudioConverter
+        import { AudioConverter } from './src/services/audioConverter.ts';
+        
+        const logElement = document.getElementById('log');
+        const statusElement = document.getElementById('status');
+        
+        function log(message, type = 'info') {
+            const timestamp = new Date().toLocaleTimeString();
+            const logEntry = document.createElement('div');
+            logEntry.innerHTML = `<span style="color: #666;">[${timestamp}]</span> ${message}`;
+            logElement.appendChild(logEntry);
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+        
+        function updateStatus(message, type = 'info') {
+            statusElement.textContent = message;
+            statusElement.className = `status ${type}`;
+        }
+        
+        // Test 1: Blob Validation
+        document.getElementById('testBlobValidation').addEventListener('click', async () => {
+            log('🧪 Testing blob validation...');
+            updateStatus('Testing blob validation...', 'info');
+            
+            try {
+                const converter = new AudioConverter();
+                
+                // Test empty blob
+                const emptyBlob = new Blob([], { type: 'audio/webm' });
+                try {
+                    await converter.convertToPCM(emptyBlob);
+                    log('❌ Empty blob should have failed');
+                } catch (error) {
+                    log('✅ Empty blob correctly rejected: ' + error.message);
+                }
+                
+                // Test small blob
+                const smallBlob = new Blob([new ArrayBuffer(50)], { type: 'audio/webm' });
+                try {
+                    await converter.convertToPCM(smallBlob);
+                    log('❌ Small blob should have failed');
+                } catch (error) {
+                    log('✅ Small blob correctly rejected: ' + error.message);
+                }
+                
+                // Test null blob
+                try {
+                    await converter.convertToPCM(null);
+                    log('❌ Null blob should have failed');
+                } catch (error) {
+                    log('✅ Null blob correctly rejected: ' + error.message);
+                }
+                
+                updateStatus('Blob validation tests passed!', 'success');
+                log('✅ All blob validation tests passed');
+                
+            } catch (error) {
+                updateStatus('Blob validation tests failed!', 'error');
+                log('❌ Blob validation test failed: ' + error.message);
+            }
+        });
+        
+        // Test 2: AudioContext
+        document.getElementById('testAudioContext').addEventListener('click', async () => {
+            log('🎧 Testing AudioContext...');
+            updateStatus('Testing AudioContext...', 'info');
+            
+            try {
+                const converter = new AudioConverter();
+                
+                if (!converter.audioContext) {
+                    throw new Error('AudioContext not available');
+                }
+                
+                log('✅ AudioContext is available');
+                log('📊 Sample rate: ' + converter.audioContext.sampleRate);
+                log('📊 State: ' + converter.audioContext.state);
+                
+                updateStatus('AudioContext test passed!', 'success');
+                
+            } catch (error) {
+                updateStatus('AudioContext test failed!', 'error');
+                log('❌ AudioContext test failed: ' + error.message);
+            }
+        });
+        
+        // Test 3: MediaRecorder
+        document.getElementById('testMediaRecorder').addEventListener('click', async () => {
+            log('📹 Testing MediaRecorder...');
+            updateStatus('Testing MediaRecorder...', 'info');
+            
+            try {
+                // Check supported formats
+                const formats = [
+                    'audio/webm;codecs=opus',
+                    'audio/webm',
+                    'audio/ogg;codecs=opus',
+                    'audio/mp4',
+                    'audio/wav'
+                ];
+                
+                log('📋 Checking supported formats:');
+                formats.forEach(format => {
+                    const supported = MediaRecorder.isTypeSupported(format);
+                    log(`${supported ? '✅' : '❌'} ${format}`);
+                });
+                
+                // Test optimal format
+                const optimalFormat = AudioConverter.getOptimalAudioFormat();
+                log('🎵 Optimal format: ' + optimalFormat);
+                
+                updateStatus('MediaRecorder test passed!', 'success');
+                
+            } catch (error) {
+                updateStatus('MediaRecorder test failed!', 'error');
+                log('❌ MediaRecorder test failed: ' + error.message);
+            }
+        });
+        
+        // Test 4: Real Recording
+        document.getElementById('testRealRecording').addEventListener('click', async () => {
+            log('🎤 Testing real recording...');
+            updateStatus('Testing real recording...', 'info');
+            
+            try {
+                // Request microphone access
+                const stream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                log('✅ Microphone access granted');
+                
+                // Create MediaRecorder
+                const optimalFormat = AudioConverter.getOptimalAudioFormat();
+                const mediaRecorder = new MediaRecorder(stream, {
+                    mimeType: optimalFormat
+                });
+                
+                const chunks = [];
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        chunks.push(event.data);
+                        log('📦 Audio chunk received: ' + event.data.size + ' bytes');
+                    }
+                };
+                
+                mediaRecorder.onstop = async () => {
+                    try {
+                        const audioBlob = new Blob(chunks, { type: optimalFormat });
+                        log('📊 Total audio size: ' + audioBlob.size + ' bytes');
+                        
+                        if (audioBlob.size < 100) {
+                            throw new Error('Audio too small: ' + audioBlob.size + ' bytes');
+                        }
+                        
+                        // Test conversion
+                        const converter = new AudioConverter();
+                        const pcmData = await converter.convertToPCM(audioBlob);
+                        
+                        log('✅ Audio conversion successful: ' + pcmData.byteLength + ' bytes');
+                        updateStatus('Real recording test passed!', 'success');
+                        
+                    } catch (error) {
+                        log('❌ Audio conversion failed: ' + error.message);
+                        updateStatus('Real recording test failed!', 'error');
+                    }
+                };
+                
+                // Record for 2 seconds
+                mediaRecorder.start();
+                log('🎙️ Recording started...');
+                
+                setTimeout(() => {
+                    mediaRecorder.stop();
+                    stream.getTracks().forEach(track => track.stop());
+                    log('🛑 Recording stopped');
+                }, 2000);
+                
+            } catch (error) {
+                updateStatus('Real recording test failed!', 'error');
+                log('❌ Real recording test failed: ' + error.message);
+            }
+        });
+        
+        // Clear log
+        document.getElementById('clearLog').addEventListener('click', () => {
+            logElement.innerHTML = '';
+            updateStatus('Log cleared', 'info');
+        });
+        
+        // Initial log
+        log('🚀 Audio Conversion Fix Test loaded');
+        log('📋 Available tests:');
+        log('  1. Blob Validation - Tests input validation');
+        log('  2. AudioContext - Tests audio context availability');
+        log('  3. MediaRecorder - Tests supported formats');
+        log('  4. Real Recording - Tests actual recording and conversion');
+    </script>
+</body>
+</html> 

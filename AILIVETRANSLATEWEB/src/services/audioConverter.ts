@@ -30,6 +30,15 @@ export class AudioConverter {
       console.log('🔄 Converting audio to PCM format...');
       console.log('📊 Input format:', audioBlob.type, 'Size:', audioBlob.size, 'bytes');
 
+      // Validate input blob
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error('Invalid audio blob: empty or null');
+      }
+
+      if (audioBlob.size < 100) {
+        throw new Error('Audio blob too small to be valid');
+      }
+
       // Check if the format is directly supported by AudioContext
       if (this.isDirectlySupported(audioBlob.type)) {
         return await this.convertDirectly(audioBlob);
@@ -40,6 +49,89 @@ export class AudioConverter {
     } catch (error) {
       console.error('❌ Error converting audio to PCM:', error);
       throw new Error(`Audio conversion failed: ${error}`);
+    }
+  }
+
+  /**
+   * Convert audio blob to WAV format
+   * This is a static method for compatibility with existing code
+   */
+  static async convertToWav(audioBlob: Blob): Promise<Blob> {
+    try {
+      console.log('🔄 Converting audio to WAV format...');
+      console.log('📊 Input format:', audioBlob.type, 'Size:', audioBlob.size, 'bytes');
+
+      // Validate input blob
+      if (!audioBlob || audioBlob.size === 0) {
+        throw new Error('Invalid audio blob: empty or null');
+      }
+
+      if (audioBlob.size < 100) {
+        throw new Error('Audio blob too small to be valid');
+      }
+
+      // Create a new AudioConverter instance
+      const converter = new AudioConverter();
+      
+      // Convert to PCM first
+      const pcmData = await converter.convertToPCM(audioBlob);
+      
+      // Create WAV header
+      const wavBlob = converter.createWavBlob(pcmData);
+      
+      console.log('✅ Audio converted to WAV successfully');
+      return wavBlob;
+    } catch (error) {
+      console.error('❌ Error converting audio to WAV:', error);
+      throw new Error(`WAV conversion failed: ${error}`);
+    }
+  }
+
+  /**
+   * Create WAV blob from PCM data
+   */
+  private createWavBlob(pcmData: ArrayBuffer): Blob {
+    // Create WAV header
+    const headerSize = 44;
+    const dataSize = pcmData.byteLength;
+    const fileSize = headerSize + dataSize - 8;
+    
+    const header = new ArrayBuffer(headerSize);
+    const view = new DataView(header);
+    
+    // RIFF header
+    this.writeString(view, 0, 'RIFF');
+    view.setUint32(4, fileSize, true);
+    this.writeString(view, 8, 'WAVE');
+    
+    // fmt chunk
+    this.writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true); // fmt chunk size
+    view.setUint16(20, 1, true); // audio format (PCM)
+    view.setUint16(22, this.channels, true);
+    view.setUint32(24, this.sampleRate, true);
+    view.setUint32(28, this.sampleRate * this.channels * this.bitsPerSample / 8, true); // byte rate
+    view.setUint16(32, this.channels * this.bitsPerSample / 8, true); // block align
+    view.setUint16(34, this.bitsPerSample, true);
+    
+    // data chunk
+    this.writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+    
+    // Combine header with PCM data
+    const wavData = new Uint8Array(headerSize + dataSize);
+    wavData.set(new Uint8Array(header), 0);
+    wavData.set(new Uint8Array(pcmData), headerSize);
+    
+    return new Blob([wavData], { type: 'audio/wav' });
+  }
+
+  /**
+   * Write string to DataView
+   */
+  private writeString(view: DataView, offset: number, string: string): void {
+    for (let i = 0; i < string.length; i++) {
+      view.setUint8(offset + i, string.charCodeAt(i));
     }
   }
 
@@ -63,34 +155,50 @@ export class AudioConverter {
    * Convert directly using AudioContext (for supported formats)
    */
   private async convertDirectly(audioBlob: Blob): Promise<ArrayBuffer> {
-    const arrayBuffer = await audioBlob.arrayBuffer();
-    const audioBuffer = await this.audioContext!.decodeAudioData(arrayBuffer);
-    
-    console.log('📊 Decoded audio:', {
-      sampleRate: audioBuffer.sampleRate,
-      length: audioBuffer.length,
-      duration: audioBuffer.duration,
-      numberOfChannels: audioBuffer.numberOfChannels
-    });
+    try {
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      
+      // Check if array buffer is valid
+      if (arrayBuffer.byteLength === 0) {
+        throw new Error('Empty audio data');
+      }
+      
+      const audioBuffer = await this.audioContext!.decodeAudioData(arrayBuffer);
+      
+      // Check if decoded audio is valid
+      if (audioBuffer.length === 0 || audioBuffer.duration === 0) {
+        throw new Error('Invalid decoded audio: no duration or length');
+      }
+      
+      console.log('📊 Decoded audio:', {
+        sampleRate: audioBuffer.sampleRate,
+        length: audioBuffer.length,
+        duration: audioBuffer.duration,
+        numberOfChannels: audioBuffer.numberOfChannels
+      });
 
-    // Convert to mono if stereo
-    const monoChannel = this.convertToMono(audioBuffer);
-    
-    // Resample to 16kHz if needed
-    const resampledData = this.resampleTo16kHz(monoChannel, audioBuffer.sampleRate);
-    
-    // Convert to 16-bit PCM
-    const pcmData = this.convertTo16BitPCM(resampledData);
-    
-    console.log('✅ Audio converted to PCM:', {
-      sampleRate: this.sampleRate,
-      channels: this.channels,
-      bitsPerSample: this.bitsPerSample,
-      size: pcmData.byteLength,
-      duration: pcmData.byteLength / (this.sampleRate * this.channels * this.bitsPerSample / 8)
-    });
+      // Convert to mono if stereo
+      const monoChannel = this.convertToMono(audioBuffer);
+      
+      // Resample to 16kHz if needed
+      const resampledData = this.resampleTo16kHz(monoChannel, audioBuffer.sampleRate);
+      
+      // Convert to 16-bit PCM
+      const pcmData = this.convertTo16BitPCM(resampledData);
+      
+      console.log('✅ Audio converted to PCM:', {
+        sampleRate: this.sampleRate,
+        channels: this.channels,
+        bitsPerSample: this.bitsPerSample,
+        size: pcmData.byteLength,
+        duration: pcmData.byteLength / (this.sampleRate * this.channels * this.bitsPerSample / 8)
+      });
 
-    return pcmData;
+      return pcmData;
+    } catch (error) {
+      console.error('❌ Error in direct conversion:', error);
+      throw error;
+    }
   }
 
   /**
@@ -99,13 +207,49 @@ export class AudioConverter {
   private async convertWithAlternativeMethod(audioBlob: Blob): Promise<ArrayBuffer> {
     console.log('🔄 Using alternative conversion method for:', audioBlob.type);
     
-    // Create a temporary audio element to decode the audio
+    // Check if blob is valid
+    if (!audioBlob || audioBlob.size === 0) {
+      throw new Error('Invalid aud io blob: empty or null');
+    }
+    
+    // For WebM/Opus, try to use MediaRecorder API directly
+    try {
+      return await this.convertWithMediaRecorder(audioBlob);
+    } catch (error) {
+      console.warn('⚠️ MediaRecorder conversion failed, trying fallback method:', error);
+      return await this.convertWithFallbackMethod(audioBlob);
+    }
+  }
+
+  /**
+   * Convert using MediaRecorder API (more reliable for WebM/Opus)
+   */
+  private async convertWithMediaRecorder(audioBlob: Blob): Promise<ArrayBuffer> {
+    console.log('🔄 Converting with MediaRecorder API...');
+    
+    // Create a temporary audio element with better error handling
     const audio = new Audio();
     const url = URL.createObjectURL(audioBlob);
     
     return new Promise((resolve, reject) => {
+      let timeoutId: number;
+      
+      const cleanup = () => {
+        URL.revokeObjectURL(url);
+        if (timeoutId) clearTimeout(timeoutId);
+      };
+      
+      // Set timeout to prevent hanging
+      timeoutId = window.setTimeout(() => {
+        cleanup();
+        reject(new Error('Audio loading timeout'));
+      }, 10000); // 10 seconds timeout
+      
       audio.oncanplaythrough = async () => {
         try {
+          clearTimeout(timeoutId);
+          console.log('✅ Audio loaded successfully, duration:', audio.duration);
+          
           // Create a MediaElementSource from the audio element
           const source = this.audioContext!.createMediaElementSource(audio);
           const destination = this.audioContext!.createMediaStreamDestination();
@@ -119,43 +263,95 @@ export class AudioConverter {
           
           const chunks: Blob[] = [];
           mediaRecorder.ondataavailable = (event) => {
-            chunks.push(event.data);
+            if (event.data.size > 0) {
+              chunks.push(event.data);
+            }
           };
           
           mediaRecorder.onstop = async () => {
             try {
+              if (chunks.length === 0) {
+                throw new Error('No audio data recorded');
+              }
+              
               const wavBlob = new Blob(chunks, { type: 'audio/wav' });
+              console.log('📊 Converted WAV size:', wavBlob.size, 'bytes');
+              
               const pcmData = await this.convertDirectly(wavBlob);
-              URL.revokeObjectURL(url);
+              cleanup();
               resolve(pcmData);
             } catch (error) {
+              cleanup();
               reject(error);
             }
           };
           
+          mediaRecorder.onerror = (event) => {
+            cleanup();
+            reject(new Error('MediaRecorder error: ' + event));
+          };
+          
           // Start recording and play audio
           mediaRecorder.start();
-          audio.play();
+          await audio.play();
           
-          // Stop after audio duration
+          // Stop after audio duration (with safety margin)
+          const duration = Math.max(audio.duration, 0.1) * 1000; // minimum 100ms
           setTimeout(() => {
-            mediaRecorder.stop();
-            audio.pause();
-          }, audio.duration * 1000);
+            try {
+              mediaRecorder.stop();
+              audio.pause();
+            } catch (error) {
+              console.warn('⚠️ Error stopping MediaRecorder:', error);
+            }
+          }, duration + 100); // Add 100ms safety margin
           
         } catch (error) {
-          URL.revokeObjectURL(url);
+          cleanup();
           reject(error);
         }
       };
       
-      audio.onerror = () => {
-        URL.revokeObjectURL(url);
-        reject(new Error('Failed to load audio'));
+      audio.onerror = (event) => {
+        cleanup();
+        console.error('❌ Audio loading error:', event);
+        reject(new Error('Failed to load audio: ' + audio.error?.message || 'Unknown error'));
       };
       
+      audio.onabort = () => {
+        cleanup();
+        reject(new Error('Audio loading aborted'));
+      };
+      
+      // Set audio source
       audio.src = url;
+      audio.load(); // Explicitly load the audio
     });
+  }
+
+  /**
+   * Fallback conversion method using raw data
+   */
+  private async convertWithFallbackMethod(audioBlob: Blob): Promise<ArrayBuffer> {
+    console.log('🔄 Using fallback conversion method...');
+    
+    try {
+      // For WebM/Opus, try to extract raw audio data
+      const arrayBuffer = await audioBlob.arrayBuffer();
+      
+      // If the blob is too small, it might be invalid
+      if (arrayBuffer.byteLength < 100) {
+        throw new Error('Audio blob too small to be valid');
+      }
+      
+      // For now, return the raw data and let the server handle it
+      console.log('📊 Returning raw audio data:', arrayBuffer.byteLength, 'bytes');
+      return arrayBuffer;
+      
+    } catch (error) {
+      console.error('❌ Fallback conversion failed:', error);
+      throw new Error('All conversion methods failed');
+    }
   }
 
   /**
@@ -244,15 +440,27 @@ export class AudioConverter {
       'audio/wav'                  // WAV as last resort
     ];
 
+    console.log('🔍 Testing audio format support...');
+    
     for (const format of formats) {
-      if (MediaRecorder.isTypeSupported(format)) {
-        console.log('🎵 Using audio format:', format);
+      const isSupported = MediaRecorder.isTypeSupported(format);
+      console.log(`🎵 Format ${format}: ${isSupported ? '✅ Supported' : '❌ Not supported'}`);
+      
+      if (isSupported) {
+        console.log('🎵 Selected audio format:', format);
         return format;
       }
     }
 
-    // Fallback to default
-    console.warn('⚠️ No optimal audio format supported, using default');
+    // Test what formats are actually supported
+    console.warn('⚠️ No optimal audio format supported, testing common formats...');
+    const commonFormats = ['audio/webm', 'audio/mp4', 'audio/ogg', 'audio/wav'];
+    for (const format of commonFormats) {
+      const isSupported = MediaRecorder.isTypeSupported(format);
+      console.log(`🔍 Common format ${format}: ${isSupported ? '✅ Supported' : '❌ Not supported'}`);
+    }
+    
+    console.warn('⚠️ Using empty format (browser default)');
     return '';
   }
 

@@ -203,6 +203,12 @@ export class StreamingService {
         try {
           console.log('🔄 Converting webm to wav before sending...');
           const { AudioConverter } = await import('./audioConverter');
+          
+          // Check if blob is valid before conversion
+          if (!audioBlob || audioBlob.size < 100) {
+            throw new Error('Audio blob too small or invalid');
+          }
+          
           const wavBlob = await AudioConverter.convertToWav(audioBlob);
           fileName = 'audio.wav';
           fileType = 'audio/wav';
@@ -338,6 +344,12 @@ export class StreamingService {
         try {
           console.log('🔄 Converting webm to wav for local server...');
           const { AudioConverter } = await import('./audioConverter');
+          
+          // Check if blob is valid before conversion
+          if (!audioBlob || audioBlob.size < 100) {
+            throw new Error('Audio blob too small or invalid');
+          }
+          
           processedBlob = await AudioConverter.convertToWav(audioBlob);
           fileName = 'audio.wav';
           fileType = 'audio/wav';

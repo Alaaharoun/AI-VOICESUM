@@ -925,11 +925,16 @@ function startWebSocketServer(server) {
                 });
               };
               
+              // Set initialized to true immediately before starting recognition
+              // This prevents audio data from being queued while Azure starts up
+              initialized = true;
+              console.log(`🔧 [${language}] Set initialized=true before starting recognition`);
+              
               // Start continuous recognition
               recognizer.startContinuousRecognitionAsync(
                 () => {
                   console.log(`✅ [${language}] Continuous recognition started successfully`);
-                  initialized = true;
+                  // initialized is already true from above
                   ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   console.log(`📤 [${language}] Sent ready status to client`);
                   

@@ -3,7 +3,6 @@
   import { useNavigate } from 'react-router-dom';
   import { RenderWebSocketService } from '../services/renderWebSocketService';
   import { AudioConverter } from '../services/audioConverter';
-  import { useAuthStore } from '../stores/authStore';
   import { permissionHelper } from '../utils/permissionHelper';
 
   export const LiveTranslation: React.FC = () => {
@@ -20,11 +19,16 @@
     const [isInitializing, setIsInitializing] = useState(false);
     const [isServerReady, setIsServerReady] = useState(false);
     const [streamingStatus, setStreamingStatus] = useState<'idle' | 'connecting' | 'connected' | 'error'>('idle');
+    const [isInitAcknowledged, setIsInitAcknowledged] = useState(false); // ✅ إضافة متغير تتبع تأكيد init
+    const [wsConnectionStatus, setWsConnectionStatus] = useState(false); // Track WebSocket connection status
+    const streamingMonitorRef = useRef<number | null>(null); // For periodic streaming status monitoring
     
     const renderWebSocketServiceRef = useRef<RenderWebSocketService | null>(null);
+    const streamingServiceRef = useRef<any | null>(null); // For REST API fallback
     const audioStreamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
-    const processorRef = useRef<ScriptProcessorNode | null>(null);
+    const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+    let isUsingWebSocket = true; // Track which service is being used
 
     // Comprehensive language list from the old application
     const languages = [
@@ -79,6 +83,7 @@
         setStreamingStatus('connecting');
         setIsInitializing(true);
         setError(null);
+        setIsInitAcknowledged(false); // ✅ إعادة تعيين حالة التأكيد
         
         // Create new Render WebSocket service instance
         renderWebSocketServiceRef.current = new RenderWebSocketService();
@@ -108,6 +113,7 @@
         );
 
         console.log('✅ Render WebSocket service connected successfully');
+        setWsConnectionStatus(true); // Update connection status
         
         // Wait for server to be ready (check every 100ms for up to 15 seconds)
         let attempts = 0;
@@ -116,6 +122,7 @@
         while (attempts < maxAttempts) {
           if (renderWebSocketServiceRef.current?.isInitializedStatus()) {
             setIsServerReady(true);
+            setIsInitAcknowledged(true); // ✅ تعيين حالة التأكيد عند جاهزية الخادم
             console.log('✅ Server is ready for audio input');
             break;
           }
@@ -151,6 +158,7 @@
         setTranslation('');
         setIsRecording(true);
         setIsProcessing(true);
+        setIsInitAcknowledged(false); // ✅ إعادة تعيين حالة التأكيد
         
         // Check microphone permission first
         console.log('🔍 Checking microphone permission...');
@@ -170,20 +178,115 @@
           }
         }
         
-        // Initialize Render WebSocket service first
-        console.log('🔌 Initializing Render WebSocket service...');
-        await initializeRenderWebSocketService();
+        // Check if we already have a connected WebSocket service
+        if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
+          console.log('✅ WebSocket service already connected, reusing existing connection');
+          isUsingWebSocket = true;
+          setWsConnectionStatus(true); // Ensure UI reflects the connection status
+          
+          // Restart streaming if connection exists but streaming is stopped
+          console.log('🔄 Restarting WebSocket streaming for new recording session...');
+          try {
+            // Use the new restartStreaming method instead of full reconnect
+            await renderWebSocketServiceRef.current.restartStreaming(
+              sourceLanguage,
+              targetLanguage,
+              (transcriptionText: string) => {
+                console.log('📝 Real-time transcription received:', transcriptionText);
+                if (transcriptionText && transcriptionText.trim()) {
+                  setRealTimeTranscription(transcriptionText);
+                  console.log('✅ Transcription updated in UI:', transcriptionText);
+                }
+              },
+              (translationText: string) => {
+                console.log('🌐 Real-time translation received:', translationText);
+                if (translationText && translationText.trim()) {
+                  setRealTimeTranslation(translationText);
+                  console.log('✅ Translation updated in UI:', translationText);
+                }
+              }
+            );
+            console.log('✅ WebSocket streaming restarted successfully');
+            setStreamingStatus('connected');
+            setIsServerReady(true); // Mark server as ready since we're reusing connection
+            setIsInitAcknowledged(true); // Mark init as acknowledged
+            
+            // Double-check streaming status after a brief delay
+            setTimeout(() => {
+              if (renderWebSocketServiceRef.current) {
+                const wsService = renderWebSocketServiceRef.current;
+                const detailedStatus = wsService.getDetailedStatus();
+                console.log('🔍 Post-restart detailed status check:', detailedStatus);
+                
+                // Force ensure streaming is active if it's not
+                if (!detailedStatus.isStreaming) {
+                  console.log('⚠️ Streaming still not active after restart - forcing fix...');
+                  const fixed = wsService.forceEnsureStreaming();
+                  if (fixed) {
+                    console.log('✅ Streaming force-fixed successfully');
+                  } else {
+                    console.error('❌ Failed to force-fix streaming');
+                  }
+                } else {
+                  console.log('✅ Streaming is properly active after restart');
+                }
+              }
+            }, 1000);
+          } catch (error) {
+            console.warn('⚠️ Failed to restart streaming, will try to reconnect:', error);
+            // If restart fails, reinitialize the connection
+            await initializeRenderWebSocketService();
+          }
+        } else {
+          // Initialize Render WebSocket service if not connected
+          console.log('🔌 Initializing Render WebSocket service...');
+          await initializeRenderWebSocketService();
+        }
         
         // Check if Render WebSocket service is connected and initialized
         if (!renderWebSocketServiceRef.current || !renderWebSocketServiceRef.current.isConnectedStatus()) {
-          console.log('⚠️ Render WebSocket service not connected, stopping recording');
-          setIsRecording(false);
-          setIsProcessing(false);
-          setError('Failed to connect to Render WebSocket service. Please try again.');
-          return;
+          console.log('⚠️ Render WebSocket service not connected, trying fallback to REST API...');
+          
+          // Try fallback to REST API
+          try {
+            console.log('🔄 Attempting to switch to REST API fallback...');
+            const { StreamingService } = await import('../services/streamingService');
+            
+            if (!streamingServiceRef.current) {
+              streamingServiceRef.current = new StreamingService();
+            }
+            
+            await streamingServiceRef.current.connect(
+              sourceLanguage,
+              targetLanguage, 
+              'faster-whisper', // Use faster-whisper for REST API
+              (text: string) => {
+                setTranscription(text);
+                setRealTimeTranscription(text);
+              },
+              (text: string) => {
+                setTranslation(text);
+                setRealTimeTranslation(text);
+              }
+            );
+            
+            console.log('✅ Successfully connected to REST API fallback');
+            setError('Connected via REST API (WebSocket unavailable)');
+            
+            // Continue with REST API recording setup
+            isUsingWebSocket = false;
+            
+          } catch (fallbackError) {
+            console.error('❌ Both WebSocket and REST API failed:', fallbackError);
+            setIsRecording(false);
+            setIsProcessing(false);
+            setError('Failed to connect to both WebSocket and REST API services. Please try again later.');
+            return;
+          }
         }
         
-        if (!renderWebSocketServiceRef.current.isInitializedStatus()) {
+        // Only check WebSocket initialization if we're using WebSocket
+        if (isUsingWebSocket && renderWebSocketServiceRef.current && !renderWebSocketServiceRef.current.isInitializedStatus()) {
           console.log('⚠️ Render WebSocket service not initialized, stopping recording');
           setIsRecording(false);
           setIsProcessing(false);
@@ -241,70 +344,116 @@
         // Store stream reference for stopping later
         audioStreamRef.current = stream;
         
-        // Use AudioContext to capture raw PCM data instead of MediaRecorder
-        console.log('🎵 Using AudioContext for raw PCM capture');
+        // Use MediaRecorder for modern audio capture
+        console.log('🎵 Using MediaRecorder for audio capture');
         
         const audioContext = new AudioContext({
           sampleRate: 16000,
           latencyHint: 'interactive'
         });
         
-        const source = audioContext.createMediaStreamSource(stream);
-        
-        // Add gain node to boost audio level
-        const gainNode = audioContext.createGain();
-        gainNode.gain.value = 3.0; // Boost audio by 3x
-        console.log('🔊 Audio gain set to 3.0x for better volume');
-        
-        // Use maximum allowed buffer size for optimal Azure compatibility (16384 samples = ~1 second)
-        const bufferSize = 16384; // Maximum allowed by ScriptProcessorNode
-        const processor = audioContext.createScriptProcessor(bufferSize, 1, 1);
+        // Use MediaRecorder for modern audio capture (replaces deprecated ScriptProcessorNode)
+        const mediaRecorder = new MediaRecorder(stream, {
+          mimeType: 'audio/webm;codecs=opus'
+        });
         
         // Store references for cleanup
         audioContextRef.current = audioContext;
-        processorRef.current = processor;
+        mediaRecorderRef.current = mediaRecorder;
         
-        processor.onaudioprocess = (event) => {
-          const inputBuffer = event.inputBuffer;
-          const inputData = inputBuffer.getChannelData(0);
-          
-          // Convert Float32Array to Int16Array (PCM 16-bit)
-          const pcmData = new Int16Array(inputData.length);
-          for (let i = 0; i < inputData.length; i++) {
-            pcmData[i] = Math.max(-32768, Math.min(32767, inputData[i] * 32768));
-          }
-          
-          // Create blob from PCM data
-          const audioBlob = new Blob([pcmData], { type: 'audio/pcm' });
-          
-          // Analyze audio level for debugging
-          const audioLevel = Math.sqrt(pcmData.reduce((sum, sample) => sum + sample * sample, 0) / pcmData.length);
-          console.log('📦 Raw PCM chunk received:', pcmData.length * 2, 'bytes, Level:', audioLevel.toFixed(2), 'Duration:', (pcmData.length / 16000).toFixed(2), 's');
-          
-                    // Only send if audio level is sufficient and duration is adequate (~1 second)
-          if (audioLevel > 30 && pcmData.length >= 8000) { // At least 0.5 seconds
-            console.log('✅ Audio level and duration sufficient, sending to server');
+        const chunks: Blob[] = [];
+        
+        mediaRecorder.ondataavailable = (event) => {
+          if (event.data.size > 0) {
+            chunks.push(event.data);
             
-            // Send audio chunk to Render WebSocket service
-            if (renderWebSocketServiceRef.current && renderWebSocketServiceRef.current.isConnectedStatus()) {
-              renderWebSocketServiceRef.current.sendAudioChunk(audioBlob);
+            // Analyze audio level for debugging (approximate)
+            const audioLevel = Math.sqrt(event.data.size / 100); // Rough estimate
+            console.log('📦 Audio chunk received:', event.data.size, 'bytes, Level:', audioLevel.toFixed(2));
+            
+            // تحليل مفصل لحالة الاتصال قبل إرسال الصوت
+            const wsService = renderWebSocketServiceRef.current;
+            const serviceExists = !!wsService;
+            const isConnectedToWS = serviceExists ? wsService.isConnectedStatus() : false;
+            const recordingState = isRecording;
+            
+            console.log('🔍 Detailed status check before sending audio:', {
+              serviceExists,
+              isConnectedToWS,
+              recordingState,
+              chunkSize: event.data.size,
+              chunkType: event.data.type,
+              timestamp: new Date().toISOString()
+            });
+            
+            // إرسال الصوت بناءً على نوع الخدمة المستخدمة
+            if (isUsingWebSocket) {
+              // إرسال عبر WebSocket
+              if (serviceExists && isConnectedToWS && wsService) {
+                console.log('📤 Sending audio chunk to WebSocket service');
+                try {
+                  wsService.sendAudioChunk(event.data);
+                  console.log('✅ Audio chunk sent successfully via WebSocket');
+                } catch (error) {
+                  console.error('❌ Error sending audio chunk via WebSocket:', error);
+                }
+              } else {
+                console.warn('⚠️ Cannot send audio chunk via WebSocket:', {
+                  reason: !serviceExists ? 'Service not exists' : 
+                          !isConnectedToWS ? 'WebSocket not connected' : 
+                          !recordingState ? 'Recording stopped' : 'Unknown',
+                  serviceExists,
+                  isConnectedToWS,
+                  recordingState
+                });
+              }
+            } else {
+              // إرسال عبر REST API
+              if (streamingServiceRef.current && recordingState) {
+                console.log('📤 Sending audio chunk to REST API service');
+                try {
+                  streamingServiceRef.current.sendAudioChunk(event.data);
+                  console.log('✅ Audio chunk sent successfully via REST API');
+                } catch (error) {
+                  console.error('❌ Error sending audio chunk via REST API:', error);
+                }
+              } else {
+                console.warn('⚠️ Cannot send audio chunk via REST API:', {
+                  streamingServiceExists: !!streamingServiceRef.current,
+                  recordingState
+                });
+              }
             }
-          } else {
-            console.log('⚠️ Audio level too low or duration too short, skipping chunk');
           }
         };
         
-        // Connect the audio processing chain with gain boost
-        source.connect(gainNode);
-        gainNode.connect(processor);
-        processor.connect(audioContext.destination);
+        mediaRecorder.onstop = () => {
+          console.log('🛑 MediaRecorder stopped');
+        };
+        
+        // ✅ بدء التسجيل مباشرة مع تحسين التعامل مع init
+        console.log('🎙️ Starting MediaRecorder...');
+        
+        // Start recording with 1-second intervals
+        mediaRecorder.start(1000);
         
         // Set recording state to true to prevent auto-stop
         setIsRecording(true);
         setIsProcessing(true);
         setStreamingStatus('connected');
         
-        console.log('✅ Raw PCM recording started successfully');
+        console.log('✅ MediaRecorder recording started successfully');
+        
+        // Start monitoring streaming status during recording
+        startStreamingMonitor();
+        
+        // تحسين حالة التأكيد في الخلفية
+        setTimeout(() => {
+          if (!isInitAcknowledged && renderWebSocketServiceRef.current?.isConnectedStatus()) {
+            console.log('🔄 Re-sending init message after recording started...');
+            // يمكن إعادة إرسال init message هنا إذا لزم الأمر
+          }
+        }, 2000);
         
       } catch (error) {
         console.error('❌ Error starting recording:', error);
@@ -319,15 +468,19 @@
       try {
         console.log('🛑 Stopping recording...');
         
-        // Immediately update UI state
+        // Immediately update UI state to prevent further audio processing
         setIsRecording(false);
         setIsProcessing(false);
         setStreamingStatus('idle');
         
-        // Stop AudioContext processing
-        if (processorRef.current) {
-          processorRef.current.disconnect();
-          console.log('✅ Audio processor disconnected');
+        // Stop MediaRecorder first
+        if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+          try {
+            mediaRecorderRef.current.stop();
+            console.log('✅ MediaRecorder stopped');
+          } catch (error) {
+            console.warn('⚠️ Error stopping MediaRecorder:', error);
+          }
         }
         
         if (audioContextRef.current) {
@@ -351,13 +504,23 @@
         // Clear references
         audioStreamRef.current = null;
         audioContextRef.current = null;
-        processorRef.current = null;
+        mediaRecorderRef.current = null;
         
-        // Disconnect Render WebSocket service
-        if (renderWebSocketServiceRef.current) {
-          renderWebSocketServiceRef.current.disconnect();
-          console.log('🔌 Render WebSocket service disconnected');
+        // Stop monitoring streaming status
+        stopStreamingMonitor();
+        
+        // Stop streaming but keep connection alive for next recording session
+        if (isUsingWebSocket && renderWebSocketServiceRef.current) {
+          renderWebSocketServiceRef.current.stopStreaming();
+          console.log('🛑 WebSocket streaming stopped (connection kept alive)');
         }
+        
+        if (!isUsingWebSocket && streamingServiceRef.current) {
+          streamingServiceRef.current.stopStreaming();
+          console.log('🛑 REST API streaming stopped (connection kept alive)');
+        }
+        
+        // Keep service flags as they are for next recording session
         
         console.log('✅ Recording stopped successfully');
         
@@ -369,7 +532,7 @@
         setStreamingStatus('idle');
         audioStreamRef.current = null;
         audioContextRef.current = null;
-        processorRef.current = null;
+        mediaRecorderRef.current = null;
         
         // Note: Stream cleanup is handled in the main try block above
       }
@@ -400,14 +563,113 @@
       }
     };
 
+    // Manual disconnect function
+    const disconnectServices = () => {
+      console.log('🔌 Manually disconnecting all services...');
+      
+      // Stop recording first if active
+      if (isRecording) {
+        stopRecording();
+      }
+      
+      // Disconnect WebSocket service
+      if (renderWebSocketServiceRef.current) {
+        renderWebSocketServiceRef.current.disconnect();
+        renderWebSocketServiceRef.current = null;
+        console.log('🔌 WebSocket service manually disconnected');
+      }
+      
+      // Update connection status
+      setWsConnectionStatus(false);
+      
+      // Disconnect REST API service
+      if (streamingServiceRef.current) {
+        streamingServiceRef.current.disconnect();
+        streamingServiceRef.current = null;
+        console.log('🔌 REST API service manually disconnected');
+      }
+      
+      // Reset service flags
+      isUsingWebSocket = true;
+      
+      // Update UI state
+      setStreamingStatus('idle');
+      setIsServerReady(false);
+      setError(null);
+      
+      console.log('✅ All services manually disconnected');
+    };
+
+    // Start monitoring streaming status during recording
+    const startStreamingMonitor = () => {
+      if (streamingMonitorRef.current) {
+        clearInterval(streamingMonitorRef.current);
+      }
+      
+      console.log('🔍 Starting streaming status monitor...');
+      streamingMonitorRef.current = window.setInterval(() => {
+        if (isRecording && renderWebSocketServiceRef.current) {
+          const status = renderWebSocketServiceRef.current.getDetailedStatus();
+          
+          // Only log if there's an issue
+          if (status.isConnected && !status.isStreaming) {
+            console.warn('⚠️ Monitor detected: WebSocket connected but streaming stopped');
+            console.log('🔧 Monitor auto-fixing streaming...');
+            
+            const fixed = renderWebSocketServiceRef.current.forceEnsureStreaming();
+            if (fixed) {
+              console.log('✅ Monitor successfully fixed streaming');
+            } else {
+              console.error('❌ Monitor failed to fix streaming');
+            }
+          }
+        }
+      }, 5000); // Check every 5 seconds during recording
+    };
+
+    // Stop monitoring streaming status
+    const stopStreamingMonitor = () => {
+      if (streamingMonitorRef.current) {
+        clearInterval(streamingMonitorRef.current);
+        streamingMonitorRef.current = null;
+        console.log('🛑 Streaming status monitor stopped');
+      }
+    };
 
 
-    // Cleanup on unmount
+
+    // Cleanup on unmount (when leaving the page)
     useEffect(() => {
       return () => {
+        console.log('🏠 Component unmounting - disconnecting all services...');
+        
+        // Disconnect WebSocket service when leaving the page
         if (renderWebSocketServiceRef.current) {
           renderWebSocketServiceRef.current.disconnect();
+          console.log('🔌 WebSocket service disconnected (page unmount)');
         }
+        
+        // Update connection status (though component is unmounting)
+        setWsConnectionStatus(false);
+        
+        // Disconnect REST API service when leaving the page
+        if (streamingServiceRef.current) {
+          streamingServiceRef.current.disconnect();
+          console.log('🔌 REST API service disconnected (page unmount)');
+        }
+        
+        // Stop monitoring if active
+        if (streamingMonitorRef.current) {
+          clearInterval(streamingMonitorRef.current);
+          streamingMonitorRef.current = null;
+        }
+        
+        // Clear all refs
+        renderWebSocketServiceRef.current = null;
+        streamingServiceRef.current = null;
+        audioStreamRef.current = null;
+        audioContextRef.current = null;
+        mediaRecorderRef.current = null;
       };
     }, []);
 
@@ -492,34 +754,95 @@
               </div>
             </div>
 
-                      {/* Render WebSocket Status */}
+                      {/* WebSocket Status */}
             <div className="mb-6">
-              <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+              <div className={`border rounded-lg p-4 ${
+                wsConnectionStatus 
+                  ? 'bg-green-50 border-green-200' 
+                  : 'bg-gray-50 border-gray-200'
+              }`}>
                 <div className="flex items-center justify-between">
                   <div className="flex items-center">
-                    <div className="w-3 h-3 bg-green-500 rounded-full mr-3"></div>
+                    <div className={`w-3 h-3 rounded-full mr-3 ${
+                      wsConnectionStatus 
+                        ? 'bg-green-500' 
+                        : 'bg-gray-400'
+                    }`}></div>
                     <div>
-                      <h3 className="text-sm font-medium text-green-900">Render WebSocket Server</h3>
-                      <p className="text-xs text-green-700">Connected to ai-voicesum.onrender.com</p>
+                      <h3 className={`text-sm font-medium ${
+                        wsConnectionStatus 
+                          ? 'text-green-900' 
+                          : 'text-gray-900'
+                      }`}>
+                        WebSocket Server
+                      </h3>
+                      <p className={`text-xs ${
+                        wsConnectionStatus 
+                          ? 'text-green-700' 
+                          : 'text-gray-600'
+                      }`}>
+                        {wsConnectionStatus 
+                          ? 'Connected to ai-voicesum.onrender.com' 
+                          : 'Not connected - Ready to connect'}
+                      </p>
                     </div>
                   </div>
-                  <button
-                    onClick={async () => {
-                      try {
-                        const testResult = await renderWebSocketServiceRef.current?.testConnection();
-                        if (testResult) {
-                          alert('✅ Render WebSocket connection test successful!');
-                        } else {
-                          alert('❌ Render WebSocket connection test failed. Check your server.');
+                  <div className="flex space-x-2">
+                    <button
+                      onClick={async () => {
+                        try {
+                          const testResult = await renderWebSocketServiceRef.current?.testConnection();
+                          if (testResult) {
+                            alert('✅ Render WebSocket connection test successful!');
+                          } else {
+                            alert('❌ Render WebSocket connection test failed. Check your server.');
+                          }
+                        } catch (error) {
+                          alert(`❌ Test failed: ${error}`);
                         }
-                      } catch (error) {
-                        alert(`❌ Test failed: ${error}`);
-                      }
-                    }}
-                    className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600"
-                  >
-                    Test Connection
-                  </button>
+                      }}
+                      className="px-3 py-1 bg-green-500 text-white text-xs rounded hover:bg-green-600"
+                    >
+                      Test Connection
+                    </button>
+                    
+                    <button
+                      onClick={() => {
+                        if (renderWebSocketServiceRef.current) {
+                          const status = renderWebSocketServiceRef.current.getDetailedStatus();
+                          console.log('🔍 Current detailed status:', status);
+                          
+                          if (!status.isStreaming && status.isConnected) {
+                            console.log('🔧 Attempting manual force fix...');
+                            const fixed = renderWebSocketServiceRef.current.forceEnsureStreaming();
+                            if (fixed) {
+                              alert('✅ Streaming force-fixed successfully!');
+                            } else {
+                              alert('❌ Failed to force-fix streaming');
+                            }
+                          } else if (status.isStreaming) {
+                            alert('✅ Streaming is already active!');
+                          } else {
+                            alert('❌ WebSocket not connected - cannot fix streaming');
+                          }
+                        } else {
+                          alert('❌ No WebSocket service available');
+                        }
+                      }}
+                      className="px-3 py-1 bg-orange-500 text-white text-xs rounded hover:bg-orange-600"
+                      title="Check and fix streaming status"
+                    >
+                      Fix Stream
+                    </button>
+                    
+                    <button
+                      onClick={disconnectServices}
+                      className="px-3 py-1 bg-red-500 text-white text-xs rounded hover:bg-red-600"
+                      title="Disconnect all services"
+                    >
+                      Disconnect
+                    </button>
+                  </div>
                 </div>
               </div>
             </div>

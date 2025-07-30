@@ -1,6 +1,5 @@
 // Render WebSocket Service for Real-time Transcription and Translation
 import { getServerConfig } from '../config/servers';
-import { AudioConverter } from './audioConverter';
 
 export class RenderWebSocketService {
   private ws: WebSocket | null = null;
@@ -18,11 +17,11 @@ export class RenderWebSocketService {
   private reconnectTimeout: number | null = null;
   private pingInterval: number | null = null;
   private pongTimeout: number | null = null;
-  private lastPongTime = 0;
   private connectionTimeout: number | null = null;
   private isReconnecting = false;
   private shouldReconnect = true;
-  private audioConverter: AudioConverter;
+  private audioQueue: Blob[] = []; // Queue for audio chunks before initialization
+  private isInitMessageSent = false; // Track if init message has been sent
 
   constructor() {
     this.isConnected = false;
@@ -30,7 +29,8 @@ export class RenderWebSocketService {
     this.isInitialized = false;
     this.currentTranscription = '';
     this.currentTranslation = '';
-    this.audioConverter = new AudioConverter();
+    this.audioQueue = [];
+    this.isInitMessageSent = false;
   }
 
   async connect(
@@ -41,6 +41,7 @@ export class RenderWebSocketService {
   ) {
     try {
       console.log('🔧 Initializing Render WebSocket service...');
+      console.log('🔧 Connect called with sourceLanguage:', sourceLanguage, 'targetLanguage:', targetLanguage);
       
       this.onTranscriptionUpdate = onTranscriptionUpdate;
       this.onTranslationUpdate = onTranslationUpdate;
@@ -49,7 +50,9 @@ export class RenderWebSocketService {
       this.sourceLanguage = sourceLanguage;
       this.targetLanguage = targetLanguage;
       this.isInitialized = false;
+      this.isInitMessageSent = false;
       this.shouldReconnect = true;
+      this.audioQueue = []; // Clear audio queue
       
       // Get server configuration
       const serverConfig = getServerConfig('azure', true);
@@ -74,6 +77,7 @@ export class RenderWebSocketService {
       console.log('✅ Render WebSocket service connected successfully');
       this.isConnected = true;
       this.isStreaming = true;
+      console.log('🔧 Set isStreaming to true');
       this.isInitialized = false; // Will be set to true when server sends "Ready for audio input"
       
     } catch (error) {
@@ -132,35 +136,19 @@ export class RenderWebSocketService {
       // Start ping/pong mechanism
       this.startPingPong();
       
-      // Send detailed initialization message like the old app
-      const initMessage = {
-        type: 'init',
-        language: this.sourceLanguage === 'auto' ? null : this.sourceLanguage,
-        targetLanguage: this.targetLanguage,
-        clientSideTranslation: true,
-        realTimeMode: true,
-        autoDetection: this.sourceLanguage === 'auto',
-        audioConfig: {
-          sampleRate: 16000,
-          channels: 1,
-          bitsPerSample: 16,
-          encoding: 'pcm_s16le'
-        }
-      };
+      // Send init message immediately after connection
+      console.log('🔄 Connection established, sending init message...');
+      console.log('📊 WebSocket state before sending init:', this.ws?.readyState);
+      this.sendInitMessage();
       
-      console.log('📤 Sending init message:', JSON.stringify(initMessage, null, 2));
-      if (this.ws) {
-        this.ws.send(JSON.stringify(initMessage));
-      }
-      
-              // Set initialization timeout - if server doesn't respond within 8 seconds, assume it's ready
-        // Longer timeout for 3-second chunks to ensure stable connection
-        setTimeout(() => {
+      // Set initialization timeout - if server doesn't respond within 3 seconds, assume it's ready
+              setTimeout(() => {
           if (!this.isInitialized && this.isConnected) {
             console.log('⏰ Initialization timeout - assuming server is ready for audio input');
             this.isInitialized = true;
+            this.processAudioQueue(); // Process any queued audio
           }
-        }, 8000);
+        }, 3000); // Reduced timeout to 3 seconds for faster response
       
       onConnect?.();
     };
@@ -168,7 +156,13 @@ export class RenderWebSocketService {
     this.ws.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
-        console.log('📨 Received message:', data);
+        console.log('📨 WebSocket message received:', {
+          type: data.type,
+          hasText: !!data.text,
+          hasMessage: !!data.message,
+          timestamp: Date.now(),
+          fullData: data
+        });
         
         // Reset pong timeout on any message
         this.resetPongTimeout();
@@ -192,16 +186,30 @@ export class RenderWebSocketService {
         } else if (data.type === 'status') {
           console.log('📊 Server status:', data.message);
           // Check if server is ready for audio input
-          if (data.message === 'Ready for audio input' || data.message === 'ready' || data.message === 'initialized') {
+          if (data.message === 'Ready for audio input' || data.message === 'ready' || data.message === 'initialized' || data.message === 'Server ready') {
             this.isInitialized = true;
             console.log('✅ Server initialization completed, ready for audio input');
+            this.processAudioQueue(); // Process any queued audio
           }
         } else if (data.type === 'ready') {
           console.log('✅ Server ready message received');
           this.isInitialized = true;
+          this.processAudioQueue(); // Process any queued audio
         } else if (data.type === 'initialized') {
           console.log('✅ Server initialized message received');
           this.isInitialized = true;
+          this.processAudioQueue(); // Process any queued audio
+        } else if (data.type === 'init_ack') {
+          console.log('✅ Server init acknowledgment received');
+          this.isInitialized = true;
+          this.processAudioQueue(); // Process any queued audio
+        } else if (data.type === 'pong') {
+          // Consider pong as a sign that server is ready
+          console.log('🏓 Pong received - considering server ready for audio');
+          if (!this.isInitialized) {
+            this.isInitialized = true;
+            console.log('✅ Server considered ready after pong');
+          }
         } else if (data.type === 'error') {
           console.error('❌ Server error:', data.message);
           // Don't reset isInitialized for quota exceeded errors
@@ -223,8 +231,11 @@ export class RenderWebSocketService {
           if (data.audioStats) {
             console.log('📊 Audio stats:', data.audioStats);
           }
+        } else if (data.type === 'ping') {
+          // Server sent ping, respond with pong
+          console.log('🏓 Ping received from server, sending pong');
+          this.sendMessage({ type: 'pong' });
         } else if (data.type === 'pong') {
-          this.lastPongTime = Date.now();
           console.log('🏓 Pong received');
           // Clear pong timeout since we received the response
           if (this.pongTimeout) {
@@ -243,6 +254,7 @@ export class RenderWebSocketService {
       console.log('🔌 WebSocket connection closed:', event.code, event.reason);
       this.isConnected = false;
       this.isInitialized = false;
+      this.isInitMessageSent = false;
       this.stopPingPong();
       
       // Attempt to reconnect if not manually closed and should reconnect
@@ -255,6 +267,7 @@ export class RenderWebSocketService {
       console.error('❌ WebSocket error:', error);
       this.isConnected = false;
       this.isInitialized = false;
+      this.isInitMessageSent = false;
       onError?.(new Error('WebSocket connection failed'));
     };
   }
@@ -332,16 +345,63 @@ export class RenderWebSocketService {
   }
 
   private sendMessage(message: any) {
+    console.log('🔄 sendMessage called with:', {
+      type: message.type,
+      hasData: !!message.data,
+      dataLength: message.data ? message.data.length : 0,
+      wsExists: !!this.ws,
+      wsState: this.ws?.readyState
+    });
+    
     if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-      this.ws.send(JSON.stringify(message));
-      console.log('📤 Sent message:', message);
+      try {
+        const messageStr = JSON.stringify(message);
+        console.log('🔄 Sending message via WebSocket, JSON length:', messageStr.length);
+        
+        this.ws.send(messageStr);
+        
+        console.log('✅ Message sent successfully via WebSocket:', {
+          type: message.type,
+          messageLength: messageStr.length,
+          timestamp: Date.now()
+        });
+        
+        // For audio messages, don't log the full data to avoid console spam
+        if (message.type === 'audio') {
+          console.log('📤 Audio message details:', {
+            type: message.type,
+            format: message.format,
+            dataLength: message.data?.length,
+            size: message.size
+          });
+        } else {
+          console.log('📤 Non-audio message sent:', message);
+        }
+        
+      } catch (error) {
+        console.error('❌ Error sending message via WebSocket:', error);
+      }
     } else {
-      console.warn('⚠️ WebSocket not ready, cannot send message');
+      console.warn('⚠️ WebSocket not ready, cannot send message:', {
+        wsExists: !!this.ws,
+        wsState: this.ws?.readyState,
+        messageType: message.type,
+        stateMapping: 'CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3'
+      });
     }
   }
 
   private async sendInitMessage() {
     try {
+      if (this.isInitMessageSent) {
+        console.log('⚠️ Init message already sent, skipping...');
+        return;
+      }
+
+      console.log('📤 Preparing to send init message...');
+      console.log('📊 WebSocket state:', this.ws?.readyState);
+      console.log('📊 Connection status:', this.isConnected);
+
       console.log('📤 Sending init message:', {
         type: 'init',
         language: this.sourceLanguage,
@@ -357,30 +417,39 @@ export class RenderWebSocketService {
         }
       });
 
-      this.sendMessage({
+      const initMessage = {
         type: 'init',
-        language: this.sourceLanguage,
+        language: this.sourceLanguage === 'auto' ? null : this.sourceLanguage,
         targetLanguage: this.targetLanguage,
         clientSideTranslation: true,
         realTimeMode: true,
-        autoDetection: true,
+        autoDetection: this.sourceLanguage === 'auto',
         audioConfig: {
           sampleRate: 16000,
           channels: 1,
           bitsPerSample: 16,
           encoding: 'pcm_s16le'
         }
-      });
+      };
 
-      // Test audio conversion
-      console.log('🧪 Testing audio conversion...');
-      const testBlob = new Blob([new ArrayBuffer(1024)], { type: 'audio/webm;codecs=opus' });
-      try {
-        const pcmData = await this.audioConverter.convertToPCM(testBlob);
-        console.log('✅ Audio conversion test passed:', pcmData.byteLength, 'bytes');
-      } catch (error) {
-        console.warn('⚠️ Audio conversion test failed:', error);
-      }
+      this.sendMessage(initMessage);
+      this.isInitMessageSent = true;
+      console.log('✅ Init message sent successfully');
+      console.log('📤 Sent init message to server:', {
+        type: 'init',
+        language: this.sourceLanguage,
+        targetLanguage: this.targetLanguage,
+        clientSideTranslation: true,
+        realTimeMode: true,
+        autoDetection: this.sourceLanguage === 'auto'
+      });
+      
+      // Add a small delay to ensure the message is sent
+      await new Promise(resolve => setTimeout(resolve, 100));
+      console.log('⏳ Init message sent, waiting for server response...');
+
+      // Audio conversion will be tested with real audio data
+      console.log('✅ Audio conversion ready for real audio data');
 
     } catch (error) {
       console.error('❌ Error sending init message:', error);
@@ -388,48 +457,174 @@ export class RenderWebSocketService {
   }
 
   sendAudioChunk(audioChunk: Blob) {
-    if (!this.isStreaming || !this.isConnected) {
-      console.warn('⚠️ Streaming not active, ignoring audio chunk');
-      return;
+    console.log('🔍 Audio chunk status check:', {
+      isStreaming: this.isStreaming,
+      isConnected: this.isConnected,
+      wsExists: !!this.ws,
+      wsReadyState: this.ws?.readyState,
+      wsOpen: this.ws?.readyState === WebSocket.OPEN,
+      isInitMessageSent: this.isInitMessageSent,
+      isInitialized: this.isInitialized,
+      audioChunkSize: audioChunk.size,
+      audioChunkType: audioChunk.type
+    });
+    
+    // تحليل مفصل لسبب رفض إرسال الصوت
+    const failureReasons: string[] = [];
+    
+    if (!this.isStreaming) failureReasons.push('isStreaming = false');
+    if (!this.isConnected) failureReasons.push('isConnected = false');
+    if (!this.ws) failureReasons.push('WebSocket is null');
+    if (this.ws && this.ws.readyState !== WebSocket.OPEN) {
+      failureReasons.push(`WebSocket not ready (state: ${this.ws.readyState})`);
     }
-
-    // Wait for initialization to complete before sending audio
-    if (!this.isInitialized) {
-      console.warn('⚠️ Waiting for initialization to complete before sending audio');
-      // Store the chunk temporarily and send it later with longer timeout
-      setTimeout(() => {
-        if (this.isInitialized) {
-          console.log('📤 Sending delayed audio chunk after initialization');
+    
+    if (failureReasons.length > 0) {
+      console.warn('⚠️ Cannot send audio chunk - Reasons:', failureReasons);
+      console.warn('📊 WebSocket States: CONNECTING=0, OPEN=1, CLOSING=2, CLOSED=3');
+      
+      // Special case: if WebSocket is connected but streaming is stopped, try to restart streaming
+      if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN && !this.isStreaming) {
+        console.log('🔄 WebSocket connected but streaming stopped - attempting FORCE auto-restart...');
+        console.log('📊 Before auto-restart:', {
+          isStreaming: this.isStreaming,
+          isConnected: this.isConnected,
+          wsReadyState: this.ws.readyState,
+          isInitMessageSent: this.isInitMessageSent,
+          isInitialized: this.isInitialized
+        });
+        
+        try {
+          // FORCE streaming to true
+          this.isStreaming = true;
+          console.log('🔧 FORCED streaming flag to TRUE');
+          
+          // Clear any lingering state
+          this.audioQueue = [];
+          
+          // Always re-send init message for safety
+          console.log('📤 Re-sending init message for auto-restart...');
+          this.isInitMessageSent = false; // Force re-send
+          this.sendInitMessage();
+          
+          console.log('📊 After auto-restart setup:', {
+            isStreaming: this.isStreaming,
+            isInitMessageSent: this.isInitMessageSent
+          });
+          
+          // Try to send the audio chunk now
+          console.log('📤 Retrying audio chunk after FORCE auto-restart...');
           this.sendAudioData(audioChunk);
-        } else {
-          console.warn('⚠️ Initialization timeout, sending audio anyway');
-          this.sendAudioData(audioChunk);
+          
+          console.log('✅ FORCE auto-restart completed successfully');
+          return;
+        } catch (error) {
+          console.error('❌ FORCE auto-restart failed:', error);
+          this.isStreaming = false;
         }
-      }, 3000); // Wait 3 seconds for initialization
+      }
+      
       return;
     }
 
-    // Send audio data directly without complex conversion
+    console.log('✅ All checks passed, proceeding to send audio chunk');
+
+    // Send init message if not sent yet
+    if (!this.isInitMessageSent && this.isConnected) {
+      console.log('🔄 Sending init message before audio chunk...');
+      this.sendInitMessage();
+    }
+
+    // Send audio data directly - more permissive approach
+    console.log('📤 Sending audio chunk directly');
     this.sendAudioData(audioChunk);
+  }
+
+  private processAudioQueue() {
+    if (this.audioQueue.length === 0) {
+      console.log('📦 Audio queue is empty');
+      return;
+    }
+
+    console.log('📦 Processing audio queue with', this.audioQueue.length, 'chunks');
+    
+    // Process all queued audio chunks
+    while (this.audioQueue.length > 0) {
+      const chunk = this.audioQueue.shift();
+      if (chunk) {
+        console.log('📤 Sending queued audio chunk');
+        this.sendAudioData(chunk);
+      }
+    }
+    
+    console.log('✅ Audio queue processed');
   }
 
   private async sendAudioData(audioChunk: Blob) {
     try {
-      console.log('📤 Sending audio chunk (raw):', audioChunk.size, 'bytes, format:', audioChunk.type);
+      console.log('📤 sendAudioData called with chunk:', audioChunk.size, 'bytes, format:', audioChunk.type);
+      
+      // Last-minute check before sending
+      if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        console.warn('⚠️ WebSocket not ready in sendAudioData, skipping audio chunk');
+        return;
+      }
+      
+      console.log('🔄 Starting FileReader process for base64 conversion...');
+      
       // اقرأ Blob كـ base64
       const reader = new FileReader();
+      
       reader.onload = () => {
-        const base64Audio = (reader.result as string).split(',')[1];
-        this.sendMessage({
-          type: 'audio',
-          data: base64Audio,
-          format: audioChunk.type // أرسل النوع الأصلي (webm/ogg)
-        });
-        console.log('📤 Sent raw audio chunk (base64):', audioChunk.size, 'bytes, format:', audioChunk.type);
+        try {
+          console.log('✅ FileReader onload triggered');
+          const dataUrl = reader.result as string;
+          
+          if (!dataUrl || !dataUrl.includes(',')) {
+            console.error('❌ Invalid data URL from FileReader');
+            return;
+          }
+          
+          const base64Audio = dataUrl.split(',')[1];
+          console.log('🔄 Base64 conversion successful, length:', base64Audio.length);
+          
+          const audioMessage = {
+            type: 'audio',
+            data: base64Audio,
+            format: audioChunk.type,
+            timestamp: Date.now(),
+            size: audioChunk.size
+          };
+          
+          console.log('📤 Sending audio message to WebSocket:', {
+            type: audioMessage.type,
+            format: audioMessage.format,
+            dataLength: audioMessage.data.length,
+            timestamp: audioMessage.timestamp,
+            originalSize: audioMessage.size
+          });
+          
+          this.sendMessage(audioMessage);
+          console.log('✅ Audio message sent successfully via WebSocket');
+          
+        } catch (error) {
+          console.error('❌ Error in FileReader onload:', error);
+        }
       };
+      
+      reader.onerror = (error) => {
+        console.error('❌ FileReader error:', error);
+      };
+      
+      reader.onabort = () => {
+        console.warn('⚠️ FileReader aborted');
+      };
+      
       reader.readAsDataURL(audioChunk);
+      console.log('🔄 FileReader.readAsDataURL started');
+      
     } catch (error) {
-      console.error('❌ Error sending raw audio data:', error);
+      console.error('❌ Error in sendAudioData:', error);
     }
   }
 
@@ -443,6 +638,7 @@ export class RenderWebSocketService {
       }
       
       this.isStreaming = false;
+      console.log('🔧 Set isStreaming to false in stopStreaming');
       console.log('✅ Render WebSocket streaming stopped');
       
     } catch (error) {
@@ -450,23 +646,134 @@ export class RenderWebSocketService {
     }
   }
 
-  disconnect() {
+  /**
+   * Restart streaming without reconnecting WebSocket
+   * Useful when reusing existing connection for new recording session
+   */
+  async restartStreaming(
+    sourceLanguage: string,
+    targetLanguage: string,
+    onTranscriptionUpdate: (text: string) => void,
+    onTranslationUpdate: (text: string) => void
+  ) {
+    try {
+      console.log('🔄 Restarting WebSocket streaming...');
+      
+      if (!this.isConnected || !this.ws || this.ws.readyState !== WebSocket.OPEN) {
+        throw new Error('WebSocket not connected - cannot restart streaming');
+      }
+      
+      // Update callbacks
+      this.onTranscriptionUpdate = onTranscriptionUpdate;
+      this.onTranslationUpdate = onTranslationUpdate;
+      this.sourceLanguage = sourceLanguage;
+      this.targetLanguage = targetLanguage;
+      
+      // Reset state
+      this.currentTranscription = '';
+      this.currentTranslation = '';
+      this.audioQueue = [];
+      this.isInitMessageSent = false;
+      
+      // Restart streaming
+      this.isStreaming = true;
+      console.log('🔧 Set isStreaming to true in restartStreaming');
+      
+      // Send new init message for the new session
+      console.log('📤 Sending new init message for streaming restart...');
+      this.sendInitMessage();
+      
+      console.log('✅ WebSocket streaming restarted successfully');
+      
+    } catch (error) {
+      console.error('❌ Error restarting WebSocket streaming:', error);
+      throw error;
+         }
+   }
+
+   /**
+    * Force ensure streaming is active
+    * Use this when you know WebSocket is connected but streaming might be stuck
+    */
+   forceEnsureStreaming() {
+     console.log('🔧 Force ensuring streaming is active...');
+     console.log('📊 Current state before force fix:', {
+       isStreaming: this.isStreaming,
+       isConnected: this.isConnected,
+       wsReadyState: this.ws?.readyState,
+       isInitMessageSent: this.isInitMessageSent,
+       isInitialized: this.isInitialized
+     });
+     
+     if (this.isConnected && this.ws && this.ws.readyState === WebSocket.OPEN) {
+       if (!this.isStreaming) {
+         console.log('🔧 FORCING streaming to TRUE');
+         this.isStreaming = true;
+         
+         // Re-send init if needed
+         if (!this.isInitMessageSent) {
+           console.log('📤 Re-sending init message during force fix...');
+           this.sendInitMessage();
+         }
+       }
+       
+       console.log('📊 State after force fix:', {
+         isStreaming: this.isStreaming,
+         isInitMessageSent: this.isInitMessageSent
+       });
+       
+       return true;
+     } else {
+       console.warn('⚠️ Cannot force streaming - WebSocket not properly connected');
+       return false;
+     }
+   }
+
+   /**
+    * Get detailed streaming status for debugging
+    */
+   getDetailedStatus() {
+     return {
+       isStreaming: this.isStreaming,
+       isConnected: this.isConnected,
+       wsExists: !!this.ws,
+       wsReadyState: this.ws?.readyState,
+       wsOpen: this.ws?.readyState === WebSocket.OPEN,
+       isInitMessageSent: this.isInitMessageSent,
+       isInitialized: this.isInitialized,
+       sourceLanguage: this.sourceLanguage,
+       targetLanguage: this.targetLanguage,
+       audioQueueLength: this.audioQueue.length
+     };
+   }
+  
+    disconnect() {
     console.log('🔌 Disconnecting Render WebSocket service...');
     
+    // Stop all operations immediately
     this.shouldReconnect = false;
     this.stopStreaming();
     this.stopPingPong();
     this.isConnected = false;
     this.isStreaming = false;
+    console.log('🔧 Set isStreaming to false in disconnect');
     this.isInitialized = false;
+    this.isInitMessageSent = false;
     this.currentTranscription = '';
     this.currentTranslation = '';
+    this.audioQueue = []; // Clear audio queue
     
-    if (this.ws) {
-      this.ws.close(1000, 'Manual disconnect');
+    // Close WebSocket connection
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) {
+      try {
+        this.ws.close(1000, 'Manual disconnect');
+      } catch (error) {
+        console.warn('⚠️ Error closing WebSocket:', error);
+      }
       this.ws = null;
     }
     
+    // Clear all timeouts
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
@@ -481,7 +788,14 @@ export class RenderWebSocketService {
   }
 
   isConnectedStatus(): boolean {
-    return this.isConnected && this.ws?.readyState === WebSocket.OPEN;
+    const connected = this.isConnected && this.ws?.readyState === WebSocket.OPEN;
+    console.log('🔍 Connection status check:', {
+      isConnected: this.isConnected,
+      wsReadyState: this.ws?.readyState,
+      wsExists: !!this.ws,
+      finalResult: connected
+    });
+    return connected;
   }
 
   isInitializedStatus(): boolean {

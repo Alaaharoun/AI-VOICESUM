@@ -1,0 +1,365 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Init Message Enhancement Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .metric {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🔧 Init Message Enhancement Test</h1>
+        <p>اختبار التحسينات الجديدة على آلية التهيئة</p>
+
+        <div class="test-section">
+            <h3>📊 حالة الاتصال</h3>
+            <div id="connectionStatus" class="status info">غير متصل</div>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="connectedMetric">❌</div>
+                    <div>متصل</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="initSentMetric">❌</div>
+                    <div>Init مرسل</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="initAckMetric">❌</div>
+                    <div>Init مؤكد</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="initializedMetric">❌</div>
+                    <div>مهيأ</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🎮 التحكم</h3>
+            <button id="connectBtn" onclick="connectWebSocket()">🔗 الاتصال</button>
+            <button id="disconnectBtn" onclick="disconnectWebSocket()" disabled>🔌 قطع الاتصال</button>
+            <button id="sendInitBtn" onclick="sendInitMessage()" disabled>📤 إرسال Init</button>
+            <button id="sendAudioBtn" onclick="sendTestAudio()" disabled>🎵 إرسال صوت تجريبي</button>
+            <button id="clearLogBtn" onclick="clearLog()">🗑️ مسح السجلات</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 السجلات</h3>
+            <div id="log" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 إحصائيات</h3>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="messagesSent">0</div>
+                    <div>رسائل مرسلة</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="messagesReceived">0</div>
+                    <div>رسائل مستلمة</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="audioChunks">0</div>
+                    <div>قطع صوتية</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="queueSize">0</div>
+                    <div>حجم القائمة</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let isConnected = false;
+        let isInitMessageSent = false;
+        let isInitAcknowledged = false;
+        let isInitialized = false;
+        let audioQueue = [];
+        let messagesSent = 0;
+        let messagesReceived = 0;
+        let audioChunksSent = 0;
+
+        function log(message) {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.textContent += `[${timestamp}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+
+        function updateStatus() {
+            const statusElement = document.getElementById('connectionStatus');
+            const connectedMetric = document.getElementById('connectedMetric');
+            const initSentMetric = document.getElementById('initSentMetric');
+            const initAckMetric = document.getElementById('initAckMetric');
+            const initializedMetric = document.getElementById('initializedMetric');
+
+            if (isConnected) {
+                statusElement.className = 'status success';
+                statusElement.textContent = '✅ متصل';
+                connectedMetric.textContent = '✅';
+            } else {
+                statusElement.className = 'status error';
+                statusElement.textContent = '❌ غير متصل';
+                connectedMetric.textContent = '❌';
+            }
+
+            initSentMetric.textContent = isInitMessageSent ? '✅' : '❌';
+            initAckMetric.textContent = isInitAcknowledged ? '✅' : '❌';
+            initializedMetric.textContent = isInitialized ? '✅' : '❌';
+
+            // Update statistics
+            document.getElementById('messagesSent').textContent = messagesSent;
+            document.getElementById('messagesReceived').textContent = messagesReceived;
+            document.getElementById('audioChunks').textContent = audioChunksSent;
+            document.getElementById('queueSize').textContent = audioQueue.length;
+
+            // Update button states
+            document.getElementById('connectBtn').disabled = isConnected;
+            document.getElementById('disconnectBtn').disabled = !isConnected;
+            document.getElementById('sendInitBtn').disabled = !isConnected || isInitMessageSent;
+            document.getElementById('sendAudioBtn').disabled = !isInitialized;
+        }
+
+        function connectWebSocket() {
+            log('🔗 محاولة الاتصال بـ WebSocket...');
+            
+            try {
+                ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+                
+                ws.onopen = function() {
+                    log('✅ WebSocket متصل بنجاح');
+                    isConnected = true;
+                    updateStatus();
+                };
+
+                ws.onmessage = function(event) {
+                    messagesReceived++;
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 رسالة مستلمة: ${JSON.stringify(data, null, 2)}`);
+                        
+                        // Handle different message types
+                        if (data.type === 'init_ack') {
+                            log('✅ تأكيد Init مستلم من الخادم');
+                            isInitAcknowledged = true;
+                            isInitialized = true;
+                            processAudioQueue();
+                        } else if (data.type === 'ready' || data.type === 'initialized') {
+                            log('✅ الخادم جاهز للصوت');
+                            isInitialized = true;
+                            isInitAcknowledged = true;
+                            processAudioQueue();
+                        } else if (data.type === 'status') {
+                            if (data.message === 'Ready for audio input' || data.message === 'ready' || data.message === 'initialized') {
+                                log('✅ الخادم مهيأ للصوت');
+                                isInitialized = true;
+                                isInitAcknowledged = true;
+                                processAudioQueue();
+                            }
+                        } else if (data.type === 'error') {
+                            log(`❌ خطأ في الخادم: ${data.message}`);
+                        }
+                        
+                        updateStatus();
+                    } catch (error) {
+                        log(`❌ خطأ في تحليل الرسالة: ${error}`);
+                    }
+                };
+
+                ws.onclose = function(event) {
+                    log(`🔌 WebSocket مغلق: ${event.code} - ${event.reason}`);
+                    isConnected = false;
+                    isInitMessageSent = false;
+                    isInitAcknowledged = false;
+                    isInitialized = false;
+                    updateStatus();
+                };
+
+                ws.onerror = function(error) {
+                    log(`❌ خطأ في WebSocket: ${error}`);
+                    isConnected = false;
+                    updateStatus();
+                };
+
+            } catch (error) {
+                log(`❌ خطأ في الاتصال: ${error}`);
+            }
+        }
+
+        function disconnectWebSocket() {
+            if (ws) {
+                log('🔌 قطع الاتصال...');
+                ws.close(1000, 'Manual disconnect');
+            }
+        }
+
+        function sendInitMessage() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                log('❌ WebSocket غير متصل');
+                return;
+            }
+
+            const initMessage = {
+                type: 'init',
+                language: 'auto',
+                targetLanguage: 'en',
+                clientSideTranslation: true,
+                realTimeMode: true,
+                autoDetection: true,
+                audioConfig: {
+                    sampleRate: 16000,
+                    channels: 1,
+                    bitsPerSample: 16,
+                    encoding: 'pcm_s16le'
+                }
+            };
+
+            log('📤 إرسال رسالة Init...');
+            log(`📤 محتوى الرسالة: ${JSON.stringify(initMessage, null, 2)}`);
+            
+            ws.send(JSON.stringify(initMessage));
+            messagesSent++;
+            isInitMessageSent = true;
+            updateStatus();
+        }
+
+        function sendTestAudio() {
+            if (!isInitialized) {
+                log('⚠️ الخادم غير مهيأ، تخزين الصوت مؤقتاً...');
+                audioQueue.push('test-audio-chunk');
+                updateStatus();
+                return;
+            }
+
+            log('🎵 إرسال صوت تجريبي...');
+            
+            // Create a simple test audio buffer
+            const sampleRate = 16000;
+            const duration = 0.1; // 100ms
+            const samples = sampleRate * duration;
+            const buffer = new ArrayBuffer(samples * 2);
+            const view = new Int16Array(buffer);
+            
+            // Fill with sine wave
+            for (let i = 0; i < samples; i++) {
+                view[i] = Math.sin(i * 0.01) * 1000;
+            }
+            
+            // Convert to base64
+            const base64Audio = btoa(String.fromCharCode(...new Uint8Array(buffer)));
+            
+            const audioMessage = {
+                type: 'audio',
+                data: base64Audio,
+                format: 'audio/pcm'
+            };
+            
+            ws.send(JSON.stringify(audioMessage));
+            messagesSent++;
+            audioChunksSent++;
+            log(`📤 صوت تجريبي مرسل: ${buffer.byteLength} bytes`);
+            updateStatus();
+        }
+
+        function processAudioQueue() {
+            if (audioQueue.length === 0) {
+                log('📦 قائمة الصوت فارغة');
+                return;
+            }
+
+            log(`📦 معالجة قائمة الصوت: ${audioQueue.length} قطع`);
+            
+            while (audioQueue.length > 0) {
+                const chunk = audioQueue.shift();
+                log(`📤 إرسال قطع صوتية مخزنة: ${chunk}`);
+                audioChunksSent++;
+            }
+            
+            log('✅ تمت معالجة قائمة الصوت');
+            updateStatus();
+        }
+
+        // Initialize
+        updateStatus();
+        log('🚀 اختبار تحسينات Init Message جاهز');
+        log('💡 اضغط "الاتصال" لبدء الاختبار');
+    </script>
+</body>
+</html> 

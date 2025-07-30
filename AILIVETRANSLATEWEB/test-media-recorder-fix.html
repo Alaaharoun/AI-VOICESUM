@@ -1,0 +1,484 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MediaRecorder Init Fix Test</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #f5f5f5;
+        }
+        .container {
+            background: white;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+        }
+        .status {
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            font-weight: bold;
+        }
+        .success { background-color: #d4edda; color: #155724; }
+        .warning { background-color: #fff3cd; color: #856404; }
+        .error { background-color: #f8d7da; color: #721c24; }
+        .info { background-color: #d1ecf1; color: #0c5460; }
+        button {
+            background-color: #007bff;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 4px;
+            cursor: pointer;
+            margin: 5px;
+        }
+        button:hover { background-color: #0056b3; }
+        button:disabled { background-color: #6c757d; cursor: not-allowed; }
+        .log {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 10px;
+            height: 300px;
+            overflow-y: auto;
+            font-family: monospace;
+            font-size: 12px;
+            white-space: pre-wrap;
+        }
+        .test-section {
+            margin: 20px 0;
+            padding: 15px;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+        }
+        .metrics {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 10px;
+            margin: 10px 0;
+        }
+        .metric {
+            background-color: #f8f9fa;
+            padding: 10px;
+            border-radius: 4px;
+            text-align: center;
+        }
+        .metric-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #007bff;
+        }
+        .timeline {
+            background-color: #f8f9fa;
+            border: 1px solid #dee2e6;
+            border-radius: 4px;
+            padding: 15px;
+            margin: 10px 0;
+        }
+        .timeline-step {
+            display: flex;
+            align-items: center;
+            margin: 5px 0;
+            padding: 5px;
+            border-radius: 4px;
+        }
+        .timeline-step.completed {
+            background-color: #d4edda;
+            color: #155724;
+        }
+        .timeline-step.waiting {
+            background-color: #fff3cd;
+            color: #856404;
+        }
+        .timeline-step.error {
+            background-color: #f8d7da;
+            color: #721c24;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎯 MediaRecorder Init Fix Test</h1>
+        <p>اختبار إصلاح مشكلة تشغيل MediaRecorder قبل تأكيد Init</p>
+
+        <div class="test-section">
+            <h3>📊 حالة الاختبار</h3>
+            <div id="testStatus" class="status info">جاهز للاختبار</div>
+            
+            <div class="timeline">
+                <h4>⏱️ تسلسل الأحداث</h4>
+                <div id="timelineSteps">
+                    <div class="timeline-step" id="step1">1. إنشاء WebSocket</div>
+                    <div class="timeline-step" id="step2">2. إرسال Init</div>
+                    <div class="timeline-step" id="step3">3. انتظار Init Ack</div>
+                    <div class="timeline-step" id="step4">4. تشغيل MediaRecorder</div>
+                    <div class="timeline-step" id="step5">5. إرسال الصوت</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 المقاييس</h3>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="wsConnected">❌</div>
+                    <div>WebSocket متصل</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="initSent">❌</div>
+                    <div>Init مرسل</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="initAcked">❌</div>
+                    <div>Init مؤكد</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="recorderStarted">❌</div>
+                    <div>MediaRecorder مشغل</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="audioSent">❌</div>
+                    <div>صوت مرسل</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="test-section">
+            <h3>🎮 التحكم</h3>
+            <button id="startTestBtn" onclick="startTest()">🚀 بدء الاختبار</button>
+            <button id="stopTestBtn" onclick="stopTest()" disabled>⏹️ إيقاف الاختبار</button>
+            <button id="clearLogBtn" onclick="clearLog()">🗑️ مسح السجلات</button>
+        </div>
+
+        <div class="test-section">
+            <h3>📝 السجلات</h3>
+            <div id="log" class="log"></div>
+        </div>
+
+        <div class="test-section">
+            <h3>📊 النتائج</h3>
+            <div class="metrics">
+                <div class="metric">
+                    <div class="metric-value" id="totalChunks">0</div>
+                    <div>إجمالي القطع</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="sentChunks">0</div>
+                    <div>قطع مرسلة</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="queuedChunks">0</div>
+                    <div>قطع مخزنة</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-value" id="testDuration">0s</div>
+                    <div>مدة الاختبار</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        let ws = null;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let isTestRunning = false;
+        let isInitAcknowledged = false;
+        let totalChunks = 0;
+        let sentChunks = 0;
+        let queuedChunks = 0;
+        let testStartTime = 0;
+
+        function log(message) {
+            const logElement = document.getElementById('log');
+            const timestamp = new Date().toLocaleTimeString();
+            logElement.textContent += `[${timestamp}] ${message}\n`;
+            logElement.scrollTop = logElement.scrollHeight;
+            console.log(message);
+        }
+
+        function clearLog() {
+            document.getElementById('log').textContent = '';
+        }
+
+        function updateStatus(message, type = 'info') {
+            const statusElement = document.getElementById('testStatus');
+            statusElement.className = `status ${type}`;
+            statusElement.textContent = message;
+        }
+
+        function updateStep(stepNumber, status) {
+            const stepElement = document.getElementById(`step${stepNumber}`);
+            stepElement.className = `timeline-step ${status}`;
+            
+            if (status === 'completed') {
+                stepElement.innerHTML = `${stepNumber}. ${stepElement.textContent.split('. ')[1]} ✅`;
+            } else if (status === 'waiting') {
+                stepElement.innerHTML = `${stepNumber}. ${stepElement.textContent.split('. ')[1]} ⏳`;
+            } else if (status === 'error') {
+                stepElement.innerHTML = `${stepNumber}. ${stepElement.textContent.split('. ')[1]} ❌`;
+            }
+        }
+
+        function updateMetrics() {
+            document.getElementById('wsConnected').textContent = ws && ws.readyState === WebSocket.OPEN ? '✅' : '❌';
+            document.getElementById('initSent').textContent = ws && ws.readyState === WebSocket.OPEN ? '✅' : '❌';
+            document.getElementById('initAcked').textContent = isInitAcknowledged ? '✅' : '❌';
+            document.getElementById('recorderStarted').textContent = mediaRecorder && mediaRecorder.state === 'recording' ? '✅' : '❌';
+            document.getElementById('audioSent').textContent = sentChunks > 0 ? '✅' : '❌';
+            
+            document.getElementById('totalChunks').textContent = totalChunks;
+            document.getElementById('sentChunks').textContent = sentChunks;
+            document.getElementById('queuedChunks').textContent = queuedChunks;
+            
+            if (testStartTime > 0) {
+                const duration = Math.floor((Date.now() - testStartTime) / 1000);
+                document.getElementById('testDuration').textContent = `${duration}s`;
+            }
+        }
+
+        async function startTest() {
+            if (isTestRunning) {
+                log('⚠️ الاختبار قيد التشغيل بالفعل');
+                return;
+            }
+
+            log('🚀 بدء اختبار MediaRecorder Init Fix...');
+            isTestRunning = true;
+            testStartTime = Date.now();
+            totalChunks = 0;
+            sentChunks = 0;
+            queuedChunks = 0;
+            isInitAcknowledged = false;
+            
+            updateStatus('بدء الاختبار...', 'info');
+            document.getElementById('startTestBtn').disabled = true;
+            document.getElementById('stopTestBtn').disabled = false;
+
+            try {
+                // Step 1: إنشاء WebSocket
+                log('📡 إنشاء WebSocket...');
+                updateStep(1, 'waiting');
+                
+                ws = new WebSocket('wss://ai-voicesum.onrender.com/ws');
+                
+                ws.onopen = async () => {
+                    log('✅ WebSocket متصل بنجاح');
+                    updateStep(1, 'completed');
+                    updateMetrics();
+                    
+                    // Step 2: إرسال Init
+                    log('📤 إرسال رسالة Init...');
+                    updateStep(2, 'waiting');
+                    
+                    const initMessage = {
+                        type: 'init',
+                        language: 'auto',
+                        targetLanguage: 'en',
+                        clientSideTranslation: true,
+                        realTimeMode: true,
+                        autoDetection: true,
+                        audioConfig: {
+                            sampleRate: 16000,
+                            channels: 1,
+                            bitsPerSample: 16,
+                            encoding: 'pcm_s16le'
+                        }
+                    };
+                    
+                    ws.send(JSON.stringify(initMessage));
+                    log('📤 Init message sent:', JSON.stringify(initMessage, null, 2));
+                    updateStep(2, 'completed');
+                    updateMetrics();
+                    
+                    // Step 3: انتظار Init Ack
+                    log('⏳ انتظار تأكيد Init...');
+                    updateStep(3, 'waiting');
+                    
+                    // انتظار تأكيد init أو مهلة زمنية
+                    let initWaitAttempts = 0;
+                    const maxInitWaitAttempts = 50; // 5 seconds
+                    
+                    while (initWaitAttempts < maxInitWaitAttempts && !isInitAcknowledged) {
+                        await new Promise(resolve => setTimeout(resolve, 100));
+                        initWaitAttempts++;
+                        log(`⏳ انتظار Init Ack... (${initWaitAttempts}/${maxInitWaitAttempts})`);
+                    }
+                    
+                    if (isInitAcknowledged) {
+                        log('✅ Init acknowledged, proceeding to MediaRecorder...');
+                        updateStep(3, 'completed');
+                        updateMetrics();
+                        
+                        // Step 4: تشغيل MediaRecorder
+                        await startMediaRecorder();
+                    } else {
+                        log('⚠️ Init acknowledgment timeout, proceeding anyway...');
+                        updateStep(3, 'error');
+                        updateMetrics();
+                        
+                        // تشغيل MediaRecorder حتى لو انتهت المهلة
+                        await startMediaRecorder();
+                    }
+                };
+
+                ws.onmessage = (event) => {
+                    try {
+                        const data = JSON.parse(event.data);
+                        log(`📨 رسالة مستلمة: ${JSON.stringify(data, null, 2)}`);
+                        
+                        if (data.type === 'init_ack') {
+                            log('✅ Init acknowledgment received!');
+                            isInitAcknowledged = true;
+                            updateStep(3, 'completed');
+                            updateMetrics();
+                        } else if (data.type === 'ready' || data.type === 'initialized') {
+                            log('✅ Server ready message received');
+                            isInitAcknowledged = true;
+                            updateStep(3, 'completed');
+                            updateMetrics();
+                        } else if (data.type === 'error') {
+                            log(`❌ Server error: ${data.message}`);
+                        }
+                    } catch (error) {
+                        log(`❌ Error parsing message: ${error}`);
+                    }
+                };
+
+                ws.onclose = (event) => {
+                    log(`🔌 WebSocket مغلق: ${event.code} - ${event.reason}`);
+                    updateStatus('WebSocket connection closed', 'error');
+                    stopTest();
+                };
+
+                ws.onerror = (error) => {
+                    log(`❌ WebSocket error: ${error}`);
+                    updateStatus('WebSocket connection error', 'error');
+                    stopTest();
+                };
+
+            } catch (error) {
+                log(`❌ Error starting test: ${error}`);
+                updateStatus('Error starting test', 'error');
+                stopTest();
+            }
+        }
+
+        async function startMediaRecorder() {
+            try {
+                log('🎤 بدء MediaRecorder...');
+                updateStep(4, 'waiting');
+                
+                // طلب إذن الميكروفون
+                audioStream = await navigator.mediaDevices.getUserMedia({ 
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    } 
+                });
+                
+                log('✅ Microphone access granted');
+                
+                // إنشاء MediaRecorder
+                mediaRecorder = new MediaRecorder(audioStream, {
+                    mimeType: 'audio/webm;codecs=opus'
+                });
+                
+                mediaRecorder.ondataavailable = (event) => {
+                    if (event.data.size > 0) {
+                        totalChunks++;
+                        log(`📦 Audio chunk received: ${event.data.size} bytes`);
+                        
+                        // ✅ التحقق من حالة التأكيد قبل إرسال الصوت
+                        if (ws && ws.readyState === WebSocket.OPEN && isInitAcknowledged) {
+                            log('✅ Init acknowledged, sending audio chunk');
+                            sentChunks++;
+                            
+                            // إرسال الصوت
+                            const reader = new FileReader();
+                            reader.onload = () => {
+                                const base64Audio = reader.result.split(',')[1];
+                                const audioMessage = {
+                                    type: 'audio',
+                                    data: base64Audio,
+                                    format: 'audio/webm;codecs=opus'
+                                };
+                                
+                                ws.send(JSON.stringify(audioMessage));
+                                log(`📤 Audio chunk sent: ${event.data.size} bytes`);
+                                updateStep(5, 'completed');
+                                updateMetrics();
+                            };
+                            reader.readAsDataURL(event.data);
+                        } else {
+                            log('⚠️ Init not acknowledged yet, queuing audio chunk');
+                            queuedChunks++;
+                            updateMetrics();
+                        }
+                    }
+                };
+                
+                mediaRecorder.onstart = () => {
+                    log('✅ MediaRecorder started successfully');
+                    updateStep(4, 'completed');
+                    updateMetrics();
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log('🛑 MediaRecorder stopped');
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    log(`❌ MediaRecorder error: ${event}`);
+                    updateStep(4, 'error');
+                };
+                
+                // تشغيل MediaRecorder
+                mediaRecorder.start(1000); // 1 second intervals
+                
+            } catch (error) {
+                log(`❌ Error starting MediaRecorder: ${error}`);
+                updateStep(4, 'error');
+                updateStatus('Error starting MediaRecorder', 'error');
+            }
+        }
+
+        function stopTest() {
+            log('⏹️ إيقاف الاختبار...');
+            isTestRunning = false;
+            
+            if (mediaRecorder && mediaRecorder.state === 'recording') {
+                mediaRecorder.stop();
+            }
+            
+            if (audioStream) {
+                audioStream.getTracks().forEach(track => track.stop());
+            }
+            
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.close(1000, 'Test completed');
+            }
+            
+            document.getElementById('startTestBtn').disabled = false;
+            document.getElementById('stopTestBtn').disabled = true;
+            updateStatus('Test completed', 'success');
+            updateMetrics();
+        }
+
+        // Update metrics every second
+        setInterval(updateMetrics, 1000);
+
+        // Initialize
+        log('🚀 MediaRecorder Init Fix Test ready');
+        log('💡 Press "بدء الاختبار" to start the test');
+    </script>
+</body>
+</html> 
