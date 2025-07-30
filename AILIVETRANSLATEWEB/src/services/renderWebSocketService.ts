@@ -164,58 +164,60 @@ export class RenderWebSocketService {
         // Reset pong timeout on any message
         this.resetPongTimeout();
         
-        switch (data.type) {
-          case 'transcription':
-            this.currentTranscription = data.text;
-            this.onTranscriptionUpdate?.(data.text);
-            console.log('🎤 Transcription received:', data.text);
-            break;
-            
-          case 'translation':
-            this.currentTranslation = data.text;
-            this.onTranslationUpdate?.(data.text);
-            console.log('🌍 Translation received:', data.text);
-            break;
-            
-          case 'status':
-            console.log('📊 Server status:', data.message);
-            // Check if server is ready for audio input
-            if (data.message === 'Ready for audio input') {
-              this.isInitialized = true;
-              console.log('✅ Server initialization completed, ready for audio input');
-            }
-            break;
-            
-          case 'error':
-            console.error('❌ Server error:', data.message);
-            // Don't reset isInitialized for quota exceeded errors
-            if (data.error && data.error.includes('Quota exceeded')) {
-              console.warn('⚠️ Azure quota exceeded, but keeping connection alive');
-              // Keep isInitialized true to continue audio processing
-              // Try to reinitialize after a delay
-              setTimeout(() => {
-                if (this.ws && this.ws.readyState === WebSocket.OPEN) {
-                  console.log('🔄 Attempting to reinitialize after quota error...');
-                  this.sendInitMessage();
-                }
-              }, 2000);
-            } else {
-              this.isInitialized = false;
-            }
-            break;
-            
-          case 'pong':
-            this.lastPongTime = Date.now();
-            console.log('🏓 Pong received');
-            // Clear pong timeout since we received the response
-            if (this.pongTimeout) {
-              clearTimeout(this.pongTimeout);
-              this.pongTimeout = null;
-            }
-            break;
-            
-          default:
-            console.log('📨 Unknown message type:', data.type);
+        // Handle different message types
+        if (data.type === 'transcription') {
+          console.log('📝 Received transcription:', data.text);
+          if (this.onTranscriptionUpdate) {
+            this.onTranscriptionUpdate(data.text);
+          }
+        } else if (data.type === 'final') {
+          console.log('✅ Received final transcription:', data.text);
+          if (this.onTranscriptionUpdate) {
+            this.onTranscriptionUpdate(data.text);
+          }
+        } else if (data.type === 'translation') {
+          console.log('🌐 Received translation:', data.text);
+          if (this.onTranslationUpdate) {
+            this.onTranslationUpdate(data.text);
+          }
+        } else if (data.type === 'status') {
+          console.log('📊 Server status:', data.message);
+          // Check if server is ready for audio input
+          if (data.message === 'Ready for audio input') {
+            this.isInitialized = true;
+            console.log('✅ Server initialization completed, ready for audio input');
+          }
+        } else if (data.type === 'error') {
+          console.error('❌ Server error:', data.message);
+          // Don't reset isInitialized for quota exceeded errors
+          if (data.error && data.error.includes('Quota exceeded')) {
+            console.warn('⚠️ Azure quota exceeded, but keeping connection alive');
+            // Keep isInitialized true to continue audio processing
+            // Try to reinitialize after a delay
+            setTimeout(() => {
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                console.log('🔄 Attempting to reinitialize after quota error...');
+                this.sendInitMessage();
+              }
+            }, 2000);
+          } else {
+            this.isInitialized = false;
+          }
+        } else if (data.type === 'warning') {
+          console.warn('⚠️ Server warning:', data.message);
+          if (data.audioStats) {
+            console.log('📊 Audio stats:', data.audioStats);
+          }
+        } else if (data.type === 'pong') {
+          this.lastPongTime = Date.now();
+          console.log('🏓 Pong received');
+          // Clear pong timeout since we received the response
+          if (this.pongTimeout) {
+            clearTimeout(this.pongTimeout);
+            this.pongTimeout = null;
+          }
+        } else {
+          console.log('📨 Unknown message type:', data.type);
         }
       } catch (error) {
         console.error('❌ Error parsing WebSocket message:', error);

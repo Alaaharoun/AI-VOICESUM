@@ -136,7 +136,22 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
 }
 
 // Helper function to analyze audio quality
-function analyzeAudioQuality(audioBuffer) {
+function analyzeAudioQuality(audioBuffer, audioFormat) {
+  // For WebM/Opus, we can't analyze raw buffer directly
+  // We need to convert it first or skip analysis
+  if (audioFormat && (audioFormat.includes('webm') || audioFormat.includes('opus'))) {
+    console.log(`🔍 Audio format is ${audioFormat}, skipping raw analysis (will analyze after conversion)`);
+    return {
+      hasSpeech: true, // Assume speech for now, will be checked after conversion
+      duration: 0,
+      averageAmplitude: 0,
+      dynamicRange: 0,
+      zeroCrossingRate: 0,
+      skipAnalysis: true
+    };
+  }
+  
+  // For PCM data, we can analyze directly
   const samples = new Int16Array(audioBuffer);
   const sampleCount = samples.length;
   
@@ -168,7 +183,7 @@ function analyzeAudioQuality(audioBuffer) {
   
   const hasSpeech = averageAmplitude > 1000 && dynamicRange > 5000 && zeroCrossingRate > 0.1;
   
-  console.log(`🔍 Audio Analysis:
+  console.log(`🔍 Audio Analysis (PCM):
     - Duration: ${(sampleCount / 16000).toFixed(2)} seconds
     - Average Amplitude: ${averageAmplitude.toFixed(0)}
     - Dynamic Range: ${dynamicRange.toFixed(0)}
@@ -180,7 +195,8 @@ function analyzeAudioQuality(audioBuffer) {
     duration: sampleCount / 16000,
     averageAmplitude,
     dynamicRange,
-    zeroCrossingRate
+    zeroCrossingRate,
+    skipAnalysis: false
   };
 }
 
@@ -973,6 +989,7 @@ function startWebSocketServer(server) {
                 // Convert base64 to buffer
                 audioBuffer = Buffer.from(jsonData.data, 'base64');
                 audioSize = audioBuffer.length;
+                // Use the actual format from the client
                 audioFormat = jsonData.format || 'audio/webm;codecs=opus';
                 console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
               } else {
@@ -993,9 +1010,10 @@ function startWebSocketServer(server) {
               console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
               
               // Analyze audio quality before conversion
-              const audioQuality = analyzeAudioQuality(audioBuffer);
+              const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
               
-              if (!audioQuality.hasSpeech) {
+              // Skip quality check for WebM/Opus (will be checked after conversion)
+              if (!audioQuality.skipAnalysis && !audioQuality.hasSpeech) {
                 console.warn(`⚠️ [${language}] Audio appears to contain no speech or is too quiet`);
                 console.warn(`📊 Audio stats: Duration=${audioQuality.duration}s, Amplitude=${audioQuality.averageAmplitude}, Range=${audioQuality.dynamicRange}`);
                 
@@ -1013,6 +1031,22 @@ function startWebSocketServer(server) {
               convertAudioFormat(audioBuffer, audioFormat, 'wav')
                 .then(pcmBuffer => {
                   console.log(`✅ [${language}] Audio converted successfully: ${audioSize} bytes → ${pcmBuffer.length} bytes`);
+                  
+                  // For WebM/Opus, analyze quality after conversion
+                  if (audioQuality.skipAnalysis) {
+                    const convertedQuality = analyzeAudioQuality(pcmBuffer, 'audio/pcm');
+                    console.log(`🔍 Post-conversion analysis for ${audioFormat}:`, convertedQuality);
+                    
+                    if (!convertedQuality.hasSpeech) {
+                      console.warn(`⚠️ [${language}] Converted audio still appears to contain no speech`);
+                      ws.send(JSON.stringify({ 
+                        type: 'warning', 
+                        message: 'No clear speech detected after conversion. Please speak louder or check your microphone.',
+                        audioStats: convertedQuality
+                      }));
+                      return; // Skip sending to Azure
+                    }
+                  }
                   
                   // Write converted PCM data to Azure Speech SDK
                   pushStream.write(pcmBuffer);
