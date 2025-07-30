@@ -978,32 +978,30 @@ function startWebSocketServer(server) {
           let audioSize;
           let audioFormat;
           
-          if (data instanceof Buffer) {
-            // Raw PCM data (from old app)
+          // Always try to parse as JSON first (new app format)
+          let jsonData = null;
+          try {
+            jsonData = JSON.parse(data.toString());
+          } catch (parseError) {
+            // Not JSON, treat as raw PCM data (old app format)
             audioBuffer = data;
             audioSize = data.length;
             audioFormat = 'audio/pcm';
             console.log(`🎵 [${language}] Received raw PCM audio chunk: ${audioSize} bytes`);
-          } else {
+          }
+          
+          if (jsonData) {
             // JSON data with base64 (from new app)
-            try {
-              const jsonData = JSON.parse(data.toString());
-              if (jsonData.type === 'audio' && jsonData.data) {
-                // Convert base64 to buffer
-                audioBuffer = Buffer.from(jsonData.data, 'base64');
-                audioSize = audioBuffer.length;
-                // Use the actual format from the client
-                audioFormat = jsonData.format || 'audio/webm;codecs=opus';
-                console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
-              } else {
-                console.log(`📦 Received JSON message:`, jsonData);
-                return;
-              }
-            } catch (parseError) {
-              console.log('📦 Received non-JSON data, treating as audio');
-              audioBuffer = data;
-              audioSize = data.length;
-              audioFormat = 'audio/pcm';
+            if (jsonData.type === 'audio' && jsonData.data) {
+              // Convert base64 to buffer
+              audioBuffer = Buffer.from(jsonData.data, 'base64');
+              audioSize = audioBuffer.length;
+              // Use the actual format from the client
+              audioFormat = jsonData.format || 'audio/webm;codecs=opus';
+              console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
+            } else {
+              console.log(`📦 Received JSON message:`, jsonData);
+              return;
             }
           }
           
