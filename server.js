@@ -137,6 +137,8 @@ async function convertAudioFormat(audioBuffer, inputFormat, outputFormat = 'wav'
 
 // Helper function to analyze audio quality
 function analyzeAudioQuality(audioBuffer, audioFormat) {
+  console.log(`🔍 analyzeAudioQuality called with format: ${audioFormat}, buffer size: ${audioBuffer.length}`);
+  
   // For WebM/Opus, we can't analyze raw buffer directly
   // We need to convert it first or skip analysis
   if (audioFormat && (audioFormat.includes('webm') || audioFormat.includes('opus'))) {
@@ -1011,7 +1013,9 @@ function startWebSocketServer(server) {
               console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
               
               // Analyze audio quality before conversion
+              console.log(`🔍 Analyzing audio quality for format: ${audioFormat}`);
               const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
+              console.log(`🔍 Audio quality result:`, audioQuality);
               
               // Save audio for debugging if it's PCM and seems to have issues
               if (!audioQuality.skipAnalysis && !audioQuality.hasSpeech) {
