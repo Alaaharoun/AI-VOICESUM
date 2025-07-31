@@ -1110,76 +1110,20 @@ function startWebSocketServer(server) {
                       
                       // Start recognition
                       recognizer.startContinuousRecognitionAsync(
-                        () => {
-                          console.log(`✅ [${language}] Recognition restarted successfully after quota error`);
-                          ws.send(JSON.stringify({ type: 'status', message: 'Recognition restarted after quota error' }));
-                        },
-                        (err) => {
-                          console.error(`❌ [${language}] Failed to restart recognition:`, err);
-                        }
-                      );
-                    } catch (error) {
-                      console.error(`❌ [${language}] Error restarting recognition:`, error);
-                    }
-                  }, 3000); // Wait 3 seconds before retry
-                } else {
-                  // For other errors, do normal cleanup
-                  if (recognizer) {
-                    recognizer.close();
-                    recognizer = null;
-                  }
-                  if (pushStream) {
-                    pushStream.close();
-                    pushStream = null;
-                  }
-                  if (pcmStreamHandler) {
-                    pcmStreamHandler = null;
-                  }
-                }
-              };
-              
-              recognizer.sessionStarted = (s, e) => {
-                console.log(`🚀 [${language}] Session started:`, {
-                  sessionId: e.sessionId,
-                  timestamp: new Date().toISOString()
-                });
-                ws.send(JSON.stringify({ type: 'status', message: 'Recognition session started' }));
-              };
-              
-              recognizer.sessionStopped = (s, e) => {
-                console.log(`🛑 [${language}] Session stopped:`, {
-                  sessionId: e.sessionId,
-                  timestamp: new Date().toISOString()
-                });
-                ws.send(JSON.stringify({ type: 'status', message: 'Recognition session stopped' }));
-              };
-              
-              // Add speech start/end detection
-              recognizer.speechStartDetected = (s, e) => {
-                console.log(`🗣️ [${language}] Speech start detected:`, {
-                  sessionId: e.sessionId,
-                  offset: e.offset,
-                  timestamp: new Date().toISOString()
-                });
-              };
-              
-              recognizer.speechEndDetected = (s, e) => {
-                console.log(`🤐 [${language}] Speech end detected:`, {
-                  sessionId: e.sessionId,
-                  offset: e.offset,
-                  timestamp: new Date().toISOString()
-                });
-              };
-              
-              // Set initialized to true immediately before starting recognition
-              // This prevents audio data from being queued while Azure starts up
-              initialized = true;
-              console.log(`🔧 [${language}] Set initialized=true before starting recognition`);
-              
-              // Start continuous recognition
-              recognizer.startContinuousRecognitionAsync(
                 () => {
                   console.log(`✅ [${language}] Continuous recognition started successfully`);
+                  // initialized is already true from above
+                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
+                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
+                  // initialized is already true from above
+                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
+                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
+                  // initialized is already true from above
+                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
+                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
+                  // initialized is already true from above
+                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
+                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   // initialized is already true from above
                   ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   console.log(`📤 [${language}] Sent ready status to client`);
