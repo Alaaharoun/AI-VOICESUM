@@ -63,10 +63,10 @@ async function validateWebMFile(filePath) {
       duration: probeData.format.duration,
       codec: audioStream.codec_name,
       sampleRate: audioStream.sample_rate
-    });
-    
+      });
+
     return { isValid: true, probeData };
-    
+
   } catch (error) {
     console.error('❌ ffprobe validation failed:', error.message);
     return { isValid: false, reason: `ffprobe failed: ${error.message}` };
@@ -855,35 +855,35 @@ function startWebSocketServer(server) {
           
           // Handle initialization messages (only if not initialized)
           if (!initialized && msg.type === 'init') {
-            const sourceLanguage = msg.language || msg.sourceLanguage || 'en-US';
-            const autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
-            const realTime = msg.realTime || true;
-            
-            console.log('🔧 Initialization parameters:', { sourceLanguage, autoDetection, realTime });
-            
-            // ✅ Apply ChatGPT's instructions for auto-detection vs manual language
-            if (autoDetection) {
-              console.log('🧠 Auto Language Detection Enabled');
-              console.log('🌍 Auto-detecting from', AZURE_AUTO_DETECT_LANGUAGES.length, 'supported languages');
-              language = null; // Auto-detect mode
-            } else {
-            // Check if language is supported
-              if (!AZURE_AUTO_DETECT_LANGUAGES.includes(sourceLanguage)) {
-                console.warn(`⚠️ Language ${sourceLanguage} might not be supported, falling back to en-US`);
-              language = 'en-US';
-              } else {
-                language = sourceLanguage;
-              }
-              console.log(`🎯 Source Language set to: ${language}`);
-            }
-            
-            console.log(`🌐 Initializing Azure Speech SDK with:
-              - Source Language: ${language || 'AUTO-DETECT'}
-              - Auto Detection: ${autoDetection}
-              - Real-time Mode: ${realTime}`);
-            
-            // ✅ Initialize Azure Speech SDK following ChatGPT's instructions
             try {
+              const sourceLanguage = msg.language || msg.sourceLanguage || 'en-US';
+              const autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
+              const realTime = msg.realTime || true;
+              
+              console.log('🔧 Initialization parameters:', { sourceLanguage, autoDetection, realTime });
+              
+              // ✅ Apply ChatGPT's instructions for auto-detection vs manual language
+              if (autoDetection) {
+                console.log('🧠 Auto Language Detection Enabled');
+                console.log('🌍 Auto-detecting from', AZURE_AUTO_DETECT_LANGUAGES.length, 'supported languages');
+                language = null; // Auto-detect mode
+              } else {
+                // Check if language is supported
+                if (!AZURE_AUTO_DETECT_LANGUAGES.includes(sourceLanguage)) {
+                  console.warn(`⚠️ Language ${sourceLanguage} might not be supported, falling back to en-US`);
+                  language = 'en-US';
+                } else {
+                  language = sourceLanguage;
+                }
+                console.log(`🎯 Source Language set to: ${language}`);
+              }
+              
+              console.log(`🌐 Initializing Azure Speech SDK with:
+                - Source Language: ${language || 'AUTO-DETECT'}
+                - Auto Detection: ${autoDetection}
+                - Real-time Mode: ${realTime}`);
+              
+              // ✅ Initialize Azure Speech SDK following ChatGPT's instructions
               // Create push stream with specific audio format for Raw PCM
               console.log('🔧 Creating Azure Speech audio configuration...');
               const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1); // 16kHz, 16-bit, mono
@@ -903,13 +903,13 @@ function startWebSocketServer(server) {
               
               // Set custom endpoint for West Europe if available
               if (AZURE_SPEECH_ENDPOINT) {
-              speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
+                speechConfig.endpointId = AZURE_SPEECH_ENDPOINT;
               }
               
               // Enable continuous recognition for better results
               speechConfig.enableDictation();
               
-                            // ✅ Apply ChatGPT's AutoDetectSourceLanguageConfig vs manual language selection
+              // ✅ Apply ChatGPT's AutoDetectSourceLanguageConfig vs manual language selection
               if (autoDetection) {
                 console.log('🔧 Creating recognizer with AutoDetectSourceLanguageConfig...');
                 
@@ -1033,7 +1033,7 @@ function startWebSocketServer(server) {
                     detectedLanguage: detectedLanguage
                   }));
                 } else {
-                  console.log(`🔍 [${displayLanguage}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
+                  console.log(` [${displayLanguage}] Other recognition result: ${speechsdk.ResultReason[e.result.reason]}`);
                   ws.send(JSON.stringify({ 
                     type: 'final', 
                     text: e.result.text || '',
@@ -1061,70 +1061,13 @@ function startWebSocketServer(server) {
                   reason: e.reason,
                   errorCode: e.errorCode
                 }));
-                
-                // For quota exceeded, try to restart recognition instead of cleanup
-                if (e.errorDetails && e.errorDetails.includes('Quota exceeded')) {
-                  console.log(`🔄 [${language}] Quota exceeded, attempting to restart recognition...`);
-                  
-                  // Clean up old recognizer
-                  if (recognizer) {
-                    recognizer.close();
-                    recognizer = null;
-                  }
-                  if (pushStream) {
-                    pushStream.close();
-                    pushStream = null;
-                  }
-                  if (pcmStreamHandler) {
-                    pcmStreamHandler = null;
-                  }
-                  
-                  // Try to reinitialize after a delay
-                  setTimeout(() => {
-                    try {
-                      // Recreate push stream
-                      const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
-                      pushStream = speechsdk.AudioInputStream.createPushStream(audioFormat);
-                      audioConfig = speechsdk.AudioConfig.fromStreamInput(pushStream);
-                      
-                      // Recreate speech config
-                      speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
-                      speechConfig.speechRecognitionLanguage = language;
-                      speechConfig.enableDictation();
-                      
-                      // Recreate recognizer
-                      recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-                      
-                      // Set up event handlers (reuse the same handlers)
-                      recognizer.recognizing = (s, e) => {
-                        if (e.result.text && e.result.text.trim()) {
-                          ws.send(JSON.stringify({ type: 'transcription', text: e.result.text }));
-                        }
-                      };
-                      
-                      recognizer.recognized = (s, e) => {
-                        if (e.result.reason === speechsdk.ResultReason.RecognizedSpeech && e.result.text && e.result.text.trim()) {
-                          ws.send(JSON.stringify({ type: 'final', text: e.result.text }));
-                        }
-                      };
-                      
-                      // Start recognition
-                      recognizer.startContinuousRecognitionAsync(
+              };
+              
+              // Start recognition
+              recognizer.startContinuousRecognitionAsync(
                 () => {
                   console.log(`✅ [${language}] Continuous recognition started successfully`);
-                  // initialized is already true from above
                   ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
-                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
-                  // initialized is already true from above
-                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
-                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
-                  // initialized is already true from above
-                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
-                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
-                  // initialized is already true from above
-                  ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
-                  ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
-                  // initialized is already true from above
                   ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
                   console.log(`📤 [${language}] Sent ready status to client`);
                   
@@ -1177,61 +1120,31 @@ function startWebSocketServer(server) {
                 }
               );
               
+              // Set initialized to true after successful initialization
+              initialized = true;
+              ws.send(JSON.stringify({ type: 'init_ack', message: 'Initialization successful' }));
+              ws.send(JSON.stringify({ type: 'status', message: 'Ready for audio input' }));
+              return;
             } catch (initError) {
-              console.error('❌ Azure Speech SDK initialization error:', initError);
-              console.error('❌ Error details:', {
-                message: initError.message,
-                stack: initError.stack,
-                name: initError.name
-              });
-              
-              // ✅ Send detailed error message to client
-              const errorMessage = `Azure Speech SDK initialization failed: ${initError.message || initError}`;
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                error: errorMessage,
-                details: {
-                  phase: 'azure_initialization',
-                  errorType: initError.name || 'UnknownError',
-                  language: language || 'auto',
-                  autoDetection: autoDetection
-                }
-              }));
-              
-              // Clean up any partial initialization
-              if (recognizer) {
-                try {
-                  recognizer.close();
-                  recognizer = null;
-                } catch (cleanupError) {
-                  console.error('❌ Error during recognizer cleanup:', cleanupError);
-                }
-              }
-              
-              if (pushStream) {
-                try {
-                  pushStream.close();
-                  pushStream = null;
-                } catch (cleanupError) {
-                  console.error('❌ Error during pushStream cleanup:', cleanupError);
-                }
-              }
-              
-              // Clean up PCM stream handler
-              if (pcmStreamHandler) {
-                pcmStreamHandler = null;
-                console.log('✅ PCM stream handler cleaned up');
-              }
+              console.error('❌ Initialization failed:', initError);
+              ws.send(JSON.stringify({ type: 'error', error: `Initialization failed: ${initError.message}` }));
+              return;
             }
-            
+          }
+          
+          // Handle ping messages
+          if (msg && msg.type === 'ping') {
+            console.log('🏓 Ping received, sending pong');
+            ws.send(JSON.stringify({ type: 'pong' }));
             return;
-          } else if (!initialized && msg.type === 'language_update') {
+          }
+          
+          // Handle language updates
+          if (!initialized && msg.type === 'language_update') {
             // Handle language update
             console.log('🔄 Language update requested:', msg);
-            if (msg.sourceLanguage && supportedStreamingLanguages.includes(msg.sourceLanguage)) {
+            if (msg.sourceLanguage && AZURE_AUTO_DETECT_LANGUAGES.includes(msg.sourceLanguage)) {
               language = msg.sourceLanguage;
-              targetLanguage = msg.targetLanguage || targetLanguage;
-              
               // Restart recognition with new language
               if (recognizer) {
                 recognizer.stopContinuousRecognitionAsync(() => {
@@ -1243,8 +1156,10 @@ function startWebSocketServer(server) {
               }
             }
             return;
-          } else if (msg.type === 'audio') {
-            // Handle audio data from new app
+          }
+          
+          // Handle audio data from new app
+          if (msg.type === 'audio') {
             console.log('🎵 Received audio data from new app');
             
             // If not initialized yet, store the audio chunk for later processing
@@ -1256,350 +1171,333 @@ function startWebSocketServer(server) {
             }
             
             // Continue to audio processing below
-          } else {
+          }
+          
+          if (msg.type !== 'ping' && msg.type !== 'language_update' && msg.type !== 'audio') {
             // Unknown JSON message type
             console.log('📦 Received unknown JSON message type:', msg.type);
             return;
           }
-        } catch (parseError) {
-          // Not JSON, treat as audio data
-          console.log('📦 Received non-JSON data, treating as audio');
+        } catch (jsonParseError) {
+          // Handle JSON parse error gracefully
+          console.warn('⚠️ Failed to parse JSON message:', jsonParseError.message);
+          // Optionally, continue to process as raw audio or ignore
         }
         
-        // ✅ Enhanced audio handling with continuous streaming support
-        if (initialized && pushStream && pcmStreamHandler) {
-          let audioBuffer;
-          let audioSize;
-          let audioFormat;
-          
-          // Always try to parse as JSON first (new app format)
-          let jsonData = null;
-          try {
-            jsonData = JSON.parse(data.toString());
-          } catch (parseError) {
-            // Not JSON, treat as raw PCM data (streaming format)
-            audioBuffer = data;
-            audioSize = data.length;
-            audioFormat = 'audio/pcm';
-            console.log(`🎵 [${language}] Received streaming PCM data: ${audioSize} bytes`);
+        // Process audio data if not handled by JSON messages
+        try {
+          // Enhanced audio handling with continuous streaming support
+          if (initialized && pushStream && pcmStreamHandler) {
+            let audioBuffer;
+            let audioSize;
+            let audioFormat;
             
-            // ✅ Process with continuous streaming handler
+            // Always try to parse as JSON first (new app format)
+            let jsonData = null;
             try {
-              pcmStreamHandler.processStreamingPCM(audioBuffer);
-              return; // Handle streaming data immediately
-            } catch (pcmProcessError) {
-              console.error('❌ Error processing PCM stream:', pcmProcessError);
-              ws.send(JSON.stringify({ 
-                type: 'error', 
-                error: `PCM processing failed: ${pcmProcessError.message}`,
-                details: { phase: 'pcm_processing', errorType: pcmProcessError.name }
-              }));
-              return;
-            }
-          }
-          
-          if (jsonData) {
-            // JSON data with base64 (from new app)
-            if (jsonData.type === 'audio' && jsonData.data) {
-              // Convert base64 to buffer
-              audioBuffer = Buffer.from(jsonData.data, 'base64');
-              audioSize = audioBuffer.length;
-              // Use the actual format from the client
-              audioFormat = jsonData.format || 'audio/webm;codecs=opus';
-              console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
-            } else {
-              console.log(`📦 Received JSON message:`, jsonData);
-              return;
-            }
-          }
-          
-          // Convert audio to PCM WAV 16kHz 16-bit mono using ffmpeg
-          if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
-            try {
-              console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
+              jsonData = JSON.parse(data.toString());
+            } catch (parseError) {
+              // Not JSON, treat as raw PCM data (streaming format)
+              audioBuffer = data;
+              audioSize = data.length;
+              audioFormat = 'audio/pcm';
+              console.log(`🎵 [${language}] Received streaming PCM data: ${audioSize} bytes`);
               
-              // ✅ Strict WebM validation - reject files < 10KB without valid EBML header
-              if (audioFormat.includes('webm') || audioFormat.includes('opus')) {
-                console.log(`🔍 [${language}] Validating WebM chunk: ${audioSize} bytes`);
-                
-                // 1. Strict size validation - minimum 10KB for WebM files
-                if (audioSize < 10240) { // 10KB minimum
-                  console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), minimum 10KB required`);
-                  ws.send(JSON.stringify({ 
-                    type: 'warning', 
-                    message: 'WebM audio chunk too small. Please speak for at least 2-3 seconds.',
-                    audioStats: { size: audioSize, format: audioFormat, reason: 'webm_chunk_too_small', minimumRequired: '10KB' }
-                  }));
-                  return; // Skip processing small WebM chunks
-                }
-                
-                // 2. Mandatory EBML header validation for WebM
-                if (!isValidWebMHeader(audioBuffer)) {
-                  console.error(`❌ [${language}] WebM chunk lacks valid EBML header (${audioSize} bytes)`);
-                  ws.send(JSON.stringify({ 
-                    type: 'error', 
-                    message: 'Invalid WebM format detected. Please restart recording.',
-                    audioStats: { size: audioSize, format: audioFormat, reason: 'invalid_webm_header' }
-                  }));
-                  return; // Reject all WebM chunks without valid headers
-                }
-                
-                console.log(`✅ [${language}] WebM validation passed: ${audioSize} bytes with valid EBML header`);
-              }
-              
-                        // For PCM data, we can use it directly without conversion
-          if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
-            console.log(`✅ [${language}] Using PCM data directly: ${audioSize} bytes`);
-            
-                                // Skip audio quality analysis for new app (client handles it)
-                    console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
-                    
-                    // More lenient criteria for PCM with longer chunks (~1 second optimal)
-                    if (audioSize >= 16000) { // At least 1 second of audio (optimal)
-                      console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
-              
-              // Write PCM data directly to Azure Speech SDK
-              pushStream.write(audioBuffer);
-              console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
-              return;
-            } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
-              console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
-              
-              if (!audioQuality.hasSpeech) {
-                console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite acceptable duration`);
+              // Process with continuous streaming handler
+              try {
+                pcmStreamHandler.processStreamingPCM(audioBuffer);
+                return; // Handle streaming data immediately
+              } catch (pcmProcessError) {
+                console.error('❌ Error processing PCM stream:', pcmProcessError);
                 ws.send(JSON.stringify({ 
-                  type: 'warning', 
-                  message: 'No clear speech detected. Please speak louder or check your microphone.',
-                  audioStats: audioQuality
+                  type: 'error', 
+                  error: `PCM processing failed: ${pcmProcessError.message}`,
+                  details: { phase: 'pcm_processing', errorType: pcmProcessError.name }
                 }));
                 return;
               }
-              
-              // Write PCM data directly to Azure Speech SDK
-              pushStream.write(audioBuffer);
-              console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
-              return;
-            } else {
-              console.log(`⚠️ [${language}] PCM chunk too short (${(audioSize / 32000).toFixed(2)}s), accumulating...`);
-              // For short chunks, accumulate them or send anyway for testing
-              pushStream.write(audioBuffer);
-              console.log(`✅ [${language}] Short PCM chunk sent to Azure for testing`);
-              return;
             }
-          }
-              
-              // For other formats, convert using ffmpeg
-              console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
-              
-              // ✅ Enhanced audio quality analysis before conversion
-              console.log(`🔍 Analyzing audio quality for format: ${audioFormat}`);
-              const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
-              console.log(`🔍 Audio quality result:`, audioQuality);
-              
-              // ✅ Strict speech detection filtering - reject ANY audio without speech
-              if (!audioQuality.hasSpeech) {
-                console.warn(`❌ [${language}] No speech detected in audio chunk (${audioSize} bytes)`);
-                console.warn(`📊 [${language}] Audio stats:`, {
-                  duration: audioQuality.duration,
-                  averageAmplitude: audioQuality.averageAmplitude,
-                  dynamicRange: audioQuality.dynamicRange,
-                  zeroCrossingRate: audioQuality.zeroCrossingRate
-                });
-                
-                // Save problematic audio for debugging
-                try {
-                  const debugFileName = `/tmp/no_speech_audio_${Date.now()}.raw`;
-                  fs.writeFileSync(debugFileName, audioBuffer);
-                  console.log(`🔍 [${language}] Saved silent audio for debugging: ${debugFileName}`);
-                } catch (debugError) {
-                  console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
-                }
-                
-                // Send informative warning to client
-                ws.send(JSON.stringify({ 
-                  type: 'warning', 
-                  message: 'No speech detected. Please speak louder and closer to your microphone.',
-                  audioStats: {
-                    size: audioSize,
-                    format: audioFormat,
-                    duration: audioQuality.duration,
-                    amplitude: audioQuality.averageAmplitude,
-                    reason: 'no_speech_detected'
-                  }
-                }));
-                
-                return; // Reject all audio without speech
+            
+            if (jsonData) {
+              // JSON data with base64 (from new app)
+              if (jsonData.type === 'audio' && jsonData.data) {
+                // Convert base64 to buffer
+                audioBuffer = Buffer.from(jsonData.data, 'base64');
+                audioSize = audioBuffer.length;
+                // Use the actual format from the client
+                audioFormat = jsonData.format || 'audio/webm;codecs=opus';
+                console.log(`🎵 [${language}] Received base64 audio chunk: ${audioSize} bytes, format: ${audioFormat}`);
+              } else {
+                console.log(`📦 Received JSON message:`, jsonData);
+                return;
               }
-              
-              console.log(`✅ [${language}] Speech detected, proceeding with audio conversion`);
-              
-              // Convert to PCM WAV using ffmpeg
-              convertAudioFormat(audioBuffer, audioFormat, 'wav')
-                .then(pcmBuffer => {
-                  console.log(`✅ [${language}] Audio converted successfully: ${audioSize} bytes → ${pcmBuffer.length} bytes`);
+            }
+            
+            // Convert audio to PCM WAV 16kHz 16-bit mono using ffmpeg
+            if (audioSize > 0 && audioSize < 1000000) { // Max 1MB per chunk
+              try {
+                console.log(`🔄 [${language}] Processing audio format: ${audioFormat}`);
+                
+                // Strict WebM validation - reject files < 10KB without valid EBML header
+                if (audioFormat.includes('webm') || audioFormat.includes('opus')) {
+                  console.log(`🔍 [${language}] Validating WebM chunk: ${audioSize} bytes`);
                   
-                  // For WebM/Opus, analyze quality after conversion
-                  if (audioQuality.skipAnalysis) {
-                    const convertedQuality = analyzeAudioQuality(pcmBuffer, 'audio/pcm');
-                    console.log(`🔍 Post-conversion analysis for ${audioFormat}:`, convertedQuality);
-                    
-                    if (!convertedQuality.hasSpeech) {
-                      console.warn(`⚠️ [${language}] Converted audio still appears to contain no speech`);
-                      ws.send(JSON.stringify({ 
-                        type: 'warning', 
-                        message: 'No clear speech detected after conversion. Please speak louder or check your microphone.',
-                        audioStats: convertedQuality
-                      }));
-                      return; // Skip sending to Azure
-                    }
-                  }
-                  
-                  // Write converted PCM data to Azure Speech SDK
-                  pushStream.write(pcmBuffer);
-                  console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
-                  
-                  // Save successful audio for debugging (occasionally)
-                  if (Math.random() < 0.1) { // Save 10% of successful audio for debugging
-                    try {
-                      const debugFileName = `/tmp/success_audio_${Date.now()}.wav`;
-                      fs.writeFileSync(debugFileName, pcmBuffer);
-                      console.log(`🔍 [${language}] Saved successful audio for debugging: ${debugFileName}`);
-                    } catch (debugError) {
-                      console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
-                    }
-                  }
-                })
-                .catch(conversionError => {
-                  console.error(`❌ [${language}] Audio conversion failed:`, conversionError.message);
-                  
-                  // ✅ Graceful error handling - don't crash the connection
-                  if (conversionError.message.includes('Corrupted WebM file') || 
-                      conversionError.message.includes('EBML header invalid') ||
-                      conversionError.message.includes('WebM chunk too small')) {
-                    console.warn(`⚠️ [${language}] Skipping corrupted chunk gracefully`);
+                  // 1. Strict size validation - minimum 10KB for WebM files
+                  if (audioSize < 10240) { // 10KB minimum
+                    console.warn(`⚠️ [${language}] WebM chunk too small (${audioSize} bytes), minimum 10KB required`);
                     ws.send(JSON.stringify({ 
                       type: 'warning', 
-                      message: 'Corrupted audio chunk skipped. Recording continues normally.',
-                      details: { error: conversionError.message, format: audioFormat }
+                      message: 'WebM audio chunk too small. Please speak for at least 2-3 seconds.',
+                      audioStats: { size: audioSize, format: audioFormat, reason: 'webm_chunk_too_small', minimumRequired: '10KB' }
                     }));
-                  } else {
-                    // For other errors, send more detailed feedback
+                    return; // Skip processing small WebM chunks
+                  }
+                  
+                  // 2. Mandatory EBML header validation for WebM
+                  if (!isValidWebMHeader(audioBuffer)) {
+                    console.error(`❌ [${language}] WebM chunk lacks valid EBML header (${audioSize} bytes)`);
                     ws.send(JSON.stringify({ 
                       type: 'error', 
-                      message: 'Audio processing failed. Please check your microphone or try a different format.',
-                      details: { error: conversionError.message, format: audioFormat }
+                      message: 'Invalid WebM format detected. Please restart recording.',
+                      audioStats: { size: audioSize, format: audioFormat, reason: 'invalid_webm_header' }
                     }));
+                    return; // Reject all WebM chunks without valid headers
                   }
-                });
-              
-            } catch (processingError) {
-              console.error(`❌ [${language}] Audio processing error:`, processingError);
-              
-              // ✅ Graceful error handling for any processing errors
-              ws.send(JSON.stringify({ 
-                type: 'warning', 
-                message: 'Audio chunk processing failed, continuing with next chunk.',
-                details: { error: processingError.message, format: audioFormat }
-              }));
-            }
-          } else {
-            console.warn(`⚠️ [${language}] Invalid audio chunk size: ${audioSize} bytes`);
-            ws.send(JSON.stringify({ 
-              type: 'error', 
-              error: `Invalid audio chunk size: ${audioSize} bytes` 
-            }));
-          }
-        } else if (!initialized) {
-          console.warn(`⚠️ Received audio data before initialization. Data size: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
-          // Store the data temporarily and process it once initialized
-          if (data instanceof Buffer) {
-            console.log(`📦 [${language}] Storing audio data for later processing...`);
-            // Process the audio data anyway, even if not fully initialized
-            try {
-              // Parse the data as JSON
-              const jsonData = JSON.parse(data.toString());
-              if (jsonData.type === 'audio' && jsonData.data) {
-                const audioBuffer = Buffer.from(jsonData.data, 'base64');
-                const audioSize = audioBuffer.length;
-                const audioFormat = jsonData.format || 'audio/pcm';
+                  
+                  console.log(`✅ [${language}] WebM validation passed: ${audioSize} bytes with valid EBML header`);
+                }
                 
-                console.log(`🎵 [${language}] Processing stored audio data: ${audioSize} bytes, format: ${audioFormat}`);
+                // For PCM data, we can use it directly without conversion
+                if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
+                  console.log(`✅ [${language}] Using PCM data directly: ${audioSize} bytes`);
+                  
+                  // Skip audio quality analysis for new app (client handles it)
+                  console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
+                  
+                  // More lenient criteria for PCM with longer chunks (~1 second optimal)
+                  if (audioSize >= 16000) { // At least 1 second of audio (optimal)
+                    console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
+                    
+                    // Write PCM data directly to Azure Speech SDK
+                    pushStream.write(audioBuffer);
+                    console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                    return;
+                  } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
+                    console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
+                    
+                    // Write PCM data directly to Azure Speech SDK
+                    pushStream.write(audioBuffer);
+                    console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                    return;
+                  } else {
+                    console.log(`⚠️ [${language}] PCM chunk too short (${(audioSize / 32000).toFixed(2)}s), accumulating...`);
+                    // For short chunks, accumulate them or send anyway for testing
+                    pushStream.write(audioBuffer);
+                    console.log(`✅ [${language}] Short PCM chunk sent to Azure for testing`);
+                    return;
+                  }
+                }
                 
-                // Process the audio data
-                if (audioSize > 0 && audioSize < 1000000) {
-                  // For PCM data, we can use it directly without conversion
-                  if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
-                    console.log(`✅ [${language}] Using stored PCM data directly: ${audioSize} bytes`);
+                // For other formats, convert using ffmpeg
+                console.log(`🔄 [${language}] Converting audio from ${audioFormat} to PCM WAV 16kHz...`);
+                
+                // Enhanced audio quality analysis before conversion
+                console.log(`🔍 Analyzing audio quality for format: ${audioFormat}`);
+                const audioQuality = analyzeAudioQuality(audioBuffer, audioFormat);
+                console.log(`🔍 Audio quality result:`, audioQuality);
+                
+                // Strict speech detection filtering - reject ANY audio without speech
+                if (!audioQuality.hasSpeech) {
+                  console.warn(`❌ [${language}] No speech detected in audio chunk (${audioSize} bytes)`);
+                  console.warn(`📊 [${language}] Audio stats:`, {
+                    duration: audioQuality.duration,
+                    averageAmplitude: audioQuality.averageAmplitude,
+                    dynamicRange: audioQuality.dynamicRange,
+                    zeroCrossingRate: audioQuality.zeroCrossingRate
+                  });
+                  
+                  // Save problematic audio for debugging
+                  try {
+                    const debugFileName = `/tmp/no_speech_audio_${Date.now()}.raw`;
+                    fs.writeFileSync(debugFileName, audioBuffer);
+                    console.log(`🔍 [${language}] Saved silent audio for debugging: ${debugFileName}`);
+                  } catch (debugError) {
+                    console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
+                  }
+                  
+                  // Send informative warning to client
+                  ws.send(JSON.stringify({ 
+                    type: 'warning', 
+                    message: 'No speech detected. Please speak louder and closer to your microphone.',
+                    audioStats: {
+                      size: audioSize,
+                      format: audioFormat,
+                      duration: audioQuality.duration,
+                      amplitude: audioQuality.averageAmplitude,
+                      reason: 'no_speech_detected'
+                    }
+                  }));
+                  
+                  return; // Reject all audio without speech
+                }
+                
+                console.log(`✅ [${language}] Speech detected, proceeding with audio conversion`);
+                
+                // Convert to PCM WAV using ffmpeg
+                convertAudioFormat(audioBuffer, audioFormat, 'wav')
+                  .then(pcmBuffer => {
+                    console.log(`✅ [${language}] Audio converted successfully: ${audioSize} bytes → ${pcmBuffer.length} bytes`);
                     
-                    // Skip audio quality analysis for new app (client handles it)
-                    console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
-                    
-                    // More lenient criteria for PCM with longer chunks (~1 second optimal)
-                    if (audioSize >= 16000) { // At least 1 second of audio (optimal)
-                      console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
+                    // For WebM/Opus, analyze quality after conversion
+                    if (audioQuality.skipAnalysis) {
+                      const convertedQuality = analyzeAudioQuality(pcmBuffer, 'audio/pcm');
+                      console.log(`🔍 Post-conversion analysis for ${audioFormat}:`, convertedQuality);
                       
-                      // Write PCM data directly to Azure Speech SDK if available
-                      if (pushStream) {
-                        pushStream.write(audioBuffer);
-                        console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
-                      } else {
-                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
-                      }
-                      return;
-                    } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
-                      console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
-                      
-                      if (!audioQuality.hasSpeech) {
-                        console.warn(`⚠️ [${language}] PCM audio appears to contain no speech despite acceptable duration`);
+                      if (!convertedQuality.hasSpeech) {
+                        console.warn(`⚠️ [${language}] Converted audio still appears to contain no speech`);
                         ws.send(JSON.stringify({ 
                           type: 'warning', 
-                          message: 'No clear speech detected. Please speak louder or check your microphone.',
-                          audioStats: audioQuality
+                          message: 'No clear speech detected after conversion. Please speak louder or check your microphone.',
+                          audioStats: convertedQuality
                         }));
+                        return; // Skip sending to Azure
+                      }
+                    }
+                    
+                    // Write converted PCM data to Azure Speech SDK
+                    pushStream.write(pcmBuffer);
+                    console.log(`✅ [${language}] PCM audio chunk written to Azure Speech SDK`);
+                    
+                    // Save successful audio for debugging (occasionally)
+                    if (Math.random() < 0.1) { // Save 10% of successful audio for debugging
+                      try {
+                        const debugFileName = `/tmp/success_audio_${Date.now()}.wav`;
+                        fs.writeFileSync(debugFileName, pcmBuffer);
+                        console.log(`🔍 [${language}] Saved successful audio for debugging: ${debugFileName}`);
+                      } catch (debugError) {
+                        console.warn(`⚠️ [${language}] Could not save debug audio:`, debugError.message);
+                      }
+                    }
+                  })
+                  .catch(conversionError => {
+                    console.error(`❌ [${language}] Audio conversion failed:`, conversionError.message);
+                    
+                    // Graceful error handling - don't crash the connection
+                    if (conversionError.message.includes('Corrupted WebM file') || 
+                        conversionError.message.includes('EBML header invalid') ||
+                        conversionError.message.includes('WebM chunk too small')) {
+                      console.warn(`⚠️ [${language}] Skipping corrupted chunk gracefully`);
+                      ws.send(JSON.stringify({ 
+                        type: 'warning', 
+                        message: 'Corrupted audio chunk skipped. Recording continues normally.',
+                        details: { error: conversionError.message, format: audioFormat }
+                      }));
+                    } else {
+                      // For other errors, send more detailed feedback
+                      ws.send(JSON.stringify({ 
+                        type: 'error', 
+                        message: 'Audio processing failed. Please check your microphone or try a different format.',
+                        details: { error: conversionError.message, format: audioFormat }
+                      }));
+                    }
+                  });
+                
+              } catch (processingError) {
+                console.error(`❌ [${language}] Audio processing error:`, processingError);
+                
+                // Graceful error handling for any processing errors
+                ws.send(JSON.stringify({ 
+                  type: 'warning', 
+                  message: 'Audio chunk processing failed, continuing with next chunk.',
+                  details: { error: processingError.message, format: audioFormat }
+                }));
+              }
+            } else {
+              console.warn(`⚠️ [${language}] Invalid audio chunk size: ${audioSize} bytes`);
+              ws.send(JSON.stringify({ 
+                type: 'error', 
+                error: `Invalid audio chunk size: ${audioSize} bytes` 
+              }));
+            }
+          } else if (!initialized) {
+            console.warn(`⚠️ Received audio data before initialization. Data size: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
+            // Store the data temporarily and process it once initialized
+            if (data instanceof Buffer) {
+              console.log(`📦 [${language}] Storing audio data for later processing...`);
+              // Process the audio data anyway, even if not fully initialized
+              try {
+                // Parse the data as JSON
+                const jsonData = JSON.parse(data.toString());
+                if (jsonData.type === 'audio' && jsonData.data) {
+                  const audioBuffer = Buffer.from(jsonData.data, 'base64');
+                  const audioSize = audioBuffer.length;
+                  const audioFormat = jsonData.format || 'audio/pcm';
+                  
+                  console.log(`🎵 [${language}] Processing stored audio data: ${audioSize} bytes, format: ${audioFormat}`);
+                  
+                  // Process the audio data
+                  if (audioSize > 0 && audioSize < 1000000) {
+                    // For PCM data, we can use it directly without conversion
+                    if (audioFormat === 'audio/pcm' || audioFormat === 'audio/raw') {
+                      console.log(`✅ [${language}] Using stored PCM data directly: ${audioSize} bytes`);
+                      
+                      // Skip audio quality analysis for new app (client handles it)
+                      console.log(`✅ [${language}] Skipping server-side audio quality analysis (client handles it)`);
+                      
+                      // More lenient criteria for PCM with longer chunks (~1 second optimal)
+                      if (audioSize >= 16000) { // At least 1 second of audio (optimal)
+                        console.log(`✅ [${language}] PCM chunk duration optimal (${(audioSize / 32000).toFixed(2)}s)`);
+                        
+                        // Write PCM data directly to Azure Speech SDK if available
+                        if (pushStream) {
+                          pushStream.write(audioBuffer);
+                          console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
+                        } else {
+                          console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                        }
+                        return;
+                      } else if (audioSize >= 8000) { // At least 0.5 seconds (acceptable)
+                        console.log(`✅ [${language}] PCM chunk duration acceptable (${(audioSize / 32000).toFixed(2)}s)`);
+                        
+                        // Write PCM data directly to Azure Speech SDK if available
+                        if (pushStream) {
+                          pushStream.write(audioBuffer);
+                          console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
+                        } else {
+                          console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                        }
+                        return;
+                      } else {
+                        console.log(`⚠️ [${language}] Stored PCM chunk too short (${(audioSize / 32000).toFixed(2)}s), accumulating...`);
+                        // For short chunks, accumulate them or send anyway for testing
+                        if (pushStream) {
+                          pushStream.write(audioBuffer);
+                          console.log(`✅ [${language}] Short stored PCM chunk sent to Azure for testing`);
+                        } else {
+                          console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
+                        }
                         return;
                       }
-                      
-                      // Write PCM data directly to Azure Speech SDK if available
-                      if (pushStream) {
-                        pushStream.write(audioBuffer);
-                        console.log(`✅ [${language}] Stored PCM audio chunk written to Azure Speech SDK`);
-                      } else {
-                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
-                      }
-                      return;
-                    } else {
-                      console.log(`⚠️ [${language}] Stored PCM chunk too short (${(audioSize / 32000).toFixed(2)}s), accumulating...`);
-                      // For short chunks, accumulate them or send anyway for testing
-                      if (pushStream) {
-                        pushStream.write(audioBuffer);
-                        console.log(`✅ [${language}] Short stored PCM chunk sent to Azure for testing`);
-                      } else {
-                        console.log(`⚠️ [${language}] Push stream not available yet, skipping audio processing`);
-                      }
-                      return;
                     }
                   }
                 }
+              } catch (parseError) {
+                console.warn(`⚠️ [${language}] Could not parse stored audio data:`, parseError.message);
               }
-            } catch (parseError) {
-              console.warn(`⚠️ [${language}] Could not parse stored audio data:`, parseError.message);
             }
+          } else if (!pushStream) {
+            console.warn(`⚠️ Push stream not available. Initialized: ${initialized}, Data: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
+          } else {
+            console.warn(`⚠️ Unexpected audio data format. Type: ${typeof data}, Instance: ${data.constructor.name}`);
           }
-        } else if (!pushStream) {
-          console.warn(`⚠️ Push stream not available. Initialized: ${initialized}, Data: ${data instanceof Buffer ? data.length : 'not buffer'} bytes`);
-        } else {
-          console.warn(`⚠️ Unexpected audio data format. Type: ${typeof data}, Instance: ${data.constructor.name}`);
+        } catch (error) {
+          console.error('❌ WebSocket message handling error:', error);
+          ws.send(JSON.stringify({ type: 'error', error: `Message handling failed: ${error.message}` }));
         }
-        
-      } catch (error) {
-        console.error('❌ WebSocket message handling error:', error);
-        ws.send(JSON.stringify({ type: 'error', error: `Message handling failed: ${error.message}` }));
-      }
-    });
+      });
 
-    ws.on('close', (code, reason) => {
-      console.log(`🔒 [${language}] Client disconnected: ${code} - ${reason}`);
-      
+    ws.on('close', () => {
+      console.log(`🔌 [${language}] WebSocket connection closed`);
       // Clean up Azure Speech SDK resources
       if (recognizer) {
         recognizer.stopContinuousRecognitionAsync(() => {
@@ -1619,7 +1517,6 @@ function startWebSocketServer(server) {
 
     ws.on('error', (err) => {
       console.error(`❌ [${language}] WebSocket error:`, err.message);
-      
       // Clean up on error
       if (recognizer) {
         recognizer.stopContinuousRecognitionAsync(() => {

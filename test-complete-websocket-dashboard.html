@@ -1,0 +1,1167 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>لوحة تحكم اختبارات Render WebSocket الشاملة</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 32px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 16px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #e5e7eb;
+        }
+        
+        .test-section h3 {
+            margin-bottom: 15px;
+            color: #1f2937;
+            font-size: 18px;
+            display: flex;
+            align-items: center;
+        }
+        
+        .test-section h3::before {
+            margin-left: 8px;
+            font-size: 20px;
+        }
+        
+        .status {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+        
+        .status.info {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #93c5fd;
+        }
+        
+        .status.success {
+            background-color: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+        
+        .status.error {
+            background-color: #fee2e2;
+            color: #dc2626;
+            border: 1px solid #fca5a5;
+        }
+        
+        .status.warning {
+            background-color: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fcd34d;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+        
+        .button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .button.recording {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            animation: pulse 2s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .log-container {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        
+        .log-entry.info { color: #60a5fa; }
+        .log-entry.success { color: #34d399; }
+        .log-entry.error { color: #f87171; }
+        .log-entry.warning { color: #fbbf24; }
+        
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .result-card {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            text-align: center;
+        }
+        
+        .result-card h4 {
+            margin-bottom: 8px;
+            color: #374151;
+        }
+        
+        .result-value {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .result-value.pass { color: #059669; }
+        .result-value.fail { color: #dc2626; }
+        .result-value.warning { color: #d97706; }
+        
+        #audioLevel {
+            width: 100%;
+            height: 50px;
+            background: #eee;
+            border-radius: 8px;
+            margin: 10px 0;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        #levelBar {
+            height: 100%;
+            background: linear-gradient(90deg, #28a745, #ffc107, #dc3545);
+            width: 0%;
+            transition: width 0.1s;
+            border-radius: 8px;
+        }
+        
+        .audio-info {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+        
+        .audio-stats {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            gap: 10px;
+            margin-top: 15px;
+        }
+        
+        .stat-item {
+            background: #f1f5f9;
+            padding: 10px;
+            border-radius: 6px;
+            text-align: center;
+        }
+        
+        .stat-label {
+            font-size: 12px;
+            color: #64748b;
+            margin-bottom: 4px;
+        }
+        
+        .stat-value {
+            font-size: 16px;
+            font-weight: bold;
+            color: #1e293b;
+        }
+        
+        .test-tabs {
+            display: flex;
+            margin-bottom: 20px;
+            border-bottom: 2px solid #e5e7eb;
+        }
+        
+        .tab-button {
+            background: none;
+            border: none;
+            padding: 12px 24px;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            font-weight: 600;
+            color: #6b7280;
+            transition: all 0.3s ease;
+        }
+        
+        .tab-button.active {
+            color: #2563eb;
+            border-bottom-color: #2563eb;
+        }
+        
+        .tab-content {
+            display: none;
+        }
+        
+        .tab-content.active {
+            display: block;
+        }
+        
+        .language-selector {
+            margin: 10px 0;
+            padding: 10px;
+            background: #f8fafc;
+            border-radius: 8px;
+        }
+        
+        .language-selector select {
+            padding: 8px 12px;
+            border: 1px solid #d1d5db;
+            border-radius: 6px;
+            font-size: 14px;
+            margin-left: 10px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 لوحة تحكم اختبارات Render WebSocket الشاملة</h1>
+            <p>اختبارات الاتصال + الميكروفون + إرسال الصوت + استقبال التفريغ</p>
+        </div>
+        
+        <div class="content">
+            <div class="test-tabs">
+                <button class="tab-button active" onclick="showTab('connection')">🔌 اختبارات الاتصال</button>
+                <button class="tab-button" onclick="showTab('audio')">🎤 اختبارات الصوت</button>
+                <button class="tab-button" onclick="showTab('comprehensive')">🧪 اختبارات شاملة</button>
+                <button class="tab-button" onclick="showTab('diagnostic')">🔍 تشخيص المشاكل</button>
+            </div>
+            
+            <!-- اختبارات الاتصال -->
+            <div id="connection" class="tab-content active">
+                <div class="test-section">
+                    <h3>🔌 اختبارات الاتصال الأساسية</h3>
+                    <button id="testHttp" class="button">اختبار HTTP Health</button>
+                    <button id="testWebSocket" class="button">اختبار WebSocket</button>
+                    <button id="testPing" class="button">اختبار Ping/Pong</button>
+                    <button id="testConnectionFull" class="button">اختبار شامل للاتصال</button>
+                </div>
+                
+                <div class="test-section">
+                    <h3>📊 نتائج الاتصال</h3>
+                    <div class="results-grid">
+                        <div class="result-card">
+                            <h4>HTTP Health</h4>
+                            <div id="httpResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>WebSocket Connection</h4>
+                            <div id="wsResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Ping/Pong</h4>
+                            <div id="pingResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>Messages Received</h4>
+                            <div id="messagesResult" class="result-value">0</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- اختبارات الصوت -->
+            <div id="audio" class="tab-content">
+                <div class="test-section">
+                    <h3>🎤 اختبارات الصوت والميكروفون</h3>
+                    <button id="testMicrophone" class="button">اختبار الميكروفون</button>
+                    <button id="testAudioSend" class="button">اختبار إرسال الصوت</button>
+                    <button id="testAudioTranscription" class="button">اختبار التفريغ</button>
+                    <button id="testAudioFull" class="button">اختبار شامل للصوت</button>
+                </div>
+                
+                <div class="test-section">
+                    <h3>🎵 مراقبة الصوت</h3>
+                    <div id="audioStatus" class="status info">جاهز لاختبار الميكروفون</div>
+                    <div id="audioLevel">
+                        <div id="levelBar"></div>
+                    </div>
+                    <div id="levelText">مستوى الصوت: 0</div>
+                    
+                    <div class="audio-stats">
+                        <div class="stat-item">
+                            <div class="stat-label">القطع المرسلة</div>
+                            <div id="chunksSent" class="stat-value">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">إجمالي البيانات</div>
+                            <div id="totalBytes" class="stat-value">0 KB</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">الردود المستلمة</div>
+                            <div id="responsesReceived" class="stat-value">0</div>
+                        </div>
+                        <div class="stat-item">
+                            <div class="stat-label">وقت الاستجابة</div>
+                            <div id="responseTime" class="stat-value">0ms</div>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="test-section">
+                    <h3>📊 نتائج الصوت</h3>
+                    <div class="results-grid">
+                        <div class="result-card">
+                            <h4>الميكروفون</h4>
+                            <div id="micResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>إرسال الصوت</h4>
+                            <div id="audioResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>استقبال التفريغ</h4>
+                            <div id="transcriptionResult" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>اللغة المدعومة</h4>
+                            <div id="languageResult" class="result-value">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- اختبارات شاملة -->
+            <div id="comprehensive" class="tab-content">
+                <div class="test-section">
+                    <h3>🧪 اختبارات شاملة</h3>
+                    <div class="language-selector">
+                        <label>اختر اللغة:</label>
+                        <select id="languageSelect">
+                            <option value="ar-SA">العربية (السعودية)</option>
+                            <option value="en-US">English (US)</option>
+                            <option value="auto">Auto Detection</option>
+                        </select>
+                    </div>
+                    <button id="testComplete" class="button">اختبار شامل كامل</button>
+                    <button id="testStepByStep" class="button">اختبار خطوة بخطوة</button>
+                    <button id="testStress" class="button">اختبار الضغط</button>
+                </div>
+                
+                <div class="test-section">
+                    <h3>📊 النتائج الشاملة</h3>
+                    <div class="results-grid">
+                        <div class="result-card">
+                            <h4>الاتصال</h4>
+                            <div id="overallConnection" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>الصوت</h4>
+                            <div id="overallAudio" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>التفريغ</h4>
+                            <div id="overallTranscription" class="result-value">-</div>
+                        </div>
+                        <div class="result-card">
+                            <h4>الحالة العامة</h4>
+                            <div id="overallStatus" class="result-value">-</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            
+            <!-- تشخيص المشاكل -->
+            <div id="diagnostic" class="tab-content">
+                <div class="test-section">
+                    <h3>🔍 تشخيص المشاكل</h3>
+                    <button id="testDiagnostic" class="button">تشخيص شامل</button>
+                    <button id="testServerHealth" class="button">فحص صحة السيرفر</button>
+                    <button id="testAzureSpeech" class="button">فحص Azure Speech</button>
+                    <button id="testAudioFormats" class="button">اختبار تنسيقات الصوت</button>
+                </div>
+                
+                <div class="test-section">
+                    <h3>📋 تقرير التشخيص</h3>
+                    <div id="diagnosticReport" class="status info">
+                        اضغط على "تشخيص شامل" لبدء التشخيص
+                    </div>
+                </div>
+            </div>
+            
+            <!-- السجلات -->
+            <div class="test-section">
+                <h3>📝 سجلات الاختبار</h3>
+                <button id="clearLog" class="button">مسح السجلات</button>
+                <button id="exportLog" class="button">تصدير السجلات</button>
+                <div id="logContainer" class="log-container">
+                    <div class="log-entry info">🚀 جاهز لبدء الاختبارات...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'wss://ai-voicesum.onrender.com/ws';
+        const HTTP_URL = 'https://ai-voicesum.onrender.com/health';
+        
+        let ws = null;
+        let mediaRecorder = null;
+        let audioStream = null;
+        let audioContext = null;
+        let analyser = null;
+        let dataArray = null;
+        let animationId = null;
+        let isRecording = false;
+        let isConnected = false;
+        
+        let testStats = {
+            chunksSent: 0,
+            totalBytes: 0,
+            responsesReceived: 0,
+            responseTimes: []
+        };
+        
+        let testResults = {
+            httpHealth: false,
+            websocketConnection: false,
+            pingSuccess: false,
+            microphone: false,
+            audioSending: false,
+            transcription: false,
+            messagesReceived: 0
+        };
+        
+        // Tab management
+        function showTab(tabName) {
+            // Hide all tabs
+            document.querySelectorAll('.tab-content').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab-button').forEach(button => {
+                button.classList.remove('active');
+            });
+            
+            // Show selected tab
+            document.getElementById(tabName).classList.add('active');
+            event.target.classList.add('active');
+        }
+        
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function updateResult(elementId, value, type = 'pass') {
+            const element = document.getElementById(elementId);
+            if (element) {
+                element.textContent = value;
+                element.className = `result-value ${type}`;
+            }
+        }
+        
+        function updateStats() {
+            document.getElementById('chunksSent').textContent = testStats.chunksSent;
+            document.getElementById('totalBytes').textContent = `${(testStats.totalBytes / 1024).toFixed(1)} KB`;
+            document.getElementById('responsesReceived').textContent = testStats.responsesReceived;
+            
+            if (testStats.responseTimes.length > 0) {
+                const avgTime = testStats.responseTimes.reduce((a, b) => a + b, 0) / testStats.responseTimes.length;
+                document.getElementById('responseTime').textContent = `${avgTime.toFixed(0)}ms`;
+            }
+        }
+        
+        // Connection Tests
+        async function testHttpHealth() {
+            log('📡 اختبار HTTP Health...', 'info');
+            updateResult('httpResult', 'اختبار...', 'warning');
+            
+            try {
+                const response = await fetch(HTTP_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ HTTP Health Check نجح: ${JSON.stringify(data)}`, 'success');
+                    testResults.httpHealth = true;
+                    updateResult('httpResult', 'PASS', 'pass');
+                } else {
+                    log(`❌ HTTP Health Check فشل: ${response.status} ${response.statusText}`, 'error');
+                    testResults.httpHealth = false;
+                    updateResult('httpResult', 'FAIL', 'fail');
+                }
+            } catch (error) {
+                log(`❌ HTTP Health Check خطأ: ${error.message}`, 'error');
+                testResults.httpHealth = false;
+                updateResult('httpResult', 'FAIL', 'fail');
+            }
+        }
+        
+        function testWebSocket() {
+            log('🔌 اختبار WebSocket...', 'info');
+            updateResult('wsResult', 'اختبار...', 'warning');
+            
+            return new Promise((resolve) => {
+                ws = new WebSocket(SERVER_URL);
+                let initSent = false;
+                let audioSent = false;
+                let messagesReceived = 0;
+                
+                const timeout = setTimeout(() => {
+                    log('⏰ WebSocket test timeout', 'warning');
+                    ws.close();
+                    testResults.websocketConnection = false;
+                    updateResult('wsResult', 'FAIL', 'fail');
+                    resolve();
+                }, 15000);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected successfully', 'success');
+                    testResults.websocketConnection = true;
+                    isConnected = true;
+                    
+                    setTimeout(() => {
+                        const initMessage = {
+                            type: 'init',
+                            language: 'ar-SA',
+                            autoDetection: false,
+                            realTime: true
+                        };
+                        
+                        log(`📤 Sending init message: ${JSON.stringify(initMessage)}`, 'info');
+                        ws.send(JSON.stringify(initMessage));
+                        initSent = true;
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    messagesReceived++;
+                    testResults.messagesReceived = messagesReceived;
+                    updateResult('messagesResult', messagesReceived);
+                    
+                    try {
+                        const message = JSON.parse(event.data);
+                        log(`📥 Message ${messagesReceived}: ${JSON.stringify(message)}`, 'info');
+                        
+                        if (message.type === 'status' && initSent && !audioSent) {
+                            log('✅ Init message acknowledged', 'success');
+                            
+                            setTimeout(() => {
+                                const audioTest = {
+                                    type: 'audio',
+                                    data: btoa(String.fromCharCode(...new Array(32000).fill(0))),
+                                    format: 'audio/pcm'
+                                };
+                                
+                                log('📤 Sending audio test (32KB PCM silence)', 'info');
+                                ws.send(JSON.stringify(audioTest));
+                                audioSent = true;
+                            }, 1000);
+                        }
+                        
+                        if (message.type === 'transcription' || message.type === 'final' || message.type === 'warning') {
+                            log('✅ Audio processing acknowledged', 'success');
+                        }
+                        
+                    } catch (parseError) {
+                        log(`📥 Raw message ${messagesReceived}: ${event.data.substring(0, 100)}`, 'info');
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log(`❌ WebSocket error: ${error.message || 'Unknown error'}`, 'error');
+                    testResults.websocketConnection = false;
+                    updateResult('wsResult', 'FAIL', 'fail');
+                    clearTimeout(timeout);
+                    resolve();
+                };
+                
+                ws.onclose = (event) => {
+                    log(`🔒 WebSocket closed: ${event.code} - ${event.reason}`, 'info');
+                    clearTimeout(timeout);
+                    isConnected = false;
+                    
+                    if (testResults.websocketConnection) {
+                        updateResult('wsResult', 'PASS', 'pass');
+                    }
+                    resolve();
+                };
+            });
+        }
+        
+        function testPingPong() {
+            log('🏓 اختبار Ping/Pong...', 'info');
+            updateResult('pingResult', 'اختبار...', 'warning');
+            
+            return new Promise((resolve) => {
+                const ws = new WebSocket(SERVER_URL);
+                let pongReceived = false;
+                
+                const timeout = setTimeout(() => {
+                    log('⏰ Ping test timeout', 'warning');
+                    ws.close();
+                    testResults.pingSuccess = false;
+                    updateResult('pingResult', 'FAIL', 'fail');
+                    resolve();
+                }, 10000);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected for ping test', 'success');
+                    
+                    setTimeout(() => {
+                        const pingMessage = { type: 'ping' };
+                        log('📤 Sending ping message', 'info');
+                        ws.send(JSON.stringify(pingMessage));
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === 'pong') {
+                            log('✅ Pong received', 'success');
+                            pongReceived = true;
+                            testResults.pingSuccess = true;
+                            updateResult('pingResult', 'PASS', 'pass');
+                            clearTimeout(timeout);
+                            ws.close();
+                            resolve();
+                        }
+                    } catch (e) {
+                        // Ignore non-JSON messages
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log(`❌ Ping test error: ${error.message || 'Unknown error'}`, 'error');
+                    testResults.pingSuccess = false;
+                    updateResult('pingResult', 'FAIL', 'fail');
+                    clearTimeout(timeout);
+                    resolve();
+                };
+                
+                ws.onclose = () => {
+                    if (!pongReceived) {
+                        log('⚠️ No pong received', 'warning');
+                        testResults.pingSuccess = false;
+                        updateResult('pingResult', 'FAIL', 'fail');
+                    }
+                    clearTimeout(timeout);
+                    resolve();
+                };
+            });
+        }
+        
+        // Audio Tests
+        async function testMicrophone() {
+            log('🎤 اختبار الميكروفون...', 'info');
+            updateResult('micResult', 'اختبار...', 'warning');
+            
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    audio: {
+                        sampleRate: 16000,
+                        channelCount: 1,
+                        echoCancellation: true,
+                        noiseSuppression: true,
+                        autoGainControl: true
+                    }
+                });
+                
+                audioStream = stream;
+                log('✅ Microphone permission granted', 'success');
+                
+                // Set up audio analysis
+                audioContext = new AudioContext();
+                const source = audioContext.createMediaStreamSource(stream);
+                analyser = audioContext.createAnalyser();
+                analyser.fftSize = 256;
+                source.connect(analyser);
+                
+                dataArray = new Uint8Array(analyser.frequencyBinCount);
+                log('🔧 Audio analysis setup complete', 'success');
+                
+                // Start level monitoring
+                startLevelMonitoring();
+                
+                testResults.microphone = true;
+                updateResult('micResult', 'PASS', 'pass');
+                log('✅ Microphone test successful', 'success');
+                
+            } catch (error) {
+                log(`❌ Microphone test failed: ${error.message}`, 'error');
+                updateResult('micResult', 'FAIL', 'fail');
+            }
+        }
+        
+        function startLevelMonitoring() {
+            const updateLevel = () => {
+                if (analyser && dataArray) {
+                    analyser.getByteFrequencyData(dataArray);
+                    const average = dataArray.reduce((a, b) => a + b) / dataArray.length;
+                    
+                    const levelBar = document.getElementById('levelBar');
+                    const levelText = document.getElementById('levelText');
+                    const percentage = Math.min(100, (average / 255) * 100);
+                    
+                    levelBar.style.width = percentage + '%';
+                    levelText.textContent = `مستوى الصوت: ${average.toFixed(1)} (${percentage.toFixed(1)}%)`;
+                    
+                    if (average > 50) {
+                        log(`🔊 High audio level: ${average.toFixed(1)}`, 'warning');
+                    }
+                }
+                animationId = requestAnimationFrame(updateLevel);
+            };
+            updateLevel();
+        }
+        
+        async function testAudioSending() {
+            if (!isConnected) {
+                log('❌ WebSocket not connected. Run connection test first.', 'error');
+                return;
+            }
+            
+            if (!audioStream) {
+                log('❌ Microphone not available. Run microphone test first.', 'error');
+                return;
+            }
+            
+            log('🎵 اختبار إرسال الصوت...', 'info');
+            updateResult('audioResult', 'اختبار...', 'warning');
+            
+            try {
+                const options = {
+                    mimeType: 'audio/webm;codecs=opus',
+                    audioBitsPerSecond: 128000
+                };
+                
+                if (!MediaRecorder.isTypeSupported(options.mimeType)) {
+                    options.mimeType = 'audio/webm';
+                    log('⚠️ Opus codec not supported, using default WebM', 'warning');
+                }
+                
+                mediaRecorder = new MediaRecorder(audioStream, options);
+                log(`🎵 Using audio format: ${mediaRecorder.mimeType}`, 'info');
+                
+                let chunkCount = 0;
+                mediaRecorder.ondataavailable = async (event) => {
+                    chunkCount++;
+                    const chunkSize = event.data.size;
+                    testStats.chunksSent++;
+                    testStats.totalBytes += chunkSize;
+                    
+                    log(`📦 Audio chunk #${chunkCount}: ${chunkSize} bytes`, 'info');
+                    
+                    // Send to server
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        const startTime = Date.now();
+                        
+                        try {
+                            const base64Data = await blobToBase64(event.data);
+                            const audioMessage = {
+                                type: 'audio',
+                                data: base64Data,
+                                format: mediaRecorder.mimeType
+                            };
+                            
+                            ws.send(JSON.stringify(audioMessage));
+                            log(`📤 Sent audio chunk to server (${base64Data.length} chars)`, 'success');
+                            
+                            // Track response time
+                            setTimeout(() => {
+                                const responseTime = Date.now() - startTime;
+                                testStats.responseTimes.push(responseTime);
+                                log(`⏱️ Response time: ${responseTime}ms`, 'info');
+                            }, 1000);
+                            
+                        } catch (error) {
+                            log(`❌ Error sending audio: ${error.message}`, 'error');
+                        }
+                    } else {
+                        log('❌ WebSocket not ready for sending', 'error');
+                    }
+                    
+                    updateStats();
+                };
+                
+                mediaRecorder.onstart = () => {
+                    log('✅ Recording started', 'success');
+                    isRecording = true;
+                };
+                
+                mediaRecorder.onstop = () => {
+                    log('🛑 Recording stopped', 'info');
+                    isRecording = false;
+                };
+                
+                mediaRecorder.onerror = (event) => {
+                    log(`❌ Recording error: ${event.error}`, 'error');
+                };
+                
+                // Start recording with 1-second chunks
+                mediaRecorder.start(1000);
+                
+                // Stop after 10 seconds for testing
+                setTimeout(() => {
+                    if (mediaRecorder && mediaRecorder.state !== 'inactive') {
+                        mediaRecorder.stop();
+                    }
+                }, 10000);
+                
+                testResults.audioSending = true;
+                updateResult('audioResult', 'PASS', 'pass');
+                log('✅ Audio sending test started', 'success');
+                
+            } catch (error) {
+                log(`❌ Audio sending test failed: ${error.message}`, 'error');
+                updateResult('audioResult', 'FAIL', 'fail');
+            }
+        }
+        
+        function blobToBase64(blob) {
+            return new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => {
+                    const base64Data = reader.result.split(',')[1];
+                    resolve(base64Data);
+                };
+                reader.onerror = reject;
+                reader.readAsDataURL(blob);
+            });
+        }
+        
+        async function testAudioTranscription() {
+            log('👂 اختبار استقبال التفريغ...', 'info');
+            updateResult('transcriptionResult', 'اختبار...', 'warning');
+            
+            if (!isConnected) {
+                log('❌ WebSocket not connected', 'error');
+                updateResult('transcriptionResult', 'FAIL', 'fail');
+                return;
+            }
+            
+            // Monitor for transcription responses
+            let transcriptionReceived = false;
+            
+            const timeout = setTimeout(() => {
+                if (!transcriptionReceived) {
+                    log('⏰ No transcription received within timeout', 'warning');
+                    updateResult('transcriptionResult', 'FAIL', 'fail');
+                }
+            }, 15000);
+            
+            ws.onmessage = (event) => {
+                try {
+                    const message = JSON.parse(event.data);
+                    testStats.responsesReceived++;
+                    
+                    log(`📥 Received: ${JSON.stringify(message)}`, 'success');
+                    
+                    if (message.type === 'transcription' || message.type === 'final') {
+                        updateResult('transcriptionResult', 'PASS', 'pass');
+                        log(`✅ Transcription received: "${message.text}"`, 'success');
+                        transcriptionReceived = true;
+                        testResults.transcription = true;
+                        clearTimeout(timeout);
+                    } else if (message.type === 'error') {
+                        log(`❌ Server error: ${message.error}`, 'error');
+                    }
+                    
+                    updateStats();
+                    
+                } catch (error) {
+                    log(`❌ Error parsing message: ${error.message}`, 'error');
+                }
+            };
+        }
+        
+        // Comprehensive Tests
+        async function testComplete() {
+            log('🚀 بدء الاختبار الشامل الكامل...', 'info');
+            
+            const language = document.getElementById('languageSelect').value;
+            log(`🌍 اللغة المختارة: ${language}`, 'info');
+            
+            // Reset results
+            testResults = {
+                httpHealth: false,
+                websocketConnection: false,
+                pingSuccess: false,
+                microphone: false,
+                audioSending: false,
+                transcription: false,
+                messagesReceived: 0
+            };
+            
+            // 1. Test HTTP Health
+            await testHttpHealth();
+            
+            // 2. Test WebSocket
+            await testWebSocket();
+            
+            // 3. Test Ping/Pong
+            await testPingPong();
+            
+            // 4. Test Microphone
+            await testMicrophone();
+            
+            // 5. Test Audio Sending
+            await testAudioSending();
+            
+            // 6. Test Transcription
+            await testAudioTranscription();
+            
+            // Display final results
+            log('📊 === النتائج النهائية ===', 'info');
+            log(`✅ HTTP Health: ${testResults.httpHealth ? 'PASS' : 'FAIL'}`, testResults.httpHealth ? 'success' : 'error');
+            log(`✅ WebSocket Connection: ${testResults.websocketConnection ? 'PASS' : 'FAIL'}`, testResults.websocketConnection ? 'success' : 'error');
+            log(`✅ Ping/Pong: ${testResults.pingSuccess ? 'PASS' : 'FAIL'}`, testResults.pingSuccess ? 'success' : 'error');
+            log(`✅ Microphone: ${testResults.microphone ? 'PASS' : 'FAIL'}`, testResults.microphone ? 'success' : 'error');
+            log(`✅ Audio Sending: ${testResults.audioSending ? 'PASS' : 'FAIL'}`, testResults.audioSending ? 'success' : 'error');
+            log(`✅ Transcription: ${testResults.transcription ? 'PASS' : 'FAIL'}`, testResults.transcription ? 'success' : 'error');
+            log(`📨 Messages Received: ${testResults.messagesReceived}`, 'info');
+            
+            // Update overall results
+            updateResult('overallConnection', testResults.websocketConnection ? 'PASS' : 'FAIL', testResults.websocketConnection ? 'pass' : 'fail');
+            updateResult('overallAudio', testResults.audioSending ? 'PASS' : 'FAIL', testResults.audioSending ? 'pass' : 'fail');
+            updateResult('overallTranscription', testResults.transcription ? 'PASS' : 'FAIL', testResults.transcription ? 'pass' : 'fail');
+            
+            const overallSuccess = testResults.httpHealth && testResults.websocketConnection && testResults.audioSending && testResults.transcription;
+            updateResult('overallStatus', overallSuccess ? 'SUCCESS' : 'FAILED', overallSuccess ? 'pass' : 'fail');
+            
+            if (overallSuccess) {
+                log('✅ جميع الاختبارات نجحت! النظام يعمل بشكل مثالي.', 'success');
+            } else {
+                log('❌ بعض الاختبارات فشلت. راجع النتائج أعلاه.', 'error');
+            }
+        }
+        
+        // Diagnostic Tests
+        async function testDiagnostic() {
+            log('🔍 بدء التشخيص الشامل...', 'info');
+            
+            const report = document.getElementById('diagnosticReport');
+            report.className = 'status info';
+            report.textContent = 'جاري التشخيص...';
+            
+            // Run all diagnostic tests
+            await testHttpHealth();
+            await testWebSocket();
+            await testPingPong();
+            await testMicrophone();
+            
+            // Generate diagnostic report
+            let diagnosticMessage = '';
+            
+            if (!testResults.httpHealth) {
+                diagnosticMessage += '❌ مشكلة في HTTP Health\n';
+            }
+            if (!testResults.websocketConnection) {
+                diagnosticMessage += '❌ مشكلة في WebSocket Connection\n';
+            }
+            if (!testResults.pingSuccess) {
+                diagnosticMessage += '❌ مشكلة في Ping/Pong\n';
+            }
+            if (!testResults.microphone) {
+                diagnosticMessage += '❌ مشكلة في الميكروفون\n';
+            }
+            
+            if (diagnosticMessage === '') {
+                diagnosticMessage = '✅ جميع الاختبارات الأساسية نجحت';
+                report.className = 'status success';
+            } else {
+                report.className = 'status error';
+            }
+            
+            report.textContent = diagnosticMessage;
+            log('🔍 التشخيص مكتمل', 'info');
+        }
+        
+        // Utility functions
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '<div class="log-entry info">🚀 جاهز لبدء الاختبارات...</div>';
+            
+            // Reset all results
+            Object.keys(testResults).forEach(key => {
+                testResults[key] = false;
+            });
+            testResults.messagesReceived = 0;
+            
+            // Reset stats
+            testStats = {
+                chunksSent: 0,
+                totalBytes: 0,
+                responsesReceived: 0,
+                responseTimes: []
+            };
+            updateStats();
+            
+            // Reset all result displays
+            const resultElements = [
+                'httpResult', 'wsResult', 'pingResult', 'messagesResult',
+                'micResult', 'audioResult', 'transcriptionResult', 'languageResult',
+                'overallConnection', 'overallAudio', 'overallTranscription', 'overallStatus'
+            ];
+            
+            resultElements.forEach(elementId => {
+                updateResult(elementId, '-');
+            });
+        }
+        
+        function exportLog() {
+            const logContainer = document.getElementById('logContainer');
+            const logText = logContainer.innerText;
+            const blob = new Blob([logText], { type: 'text/plain' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `websocket-test-log-${new Date().toISOString().slice(0, 19).replace(/:/g, '-')}.txt`;
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+        
+        // Event listeners
+        document.getElementById('testHttp').addEventListener('click', testHttpHealth);
+        document.getElementById('testWebSocket').addEventListener('click', testWebSocket);
+        document.getElementById('testPing').addEventListener('click', testPingPong);
+        document.getElementById('testConnectionFull').addEventListener('click', async () => {
+            await testHttpHealth();
+            await testWebSocket();
+            await testPingPong();
+        });
+        
+        document.getElementById('testMicrophone').addEventListener('click', testMicrophone);
+        document.getElementById('testAudioSend').addEventListener('click', testAudioSending);
+        document.getElementById('testAudioTranscription').addEventListener('click', testAudioTranscription);
+        document.getElementById('testAudioFull').addEventListener('click', async () => {
+            await testMicrophone();
+            await testAudioSending();
+            await testAudioTranscription();
+        });
+        
+        document.getElementById('testComplete').addEventListener('click', testComplete);
+        document.getElementById('testStepByStep').addEventListener('click', async () => {
+            log('🔍 بدء الاختبار خطوة بخطوة...', 'info');
+            await testHttpHealth();
+            await testWebSocket();
+            await testMicrophone();
+            await testAudioSending();
+            await testAudioTranscription();
+        });
+        document.getElementById('testStress').addEventListener('click', () => {
+            log('🔥 بدء اختبار الضغط...', 'info');
+            // Implement stress test
+        });
+        
+        document.getElementById('testDiagnostic').addEventListener('click', testDiagnostic);
+        document.getElementById('testServerHealth').addEventListener('click', testHttpHealth);
+        document.getElementById('testAzureSpeech').addEventListener('click', () => {
+            log('🔑 اختبار Azure Speech Service...', 'info');
+            // Implement Azure Speech test
+        });
+        document.getElementById('testAudioFormats').addEventListener('click', () => {
+            log('🎵 اختبار تنسيقات الصوت...', 'info');
+            // Implement audio format test
+        });
+        
+        document.getElementById('clearLog').addEventListener('click', clearLog);
+        document.getElementById('exportLog').addEventListener('click', exportLog);
+        
+        // Log browser capabilities
+        log('🔍 Browser Audio Capabilities:', 'info');
+        log(`- MediaRecorder: ${typeof MediaRecorder !== 'undefined' ? '✅' : '❌'}`, 'info');
+        log(`- AudioContext: ${typeof AudioContext !== 'undefined' ? '✅' : '❌'}`, 'info');
+        log(`- getUserMedia: ${typeof navigator.mediaDevices !== 'undefined' ? '✅' : '❌'}`, 'info');
+        
+        if (typeof MediaRecorder !== 'undefined') {
+            log('📋 Supported audio formats:', 'info');
+            const formats = [
+                'audio/webm;codecs=opus',
+                'audio/webm',
+                'audio/ogg;codecs=opus',
+                'audio/mp4',
+                'audio/wav'
+            ];
+            
+            formats.forEach(format => {
+                const supported = MediaRecorder.isTypeSupported(format);
+                log(`  - ${format}: ${supported ? '✅' : '❌'}`, 'info');
+            });
+        }
+    </script>
+</body>
+</html> 

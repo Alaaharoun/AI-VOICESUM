@@ -1,0 +1,485 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>اختبار الاتصال مع Render WebSocket</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            color: #333;
+        }
+        
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            background: white;
+            border-radius: 16px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            overflow: hidden;
+        }
+        
+        .header {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 10px;
+        }
+        
+        .header p {
+            opacity: 0.9;
+            font-size: 16px;
+        }
+        
+        .content {
+            padding: 30px;
+        }
+        
+        .test-section {
+            margin-bottom: 30px;
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #e5e7eb;
+        }
+        
+        .test-section h3 {
+            margin-bottom: 15px;
+            color: #1f2937;
+            font-size: 18px;
+        }
+        
+        .status {
+            padding: 12px 16px;
+            border-radius: 8px;
+            margin: 10px 0;
+            font-weight: 500;
+        }
+        
+        .status.info {
+            background-color: #dbeafe;
+            color: #1e40af;
+            border: 1px solid #93c5fd;
+        }
+        
+        .status.success {
+            background-color: #dcfce7;
+            color: #166534;
+            border: 1px solid #86efac;
+        }
+        
+        .status.error {
+            background-color: #fee2e2;
+            color: #dc2626;
+            border: 1px solid #fca5a5;
+        }
+        
+        .status.warning {
+            background-color: #fef3c7;
+            color: #92400e;
+            border: 1px solid #fcd34d;
+        }
+        
+        .button {
+            background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+            color: white;
+            border: none;
+            padding: 12px 24px;
+            border-radius: 8px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 5px;
+        }
+        
+        .button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(37, 99, 235, 0.3);
+        }
+        
+        .button:disabled {
+            background: #9ca3af;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .log-container {
+            background: #1f2937;
+            color: #f9fafb;
+            padding: 20px;
+            border-radius: 8px;
+            font-family: 'Courier New', monospace;
+            font-size: 14px;
+            max-height: 400px;
+            overflow-y: auto;
+            margin-top: 20px;
+        }
+        
+        .log-entry {
+            margin-bottom: 8px;
+            padding: 4px 0;
+        }
+        
+        .log-entry.info { color: #60a5fa; }
+        .log-entry.success { color: #34d399; }
+        .log-entry.error { color: #f87171; }
+        .log-entry.warning { color: #fbbf24; }
+        
+        .results-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 15px;
+            margin-top: 20px;
+        }
+        
+        .result-card {
+            background: #f8fafc;
+            padding: 15px;
+            border-radius: 8px;
+            border: 1px solid #e2e8f0;
+            text-align: center;
+        }
+        
+        .result-card h4 {
+            margin-bottom: 8px;
+            color: #374151;
+        }
+        
+        .result-value {
+            font-size: 18px;
+            font-weight: bold;
+        }
+        
+        .result-value.pass { color: #059669; }
+        .result-value.fail { color: #dc2626; }
+        .result-value.warning { color: #d97706; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🔍 اختبار الاتصال مع Render WebSocket</h1>
+            <p>فحص شامل للاتصال بين المتصفح والسيرفر على Render</p>
+        </div>
+        
+        <div class="content">
+            <div class="test-section">
+                <h3>🧪 اختبارات الاتصال</h3>
+                <button id="testHttp" class="button">اختبار HTTP Health</button>
+                <button id="testWebSocket" class="button">اختبار WebSocket</button>
+                <button id="testPing" class="button">اختبار Ping/Pong</button>
+                <button id="testFull" class="button">اختبار شامل</button>
+                <button id="clearLog" class="button">مسح السجلات</button>
+            </div>
+            
+            <div class="test-section">
+                <h3>📊 النتائج</h3>
+                <div class="results-grid">
+                    <div class="result-card">
+                        <h4>HTTP Health</h4>
+                        <div id="httpResult" class="result-value">-</div>
+                    </div>
+                    <div class="result-card">
+                        <h4>WebSocket Connection</h4>
+                        <div id="wsResult" class="result-value">-</div>
+                    </div>
+                    <div class="result-card">
+                        <h4>Ping/Pong</h4>
+                        <div id="pingResult" class="result-value">-</div>
+                    </div>
+                    <div class="result-card">
+                        <h4>Messages Received</h4>
+                        <div id="messagesResult" class="result-value">0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="test-section">
+                <h3>📝 سجلات الاختبار</h3>
+                <div id="logContainer" class="log-container">
+                    <div class="log-entry info">🚀 جاهز لبدء الاختبارات...</div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'wss://ai-voicesum.onrender.com/ws';
+        const HTTP_URL = 'https://ai-voicesum.onrender.com/health';
+        
+        let testResults = {
+            httpHealth: false,
+            websocketConnection: false,
+            pingSuccess: false,
+            messagesReceived: 0
+        };
+        
+        function log(message, type = 'info') {
+            const logContainer = document.getElementById('logContainer');
+            const logEntry = document.createElement('div');
+            logEntry.className = `log-entry ${type}`;
+            logEntry.textContent = `[${new Date().toLocaleTimeString()}] ${message}`;
+            logContainer.appendChild(logEntry);
+            logContainer.scrollTop = logContainer.scrollHeight;
+        }
+        
+        function updateResult(elementId, value, type = 'pass') {
+            const element = document.getElementById(elementId);
+            element.textContent = value;
+            element.className = `result-value ${type}`;
+        }
+        
+        async function testHttpHealth() {
+            log('📡 اختبار HTTP Health...', 'info');
+            updateResult('httpResult', 'اختبار...', 'warning');
+            
+            try {
+                const response = await fetch(HTTP_URL, {
+                    method: 'GET',
+                    headers: {
+                        'Accept': 'application/json'
+                    }
+                });
+                
+                if (response.ok) {
+                    const data = await response.json();
+                    log(`✅ HTTP Health Check نجح: ${JSON.stringify(data)}`, 'success');
+                    testResults.httpHealth = true;
+                    updateResult('httpResult', 'PASS', 'pass');
+                } else {
+                    log(`❌ HTTP Health Check فشل: ${response.status} ${response.statusText}`, 'error');
+                    testResults.httpHealth = false;
+                    updateResult('httpResult', 'FAIL', 'fail');
+                }
+            } catch (error) {
+                log(`❌ HTTP Health Check خطأ: ${error.message}`, 'error');
+                testResults.httpHealth = false;
+                updateResult('httpResult', 'FAIL', 'fail');
+            }
+        }
+        
+        function testWebSocket() {
+            log('🔌 اختبار WebSocket...', 'info');
+            updateResult('wsResult', 'اختبار...', 'warning');
+            
+            return new Promise((resolve) => {
+                const ws = new WebSocket(SERVER_URL);
+                let initSent = false;
+                let audioSent = false;
+                let messagesReceived = 0;
+                
+                const timeout = setTimeout(() => {
+                    log('⏰ WebSocket test timeout', 'warning');
+                    ws.close();
+                    testResults.websocketConnection = false;
+                    updateResult('wsResult', 'FAIL', 'fail');
+                    resolve();
+                }, 15000);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected successfully', 'success');
+                    testResults.websocketConnection = true;
+                    
+                    setTimeout(() => {
+                        const initMessage = {
+                            type: 'init',
+                            language: 'ar-SA',
+                            autoDetection: false,
+                            realTime: true
+                        };
+                        
+                        log(`📤 Sending init message: ${JSON.stringify(initMessage)}`, 'info');
+                        ws.send(JSON.stringify(initMessage));
+                        initSent = true;
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    messagesReceived++;
+                    testResults.messagesReceived = messagesReceived;
+                    updateResult('messagesResult', messagesReceived);
+                    
+                    try {
+                        const message = JSON.parse(event.data);
+                        log(`📥 Message ${messagesReceived}: ${JSON.stringify(message)}`, 'info');
+                        
+                        if (message.type === 'status' && initSent && !audioSent) {
+                            log('✅ Init message acknowledged', 'success');
+                            
+                            setTimeout(() => {
+                                const audioTest = {
+                                    type: 'audio',
+                                    data: btoa(String.fromCharCode(...new Array(32000).fill(0))), // 32KB silence
+                                    format: 'audio/pcm'
+                                };
+                                
+                                log('📤 Sending audio test (32KB PCM silence)', 'info');
+                                ws.send(JSON.stringify(audioTest));
+                                audioSent = true;
+                            }, 1000);
+                        }
+                        
+                        if (message.type === 'transcription' || message.type === 'final' || message.type === 'warning') {
+                            log('✅ Audio processing acknowledged', 'success');
+                        }
+                        
+                    } catch (parseError) {
+                        log(`📥 Raw message ${messagesReceived}: ${event.data.substring(0, 100)}`, 'info');
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log(`❌ WebSocket error: ${error.message || 'Unknown error'}`, 'error');
+                    testResults.websocketConnection = false;
+                    updateResult('wsResult', 'FAIL', 'fail');
+                    clearTimeout(timeout);
+                    resolve();
+                };
+                
+                ws.onclose = (event) => {
+                    log(`🔒 WebSocket closed: ${event.code} - ${event.reason}`, 'info');
+                    clearTimeout(timeout);
+                    
+                    if (testResults.websocketConnection) {
+                        updateResult('wsResult', 'PASS', 'pass');
+                    }
+                    resolve();
+                };
+            });
+        }
+        
+        function testPingPong() {
+            log('🏓 اختبار Ping/Pong...', 'info');
+            updateResult('pingResult', 'اختبار...', 'warning');
+            
+            return new Promise((resolve) => {
+                const ws = new WebSocket(SERVER_URL);
+                let pongReceived = false;
+                
+                const timeout = setTimeout(() => {
+                    log('⏰ Ping test timeout', 'warning');
+                    ws.close();
+                    testResults.pingSuccess = false;
+                    updateResult('pingResult', 'FAIL', 'fail');
+                    resolve();
+                }, 10000);
+                
+                ws.onopen = () => {
+                    log('✅ WebSocket connected for ping test', 'success');
+                    
+                    setTimeout(() => {
+                        const pingMessage = { type: 'ping' };
+                        log('📤 Sending ping message', 'info');
+                        ws.send(JSON.stringify(pingMessage));
+                    }, 1000);
+                };
+                
+                ws.onmessage = (event) => {
+                    try {
+                        const message = JSON.parse(event.data);
+                        if (message.type === 'pong') {
+                            log('✅ Pong received', 'success');
+                            pongReceived = true;
+                            testResults.pingSuccess = true;
+                            updateResult('pingResult', 'PASS', 'pass');
+                            clearTimeout(timeout);
+                            ws.close();
+                            resolve();
+                        }
+                    } catch (e) {
+                        // Ignore non-JSON messages
+                    }
+                };
+                
+                ws.onerror = (error) => {
+                    log(`❌ Ping test error: ${error.message || 'Unknown error'}`, 'error');
+                    testResults.pingSuccess = false;
+                    updateResult('pingResult', 'FAIL', 'fail');
+                    clearTimeout(timeout);
+                    resolve();
+                };
+                
+                ws.onclose = () => {
+                    if (!pongReceived) {
+                        log('⚠️ No pong received', 'warning');
+                        testResults.pingSuccess = false;
+                        updateResult('pingResult', 'FAIL', 'fail');
+                    }
+                    clearTimeout(timeout);
+                    resolve();
+                };
+            });
+        }
+        
+        async function testFull() {
+            log('🚀 بدء الاختبار الشامل...', 'info');
+            
+            // Reset results
+            testResults = {
+                httpHealth: false,
+                websocketConnection: false,
+                pingSuccess: false,
+                messagesReceived: 0
+            };
+            
+            // Test HTTP Health
+            await testHttpHealth();
+            
+            // Test WebSocket
+            await testWebSocket();
+            
+            // Test Ping/Pong
+            await testPingPong();
+            
+            // Overall assessment
+            const overallStatus = testResults.httpHealth && testResults.websocketConnection;
+            log(`📊 === نتائج الاختبار الشامل ===`, 'info');
+            log(`✅ HTTP Health: ${testResults.httpHealth ? 'PASS' : 'FAIL'}`, testResults.httpHealth ? 'success' : 'error');
+            log(`✅ WebSocket Connection: ${testResults.websocketConnection ? 'PASS' : 'FAIL'}`, testResults.websocketConnection ? 'success' : 'error');
+            log(`✅ Ping/Pong: ${testResults.pingSuccess ? 'PASS' : 'FAIL'}`, testResults.pingSuccess ? 'success' : 'error');
+            log(`📨 Messages Received: ${testResults.messagesReceived}`, 'info');
+            
+            if (overallStatus) {
+                log('✅ الاتصال مع Render WebSocket يعمل بشكل صحيح', 'success');
+            } else {
+                log('❌ هناك مشاكل في الاتصال مع Render WebSocket', 'error');
+                log('💡 اقتراحات للتصحيح:', 'warning');
+                log('  1. تأكد من أن السيرفر يعمل على Render', 'warning');
+                log('  2. تحقق من متغيرات البيئة (AZURE_SPEECH_KEY, AZURE_SPEECH_REGION)', 'warning');
+                log('  3. تحقق من سجلات Render للبحث عن أخطاء', 'warning');
+                log('  4. تأكد من أن WebSocket endpoint صحيح (/ws)', 'warning');
+            }
+        }
+        
+        function clearLog() {
+            document.getElementById('logContainer').innerHTML = '<div class="log-entry info">🚀 جاهز لبدء الاختبارات...</div>';
+            updateResult('httpResult', '-');
+            updateResult('wsResult', '-');
+            updateResult('pingResult', '-');
+            updateResult('messagesResult', '0');
+        }
+        
+        // Event listeners
+        document.getElementById('testHttp').addEventListener('click', testHttpHealth);
+        document.getElementById('testWebSocket').addEventListener('click', testWebSocket);
+        document.getElementById('testPing').addEventListener('click', testPingPong);
+        document.getElementById('testFull').addEventListener('click', testFull);
+        document.getElementById('clearLog').addEventListener('click', clearLog);
+    </script>
+</body>
+</html> 
