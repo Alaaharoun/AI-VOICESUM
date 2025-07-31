@@ -32,27 +32,92 @@ console.log('- Server Port:', process.env.PORT || 10000);
 // LANGUAGE SUPPORT - All languages from the app
 // ============================================================================
 
-// Complete language mapping from the app
+// Complete language mapping from the app - Updated for full compatibility
 const AZURE_LANGUAGE_MAP = {
-  'ar': 'ar-SA', 'en': 'en-US', 'es': 'es-ES', 'fr': 'fr-FR', 'de': 'de-DE',
-  'it': 'it-IT', 'pt': 'pt-BR', 'ru': 'ru-RU', 'ja': 'ja-JP', 'ko': 'ko-KR',
-  'zh': 'zh-CN', 'tr': 'tr-TR', 'nl': 'nl-NL', 'pl': 'pl-PL', 'sv': 'sv-SE',
-  'da': 'da-DK', 'no': 'no-NO', 'fi': 'fi-FI', 'cs': 'cs-CZ', 'sk': 'sk-SK',
-  'hu': 'hu-HU', 'ro': 'ro-RO', 'bg': 'bg-BG', 'hr': 'hr-HR', 'sl': 'sl-SI',
-  'et': 'et-EE', 'lv': 'lv-LV', 'lt': 'lt-LT', 'el': 'el-GR', 'he': 'he-IL',
-  'th': 'th-TH', 'vi': 'vi-VN', 'id': 'id-ID', 'ms': 'ms-MY', 'fil': 'fil-PH',
-  'hi': 'hi-IN', 'bn': 'bn-IN', 'ur': 'ur-PK', 'fa': 'fa-IR', 'uk': 'uk-UA'
+  // Arabic variants
+  'ar': 'ar-SA', 'ar-SA': 'ar-SA', 'ar-EG': 'ar-EG', 'ar-AE': 'ar-AE',
+  'ar-MA': 'ar-MA', 'ar-DZ': 'ar-DZ', 'ar-TN': 'ar-TN', 'ar-JO': 'ar-JO',
+  'ar-LB': 'ar-LB', 'ar-KW': 'ar-KW', 'ar-QA': 'ar-QA', 'ar-BH': 'ar-BH',
+  'ar-OM': 'ar-OM', 'ar-YE': 'ar-YE', 'ar-SY': 'ar-SY', 'ar-IQ': 'ar-IQ',
+  'ar-PS': 'ar-PS',
+  
+  // English variants
+  'en': 'en-US', 'en-US': 'en-US', 'en-GB': 'en-GB', 'en-AU': 'en-AU',
+  'en-CA': 'en-CA', 'en-IN': 'en-IN', 'en-IE': 'en-IE', 'en-NZ': 'en-NZ',
+  'en-ZA': 'en-ZA', 'en-PH': 'en-PH',
+  
+  // French variants
+  'fr': 'fr-FR', 'fr-FR': 'fr-FR', 'fr-CA': 'fr-CA', 'fr-BE': 'fr-BE',
+  'fr-CH': 'fr-CH',
+  
+  // Spanish variants
+  'es': 'es-ES', 'es-ES': 'es-ES', 'es-MX': 'es-MX', 'es-AR': 'es-AR',
+  'es-CO': 'es-CO', 'es-PE': 'es-PE', 'es-VE': 'es-VE', 'es-CL': 'es-CL',
+  
+  // German variants
+  'de': 'de-DE', 'de-DE': 'de-DE', 'de-AT': 'de-AT', 'de-CH': 'de-CH',
+  
+  // Italian variants
+  'it': 'it-IT', 'it-IT': 'it-IT', 'it-CH': 'it-CH',
+  
+  // Portuguese variants
+  'pt': 'pt-BR', 'pt-BR': 'pt-BR', 'pt-PT': 'pt-PT',
+  
+  // Other languages
+  'ru': 'ru-RU', 'ru-RU': 'ru-RU',
+  'ja': 'ja-JP', 'ja-JP': 'ja-JP',
+  'ko': 'ko-KR', 'ko-KR': 'ko-KR',
+  'zh': 'zh-CN', 'zh-CN': 'zh-CN', 'zh-TW': 'zh-TW', 'zh-HK': 'zh-HK',
+  'hi': 'hi-IN', 'hi-IN': 'hi-IN',
+  'tr': 'tr-TR', 'tr-TR': 'tr-TR',
+  'nl': 'nl-NL', 'nl-NL': 'nl-NL', 'nl-BE': 'nl-BE',
+  'sv': 'sv-SE', 'sv-SE': 'sv-SE',
+  'da': 'da-DK', 'da-DK': 'da-DK',
+  'no': 'nb-NO', 'nb-NO': 'nb-NO', 'nn-NO': 'nn-NO',
+  'fi': 'fi-FI', 'fi-FI': 'fi-FI',
+  'pl': 'pl-PL', 'pl-PL': 'pl-PL',
+  'cs': 'cs-CZ', 'cs-CZ': 'cs-CZ',
+  'hu': 'hu-HU', 'hu-HU': 'hu-HU',
+  'ro': 'ro-RO', 'ro-RO': 'ro-RO',
+  'bg': 'bg-BG', 'bg-BG': 'bg-BG',
+  'hr': 'hr-HR', 'hr-HR': 'hr-HR',
+  'sk': 'sk-SK', 'sk-SK': 'sk-SK',
+  'sl': 'sl-SI', 'sl-SI': 'sl-SI',
+  'et': 'et-EE', 'et-EE': 'et-EE',
+  'lv': 'lv-LV', 'lv-LV': 'lv-LV',
+  'lt': 'lt-LT', 'lt-LT': 'lt-LT',
+  'el': 'el-GR', 'el-GR': 'el-GR',
+  'he': 'he-IL', 'he-IL': 'he-IL',
+  'th': 'th-TH', 'th-TH': 'th-TH',
+  'vi': 'vi-VN', 'vi-VN': 'vi-VN',
+  'id': 'id-ID', 'id-ID': 'id-ID',
+  'ms': 'ms-MY', 'ms-MY': 'ms-MY',
+  'fil': 'fil-PH', 'fil-PH': 'fil-PH',
+  'bn': 'bn-IN', 'bn-IN': 'bn-IN',
+  'ur': 'ur-PK', 'ur-PK': 'ur-PK',
+  'fa': 'fa-IR', 'fa-IR': 'fa-IR',
+  'uk': 'uk-UA', 'uk-UA': 'uk-UA'
 };
 
-// Convert language code to Azure format
+// Convert language code to Azure format with improved compatibility
 function convertToAzureLanguage(langCode) {
-  const azureCode = AZURE_LANGUAGE_MAP[langCode];
-  if (!azureCode) {
-    console.warn(`⚠️ Unsupported language code: ${langCode}, defaulting to en-US`);
-    return 'en-US';
+  // Direct mapping for full language codes
+  if (AZURE_LANGUAGE_MAP[langCode]) {
+    console.log(`🌐 Direct language mapping: ${langCode} → ${AZURE_LANGUAGE_MAP[langCode]}`);
+    return AZURE_LANGUAGE_MAP[langCode];
   }
-  console.log(`🌐 Language conversion: ${langCode} → ${azureCode}`);
-  return azureCode;
+  
+  // Fallback for short codes (e.g., 'ar' → 'ar-SA')
+  const shortCode = langCode.split('-')[0];
+  const fallbackCode = AZURE_LANGUAGE_MAP[shortCode];
+  
+  if (fallbackCode) {
+    console.log(`🌐 Fallback language mapping: ${langCode} → ${fallbackCode}`);
+    return fallbackCode;
+  }
+  
+  console.warn(`⚠️ Unsupported language code: ${langCode}, defaulting to en-US`);
+  return 'en-US';
 }
 
 // ============================================================================
