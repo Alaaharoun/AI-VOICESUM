@@ -539,6 +539,16 @@ export class RenderWebSocketService {
             errorCode: data.errorCode
           });
           
+          // Log additional error context
+          if (data.error && data.error.includes('Unable to contact server')) {
+            console.error('🔧 Azure Speech Service connection issue detected');
+            console.error('💡 This might be due to:');
+            console.error('   1. Azure Speech Service is down or unreachable');
+            console.error('   2. Network connectivity issues');
+            console.error('   3. Azure Speech Service quota exceeded');
+            console.error('   4. Invalid Azure Speech Service credentials');
+          }
+          
           // Enhanced error reporting for Azure Speech SDK issues
           if (errorPhase === 'azure_initialization') {
             console.error('🔧 Azure Speech SDK initialization failed with LID:', {
@@ -566,15 +576,17 @@ export class RenderWebSocketService {
             setTimeout(() => {
               if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 console.log('🔄 Attempting to reinitialize after quota error...');
+                this.isInitMessageSent = false; // Force re-send
                 this.sendInitMessage();
               }
             }, 2000);
-          } else if (data.isNetworkError) {
+          } else if (data.isNetworkError || (data.error && data.error.includes('Unable to contact server'))) {
             console.warn('🌐 Network error detected, attempting to reconnect...');
             // For network errors, try to restart recognition after a delay
             setTimeout(() => {
               if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 console.log('🔄 Attempting to restart recognition after network error...');
+                this.isInitMessageSent = false; // Force re-send
                 this.sendInitMessage();
               }
             }, 2000);
@@ -794,6 +806,8 @@ export class RenderWebSocketService {
 
     } catch (error) {
       console.error('❌ Error sending init message:', error);
+      // Reset flag on error so we can retry
+      this.isInitMessageSent = false;
     }
   }
 

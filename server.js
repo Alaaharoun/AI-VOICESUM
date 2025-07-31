@@ -412,7 +412,7 @@ function startWebSocketServer(server) {
           }
           
           if (!initialized && msg.type === 'init') {
-            const sourceLanguage = msg.language || 'auto';
+            const sourceLanguage = msg.language || msg.sourceLanguage || 'auto';
             autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
             lidMode = msg.lidMode || 'AtStart'; // Allow client to specify LID mode
             
@@ -543,7 +543,8 @@ function startWebSocketServer(server) {
               const isNetworkError = e.errorDetails && (
                 e.errorDetails.includes('network') || 
                 e.errorDetails.includes('Unable to contact server') ||
-                e.errorDetails.includes('StatusCode: 1002')
+                e.errorDetails.includes('StatusCode: 1002') ||
+                e.errorDetails.includes('StatusCode: 0')
               );
               
               if (isNetworkError) {
@@ -587,7 +588,12 @@ function startWebSocketServer(server) {
               },
               (err) => {
                 console.error('❌ Failed to start recognition:', err);
-                ws.send(JSON.stringify({ type: 'error', error: `Failed to start: ${err}` }));
+                ws.send(JSON.stringify({ 
+                  type: 'error', 
+                  error: `Failed to start recognition: ${err}`,
+                  lidMode: lidMode,
+                  isNetworkError: err.toString().includes('network') || err.toString().includes('Unable to contact server')
+                }));
               }
             );
             return;
