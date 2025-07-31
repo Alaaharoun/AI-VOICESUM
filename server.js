@@ -44,77 +44,6 @@ const AZURE_LANGUAGE_MAP = {
   'hi': 'hi-IN', 'bn': 'bn-IN', 'ur': 'ur-PK', 'fa': 'fa-IR', 'uk': 'uk-UA'
 };
 
-// All supported languages for auto-detection (Azure Speech Service supported)
-const AZURE_AUTO_DETECT_LANGUAGES = [
-  // English variants
-  "en-US", "en-GB", "en-AU", "en-CA", "en-IN",
-  
-  // Arabic variants
-  "ar-SA", "ar-EG", "ar-MA", "ar-AE", "ar-DZ", "ar-TN", "ar-JO", "ar-LB", 
-  "ar-KW", "ar-QA", "ar-BH", "ar-OM", "ar-YE", "ar-SY", "ar-IQ", "ar-LY", "ar-PS",
-  
-  // French variants
-  "fr-FR", "fr-CA", "fr-BE", "fr-CH",
-  
-  // Spanish variants
-  "es-ES", "es-MX", "es-AR", "es-CO", "es-PE", "es-VE", "es-EC", "es-GT", 
-  "es-CR", "es-PA", "es-CU", "es-BO", "es-DO", "es-HN", "es-PY", "es-SV", 
-  "es-NI", "es-PR", "es-UY", "es-CL",
-  
-  // German variants
-  "de-DE", "de-AT", "de-CH",
-  
-  // Italian variants
-  "it-IT", "it-CH",
-  
-  // Portuguese variants
-  "pt-BR", "pt-PT",
-  
-  // Russian
-  "ru-RU",
-  
-  // Chinese variants
-  "zh-CN", "zh-TW", "zh-HK",
-  
-  // Japanese
-  "ja-JP",
-  
-  // Korean
-  "ko-KR",
-  
-  // Indian languages
-  "hi-IN", "bn-IN", "ta-IN", "te-IN", "kn-IN", "ml-IN", "gu-IN", "mr-IN", "pa-IN",
-  
-  // Turkish
-  "tr-TR",
-  
-  // Dutch variants
-  "nl-NL", "nl-BE",
-  
-  // Scandinavian languages
-  "sv-SE", "da-DK", "nb-NO", "fi-FI",
-  
-  // Eastern European languages
-  "pl-PL", "cs-CZ", "hu-HU", "ro-RO", "bg-BG", "hr-HR", "sk-SK", "sl-SI", 
-  "et-EE", "lv-LV", "lt-LT", "uk-UA",
-  
-  // Other European languages
-  "el-GR", "mt-MT", "is-IS", "ga-IE", "cy-GB",
-  
-  // Middle Eastern languages
-  "he-IL", "fa-IR", "ur-PK",
-  
-  // Asian languages
-  "th-TH", "vi-VN", "id-ID", "ms-MY", "fil-PH",
-  
-  // African languages
-  "sw-KE", "am-ET", "zu-ZA", "af-ZA",
-  
-  // Other languages
-  "ka-GE", "hy-AM", "az-AZ", "kk-KZ", "ky-KG", "uz-UZ", "mn-MN", "my-MM", 
-  "km-KH", "lo-LA", "si-LK"
-];
-
 // Convert language code to Azure format
 function convertToAzureLanguage(langCode) {
   const azureCode = AZURE_LANGUAGE_MAP[langCode];
@@ -184,8 +113,7 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     azureKey: AZURE_SPEECH_KEY ? 'Present' : 'Missing',
-    supportedLanguages: Object.keys(AZURE_LANGUAGE_MAP).length,
-    autoDetectLanguages: AZURE_AUTO_DETECT_LANGUAGES.length
+    supportedLanguages: Object.keys(AZURE_LANGUAGE_MAP).length
   });
 });
 
@@ -248,7 +176,7 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
 });
 
 // ============================================================================
-// WEBSOCKET REAL-TIME STREAMING WITH AUTO-DETECTION
+// WEBSOCKET REAL-TIME STREAMING
 // ============================================================================
 
 let wsServer;
@@ -298,22 +226,28 @@ function startWebSocketServer(server) {
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
             speechConfig.enableDictation();
             
-            // Enhanced auto-detection setup
+            // Simplified auto-detection setup
             if (autoDetection) {
               console.log('🧠 Auto Language Detection Enabled');
-              console.log(`🌍 Auto-detecting from ${AZURE_AUTO_DETECT_LANGUAGES.length} supported languages`);
               
               try {
-                // Use AutoDetectSourceLanguageConfig for better auto-detection
-                const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(AZURE_AUTO_DETECT_LANGUAGES);
+                // Use a smaller subset of languages for better compatibility
+                const autoDetectLanguages = [
+                  "en-US", "en-GB", "ar-SA", "ar-EG", "fr-FR", "es-ES", "de-DE", 
+                  "it-IT", "pt-BR", "ru-RU", "zh-CN", "ja-JP", "ko-KR", "hi-IN"
+                ];
+                
+                const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(autoDetectLanguages);
                 recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectConfig, audioConfig);
                 console.log('✅ AutoDetect recognizer created successfully');
               } catch (error) {
                 console.error('❌ Failed to create AutoDetect recognizer:', error);
+                
                 // Fallback to specific language
                 speechConfig.speechRecognitionLanguage = 'en-US';
                 recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
                 console.log('🔄 Fallback to en-US recognizer');
+                autoDetection = false;
               }
             } else {
               // Specific language mode
@@ -323,7 +257,7 @@ function startWebSocketServer(server) {
               console.log(`✅ Specific language recognizer created: ${azureLanguage}`);
             }
             
-            // Enhanced event handlers with auto-detection support
+            // Event handlers
             recognizer.recognizing = (s, e) => {
               if (e.result.text && e.result.text.trim()) {
                 // Extract detected language for auto-detection mode
@@ -388,8 +322,7 @@ function startWebSocketServer(server) {
                 ws.send(JSON.stringify({ 
                   type: 'ready', 
                   message: 'Ready for audio',
-                  autoDetection: autoDetection,
-                  supportedLanguages: AZURE_AUTO_DETECT_LANGUAGES.length
+                  autoDetection: autoDetection
                 }));
               },
               (err) => {
@@ -473,6 +406,5 @@ server.listen(PORT, () => {
   console.log(`🔌 WebSocket: ws://localhost:${PORT}/ws`);
   console.log(`💚 Health check: http://localhost:${PORT}/health`);
   console.log(`🌍 Supported languages: ${Object.keys(AZURE_LANGUAGE_MAP).length}`);
-  console.log(`🧠 Auto-detection languages: ${AZURE_AUTO_DETECT_LANGUAGES.length}`);
   console.log('✨ Server ready for connections!');
 });
