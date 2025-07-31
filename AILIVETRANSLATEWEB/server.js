@@ -213,7 +213,8 @@ function startWebSocketServer(server) {
           }
           
           if (!initialized && msg.type === 'init') {
-            const sourceLanguage = msg.language || 'auto';
+            // Support both 'language' and 'sourceLanguage' fields for compatibility
+            const sourceLanguage = msg.language || msg.sourceLanguage || 'auto';
             autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
             
             console.log(`🌐 Initializing with language: ${sourceLanguage}, auto-detection: ${autoDetection}`);
@@ -278,7 +279,7 @@ function startWebSocketServer(server) {
                   detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
                   console.log(`🎤 [AUTO→${detectedLanguage || 'detecting...'}] Recognizing: "${e.result.text}"`);
                 } else {
-                  console.log(`🎤 [${language}] Recognizing: "${e.result.text}"`);
+                  console.log(`🎤 [${sourceLanguage}] Recognizing: "${e.result.text}"`);
                 }
                 
                 ws.send(JSON.stringify({ 
@@ -297,7 +298,7 @@ function startWebSocketServer(server) {
                   detectedLanguage = e.result.properties.getProperty(speechsdk.PropertyId.SpeechServiceConnection_AutoDetectSourceLanguageResult);
                   console.log(`✅ [AUTO→${detectedLanguage}] Final: "${e.result.text}"`);
                 } else {
-                  console.log(`✅ [${language}] Final: "${e.result.text}"`);
+                  console.log(`✅ [${sourceLanguage}] Final: "${e.result.text}"`);
                 }
                 
                 ws.send(JSON.stringify({ 
@@ -324,7 +325,8 @@ function startWebSocketServer(server) {
               const isNetworkError = e.errorDetails && (
                 e.errorDetails.includes('network') || 
                 e.errorDetails.includes('Unable to contact server') ||
-                e.errorDetails.includes('StatusCode: 1002')
+                e.errorDetails.includes('StatusCode: 1002') ||
+                e.errorDetails.includes('StatusCode: 0')
               );
               
               if (isNetworkError) {
