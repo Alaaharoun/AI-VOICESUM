@@ -215,7 +215,8 @@ function startWebSocketServer(server) {
           if (!initialized && msg.type === 'init') {
             // Support both 'language' and 'sourceLanguage' fields for compatibility
             const sourceLanguage = msg.language || msg.sourceLanguage || 'auto';
-            autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
+            // Only enable auto-detection if explicitly requested or if language is 'auto'
+            autoDetection = (sourceLanguage === 'auto') || (msg.autoDetection === true);
             
             console.log(`🌐 Initializing with language: ${sourceLanguage}, auto-detection: ${autoDetection}`);
             
@@ -269,6 +270,8 @@ function startWebSocketServer(server) {
               speechConfig.speechRecognitionLanguage = azureLanguage;
               recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
               console.log(`✅ Specific language recognizer created: ${azureLanguage}`);
+              console.log(`🎯 Using specific language: ${sourceLanguage} → ${azureLanguage}`);
+              console.log(`🎯 Using specific language: ${sourceLanguage} → ${azureLanguage}`);
             }
             
             // Event handlers
