@@ -293,41 +293,30 @@ function startWebSocketServer(server) {
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
             speechConfig.enableDictation();
             
-            // Improved auto-detection setup with better error handling
+            // Improved auto-detection setup with proper Azure Speech SDK implementation
             if (autoDetection) {
               console.log('🧠 Auto Language Detection Enabled');
               
               try {
-                // First try with a minimal set of languages for better compatibility
-                const autoDetectLanguages = ["en-US", "ar-SA", "fr-FR", "es-ES", "de-DE"];
+                // Use a very minimal set of languages for better compatibility
+                const autoDetectLanguages = ["en-US", "ar-SA"];
                 
-                // Create auto-detect config with proper error handling
+                // Create auto-detect config using the correct Azure Speech SDK method
                 const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(autoDetectLanguages);
                 
-                // Create recognizer with proper configuration order
+                // Create recognizer with the correct parameter order
                 recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectConfig, audioConfig);
                 console.log('✅ AutoDetect recognizer created successfully');
                 
               } catch (error) {
                 console.error('❌ Failed to create AutoDetect recognizer:', error);
                 
-                // Try alternative approach with different language set
-                try {
-                  console.log('🔄 Trying alternative auto-detection setup...');
-                  const alternativeLanguages = ["en-US", "ar-SA"];
-                  const altAutoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(alternativeLanguages);
-                  recognizer = new speechsdk.SpeechRecognizer(speechConfig, altAutoDetectConfig, audioConfig);
-                  console.log('✅ Alternative AutoDetect recognizer created successfully');
-                  
-                } catch (altError) {
-                  console.error('❌ Alternative auto-detection also failed:', altError);
-                  
-                  // Final fallback to specific language
-                  console.log('🔄 Final fallback to en-US recognizer');
-                  speechConfig.speechRecognitionLanguage = 'en-US';
-                  recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
-                  autoDetection = false;
-                }
+                // Fallback to specific language mode
+                console.log('🔄 Fallback to specific language mode');
+                speechConfig.speechRecognitionLanguage = 'en-US';
+                recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                autoDetection = false;
+                console.log('✅ Fallback recognizer created successfully');
               }
             } else {
               // Specific language mode
@@ -423,7 +412,7 @@ function startWebSocketServer(server) {
               }));
             };
             
-            // Start recognition
+            // Start recognition with better error handling
             recognizer.startContinuousRecognitionAsync(
               () => {
                 console.log('✅ Continuous recognition started');
@@ -436,7 +425,37 @@ function startWebSocketServer(server) {
               },
               (err) => {
                 console.error('❌ Failed to start recognition:', err);
-                ws.send(JSON.stringify({ type: 'error', error: `Failed to start: ${err}` }));
+                
+                // Try to restart with specific language if auto-detection fails
+                if (autoDetection) {
+                  console.log('🔄 Attempting to restart with specific language...');
+                  try {
+                    speechConfig.speechRecognitionLanguage = 'en-US';
+                    recognizer = new speechsdk.SpeechRecognizer(speechConfig, audioConfig);
+                    
+                    recognizer.startContinuousRecognitionAsync(
+                      () => {
+                        console.log('✅ Recognition restarted with specific language');
+                        initialized = true;
+                        autoDetection = false;
+                        ws.send(JSON.stringify({ 
+                          type: 'ready', 
+                          message: 'Ready for audio (fallback mode)',
+                          autoDetection: false
+                        }));
+                      },
+                      (fallbackErr) => {
+                        console.error('❌ Fallback recognition also failed:', fallbackErr);
+                        ws.send(JSON.stringify({ type: 'error', error: `Recognition failed: ${fallbackErr}` }));
+                      }
+                    );
+                  } catch (fallbackError) {
+                    console.error('❌ Failed to create fallback recognizer:', fallbackError);
+                    ws.send(JSON.stringify({ type: 'error', error: `Recognition setup failed: ${fallbackError}` }));
+                  }
+                } else {
+                  ws.send(JSON.stringify({ type: 'error', error: `Failed to start: ${err}` }));
+                }
               }
             );
             return;
