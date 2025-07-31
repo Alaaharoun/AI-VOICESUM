@@ -12,6 +12,7 @@ import { Mic, MicOff, Download, Brain, Wifi, WifiOff } from 'lucide-react';
     const [translation, setTranslation] = useState('');
     const [sourceLanguage, setSourceLanguage] = useState('auto');
     const [targetLanguage, setTargetLanguage] = useState('en');
+    const [lidMode, setLidMode] = useState<'AtStart' | 'Continuous'>('Continuous');
     const [isProcessing, setIsProcessing] = useState(false);
     const [realTimeTranscription, setRealTimeTranscription] = useState('');
     const [realTimeTranslation, setRealTimeTranslation] = useState('');
@@ -242,7 +243,12 @@ import { Mic, MicOff, Download, Brain, Wifi, WifiOff } from 'lucide-react';
   // Initialize Render WebSocket service with source and target languages
     const initializeRenderWebSocketService = async () => {
       try {
-      console.log('🔧 Initializing Render WebSocket service with languages:', { sourceLanguage, targetLanguage });
+      console.log('🔧 Initializing Render WebSocket service with LID support:', { 
+        sourceLanguage, 
+        targetLanguage, 
+        lidMode,
+        autoDetection: sourceLanguage === 'auto'
+      });
         setStreamingStatus('connecting');
         setIsInitializing(true);
         setError(null);
@@ -611,7 +617,15 @@ import { Mic, MicOff, Download, Brain, Wifi, WifiOff } from 'lucide-react';
                 </label>
                 <select
                   value={sourceLanguage}
-                  onChange={(e) => setSourceLanguage(e.target.value)}
+                  onChange={(e) => {
+                    setSourceLanguage(e.target.value);
+                    // Auto-set LID mode based on language selection
+                    if (e.target.value === 'auto') {
+                      setLidMode('Continuous');
+                    } else {
+                      setLidMode('AtStart');
+                    }
+                  }}
               disabled={isRecording}
                   className="w-full p-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
                 >
@@ -641,6 +655,56 @@ import { Mic, MicOff, Download, Brain, Wifi, WifiOff } from 'lucide-react';
                 </select>
               </div>
             </div>
+
+            {/* LID Mode Selection */}
+            {sourceLanguage === 'auto' && (
+              <div className="mb-6">
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Language Detection Mode
+                </label>
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                  <div className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                    lidMode === 'AtStart' 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-300 bg-white hover:bg-gray-50'
+                  }`}
+                  onClick={() => !isRecording && setLidMode('AtStart')}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-4 h-4 rounded-full border-2 ${
+                        lidMode === 'AtStart' ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                      }`}></div>
+                      <div>
+                        <h3 className="font-medium text-gray-900">At-Start Detection</h3>
+                        <p className="text-sm text-gray-600">
+                          Detects language once within first 5 seconds. Best for single-language audio.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                  
+                  <div className={`p-4 border rounded-lg cursor-pointer transition-all ${
+                    lidMode === 'Continuous' 
+                      ? 'border-blue-500 bg-blue-50' 
+                      : 'border-gray-300 bg-white hover:bg-gray-50'
+                  }`}
+                  onClick={() => !isRecording && setLidMode('Continuous')}
+                  >
+                    <div className="flex items-center space-x-3">
+                      <div className={`w-4 h-4 rounded-full border-2 ${
+                        lidMode === 'Continuous' ? 'border-blue-500 bg-blue-500' : 'border-gray-300'
+                      }`}></div>
+                      <div>
+                        <h3 className="font-medium text-gray-900">Continuous Detection</h3>
+                        <p className="text-sm text-gray-600">
+                          Real-time language detection. Best for multilingual audio.
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            )}
 
         <div className="grid md:grid-cols-2 gap-8">
           {/* Control Section */}
@@ -686,6 +750,11 @@ import { Mic, MicOff, Download, Brain, Wifi, WifiOff } from 'lucide-react';
                         <span className="text-xs text-blue-600">
                           Source: {sourceLanguages.find(l => l.code === sourceLanguage)?.name || sourceLanguage}
                         </span>
+                        {sourceLanguage === 'auto' && (
+                          <span className="text-xs text-purple-600 ml-2">
+                            (LID: {lidMode})
+                          </span>
+                        )}
                         {detectedLanguage && detectedLanguage !== sourceLanguage && (
                           <span className="text-xs text-green-600 ml-2">
                             (Detected: {detectedLanguage})

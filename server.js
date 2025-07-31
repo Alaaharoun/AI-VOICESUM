@@ -113,7 +113,20 @@ app.get('/health', (req, res) => {
     status: 'ok',
     timestamp: new Date().toISOString(),
     azureKey: AZURE_SPEECH_KEY ? 'Present' : 'Missing',
-    supportedLanguages: Object.keys(AZURE_LANGUAGE_MAP).length
+    supportedLanguages: Object.keys(AZURE_LANGUAGE_MAP).length,
+    languageIdentification: {
+      supported: true,
+      modes: ['AtStart', 'Continuous'],
+      maxLanguages: {
+        atStart: 4,
+        continuous: 10
+      },
+      endpoints: [
+        '/live-translate',
+        '/identify-language', 
+        '/batch-transcribe'
+      ]
+    }
   });
 });
 
@@ -175,6 +188,191 @@ app.post('/live-translate', upload.single('audio'), async (req, res) => {
   }
 });
 
+// Language identification endpoint using Azure REST API
+app.post('/identify-language', upload.single('audio'), async (req, res) => {
+  try {
+    let audioBuffer, audioType;
+    
+    if (req.file) {
+      audioBuffer = req.file.buffer;
+      audioType = req.file.mimetype;
+    } else if (req.body && req.body.audio && req.body.audioType) {
+      audioBuffer = Buffer.from(req.body.audio, 'base64');
+      audioType = req.body.audioType;
+    } else {
+      return res.status(400).json({ error: 'Missing audio data' });
+    }
+    
+    if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+      return res.status(500).json({ error: 'Azure Speech API not configured' });
+    }
+    
+    if (!SUPPORTED_AUDIO_TYPES.includes(audioType)) {
+      return res.status(400).json({ error: 'Unsupported audio format' });
+    }
+    
+    console.log(`🔍 Language identification: ${audioType}, ${audioBuffer.length} bytes`);
+    
+    const wavBuffer = await convertAudioFormat(audioBuffer, audioType);
+    
+    // Get candidate languages from request or use defaults
+    const candidateLanguages = req.body.candidateLanguages || [
+      'en-US', 'ar-SA', 'fr-FR', 'es-ES', 'de-DE'
+    ];
+    
+    // Use Azure's language identification endpoint
+    const lidEndpoint = `https://${AZURE_SPEECH_REGION}.stt.speech.microsoft.com/speech/recognition/conversation/cognitiveservices/v1?language=auto`;
+    
+    const azureRes = await fetch(lidEndpoint, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
+        'Content-Type': 'audio/wav',
+        'Accept': 'application/json',
+        'X-Requested-With': 'XMLHttpRequest'
+      },
+      body: wavBuffer
+    });
+    
+    if (!azureRes.ok) {
+      const errorText = await azureRes.text();
+      console.error('❌ Azure LID error:', azureRes.status, errorText);
+      return res.status(azureRes.status).json({ 
+        error: 'Language identification failed',
+        details: errorText
+      });
+    }
+    
+    const azureData = await azureRes.json();
+    
+    // Extract detected language from response headers or body
+    const detectedLanguage = azureRes.headers.get('X-Detected-Language') || 
+                           azureData.Language || 
+                           azureData.language ||
+                           'unknown';
+    
+    console.log(`✅ Language identified: ${detectedLanguage}`);
+    
+    res.json({ 
+      detectedLanguage: detectedLanguage,
+      confidence: azureData.Confidence || 0.0,
+      transcription: azureData.DisplayText || '',
+      candidateLanguages: candidateLanguages
+    });
+    
+  } catch (error) {
+    console.error('❌ Language identification error:', error);
+    res.status(500).json({ error: 'Language identification failed' });
+  }
+});
+
+// Batch transcription with language identification
+app.post('/batch-transcribe', upload.single('audio'), async (req, res) => {
+  try {
+    let audioBuffer, audioType;
+    
+    if (req.file) {
+      audioBuffer = req.file.buffer;
+      audioType = req.file.mimetype;
+    } else if (req.body && req.body.audio && req.body.audioType) {
+      audioBuffer = Buffer.from(req.body.audio, 'base64');
+      audioType = req.body.audioType;
+    } else {
+      return res.status(400).json({ error: 'Missing audio data' });
+    }
+    
+    if (!AZURE_SPEECH_KEY || !AZURE_SPEECH_REGION) {
+      return res.status(500).json({ error: 'Azure Speech API not configured' });
+    }
+    
+    console.log(`📝 Batch transcription: ${audioType}, ${audioBuffer.length} bytes`);
+    
+    // Get candidate languages from request
+    const candidateLanguages = req.body.candidateLanguages || [
+      'en-US', 'ar-SA', 'fr-FR', 'es-ES', 'de-DE'
+    ];
+    
+    // Create batch transcription request with language identification
+    const batchEndpoint = `https://${AZURE_SPEECH_REGION}.api.cognitive.microsoft.com/speechtotext/v3.1/transcriptions`;
+    
+    // First, create the transcription
+    const createResponse = await fetch(batchEndpoint, {
+      method: 'POST',
+      headers: {
+        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        properties: {
+          languageIdentification: {
+            candidateLocales: candidateLanguages
+          }
+        }
+      })
+    });
+    
+    if (!createResponse.ok) {
+      const errorText = await createResponse.text();
+      console.error('❌ Batch transcription creation failed:', createResponse.status, errorText);
+      return res.status(createResponse.status).json({ 
+        error: 'Batch transcription creation failed',
+        details: errorText
+      });
+    }
+    
+    const transcriptionData = await createResponse.json();
+    const transcriptionId = transcriptionData.id;
+    
+    console.log(`📝 Created batch transcription: ${transcriptionId}`);
+    
+    // Upload audio file
+    const uploadUrl = transcriptionData.links.content;
+    const uploadResponse = await fetch(uploadUrl, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'audio/wav'
+      },
+      body: audioBuffer
+    });
+    
+    if (!uploadResponse.ok) {
+      console.error('❌ Audio upload failed:', uploadResponse.status);
+      return res.status(uploadResponse.status).json({ error: 'Audio upload failed' });
+    }
+    
+    console.log(`✅ Audio uploaded successfully`);
+    
+    // Start transcription
+    const startResponse = await fetch(`${batchEndpoint}/${transcriptionId}`, {
+      method: 'PATCH',
+      headers: {
+        'Ocp-Apim-Subscription-Key': AZURE_SPEECH_KEY,
+        'Content-Type': 'application/json'
+      },
+      body: JSON.stringify({
+        status: 'Running'
+      })
+    });
+    
+    if (!startResponse.ok) {
+      console.error('❌ Failed to start transcription:', startResponse.status);
+      return res.status(startResponse.status).json({ error: 'Failed to start transcription' });
+    }
+    
+    console.log(`✅ Batch transcription started`);
+    
+    res.json({ 
+      transcriptionId: transcriptionId,
+      status: 'started',
+      message: 'Batch transcription with language identification started'
+    });
+    
+  } catch (error) {
+    console.error('❌ Batch transcription error:', error);
+    res.status(500).json({ error: 'Batch transcription failed' });
+  }
+});
+
 // ============================================================================
 // WEBSOCKET REAL-TIME STREAMING
 // ============================================================================
@@ -200,6 +398,7 @@ function startWebSocketServer(server) {
     let initialized = false;
     let autoDetection = false;
     let detectedLanguage = null;
+    let lidMode = 'AtStart'; // Default to AtStart, can be 'Continuous'
 
     ws.on('message', (data) => {
       try {
@@ -215,8 +414,9 @@ function startWebSocketServer(server) {
           if (!initialized && msg.type === 'init') {
             const sourceLanguage = msg.language || 'auto';
             autoDetection = sourceLanguage === 'auto' || msg.autoDetection || false;
+            lidMode = msg.lidMode || 'AtStart'; // Allow client to specify LID mode
             
-            console.log(`🌐 Initializing with language: ${sourceLanguage}, auto-detection: ${autoDetection}`);
+            console.log(`🌐 Initializing with language: ${sourceLanguage}, auto-detection: ${autoDetection}, LID mode: ${lidMode}`);
             
             // Create Azure Speech configuration
             const audioFormat = speechsdk.AudioStreamFormat.getWaveFormatPCM(16000, 16, 1);
@@ -226,16 +426,32 @@ function startWebSocketServer(server) {
             speechConfig = speechsdk.SpeechConfig.fromSubscription(AZURE_SPEECH_KEY, AZURE_SPEECH_REGION);
             speechConfig.enableDictation();
             
+            // Set language identification mode for continuous LID
+            if (lidMode === 'Continuous') {
+              speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, 'Continuous');
+              console.log('🔄 Continuous Language Identification enabled');
+            } else {
+              speechConfig.setProperty(speechsdk.PropertyId.SpeechServiceConnection_LanguageIdMode, 'AtStart');
+              console.log('🎯 At-Start Language Identification enabled');
+            }
+            
             // Improved auto-detection setup with better error handling
             if (autoDetection) {
               console.log('🧠 Auto Language Detection Enabled');
               
               try {
-                // First try with a minimal set of languages for better compatibility
-                const autoDetectLanguages = ["en-US", "ar-SA", "fr-FR", "es-ES", "de-DE"];
+                // Define candidate languages based on LID mode
+                // For AtStart: up to 4 languages, for Continuous: up to 10 languages
+                const maxLanguages = lidMode === 'Continuous' ? 10 : 4;
+                const candidateLanguages = [
+                  "en-US", "ar-SA", "fr-FR", "es-ES", "de-DE", 
+                  "it-IT", "pt-BR", "ru-RU", "ja-JP", "ko-KR"
+                ].slice(0, maxLanguages);
+                
+                console.log(`🎯 Using ${candidateLanguages.length} candidate languages: ${candidateLanguages.join(', ')}`);
                 
                 // Create auto-detect config with proper error handling
-                const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(autoDetectLanguages);
+                const autoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(candidateLanguages);
                 
                 // Create recognizer with proper configuration order
                 recognizer = new speechsdk.SpeechRecognizer(speechConfig, autoDetectConfig, audioConfig);
@@ -244,10 +460,10 @@ function startWebSocketServer(server) {
               } catch (error) {
                 console.error('❌ Failed to create AutoDetect recognizer:', error);
                 
-                // Try alternative approach with different language set
+                // Try alternative approach with minimal language set
                 try {
                   console.log('🔄 Trying alternative auto-detection setup...');
-                  const alternativeLanguages = ["en-US", "ar-SA"];
+                  const alternativeLanguages = ["en-US", "ar-SA", "fr-FR"];
                   const altAutoDetectConfig = speechsdk.AutoDetectSourceLanguageConfig.fromLanguages(alternativeLanguages);
                   recognizer = new speechsdk.SpeechRecognizer(speechConfig, altAutoDetectConfig, audioConfig);
                   console.log('✅ Alternative AutoDetect recognizer created successfully');
@@ -270,7 +486,7 @@ function startWebSocketServer(server) {
               console.log(`✅ Specific language recognizer created: ${azureLanguage}`);
             }
             
-            // Event handlers
+            // Event handlers with improved language detection
             recognizer.recognizing = (s, e) => {
               if (e.result.text && e.result.text.trim()) {
                 // Extract detected language for auto-detection mode
@@ -285,7 +501,8 @@ function startWebSocketServer(server) {
                   type: 'transcription', 
                   text: e.result.text,
                   isPartial: true,
-                  detectedLanguage: detectedLanguage
+                  detectedLanguage: detectedLanguage,
+                  lidMode: lidMode
                 }));
               }
             };
@@ -304,7 +521,8 @@ function startWebSocketServer(server) {
                   type: 'final', 
                   text: e.result.text,
                   isPartial: false,
-                  detectedLanguage: detectedLanguage
+                  detectedLanguage: detectedLanguage,
+                  lidMode: lidMode
                 }));
               } else if (e.result.reason === speechsdk.ResultReason.NoMatch) {
                 console.log('⚪ No speech could be recognized');
@@ -312,7 +530,8 @@ function startWebSocketServer(server) {
                   type: 'final', 
                   text: '',
                   reason: 'NoMatch',
-                  detectedLanguage: detectedLanguage
+                  detectedLanguage: detectedLanguage,
+                  lidMode: lidMode
                 }));
               }
             };
@@ -349,7 +568,8 @@ function startWebSocketServer(server) {
                 error: `Recognition canceled: ${e.errorDetails}`,
                 reason: e.reason,
                 errorCode: e.errorCode,
-                isNetworkError: isNetworkError
+                isNetworkError: isNetworkError,
+                lidMode: lidMode
               }));
             };
             
@@ -361,7 +581,8 @@ function startWebSocketServer(server) {
                 ws.send(JSON.stringify({ 
                   type: 'ready', 
                   message: 'Ready for audio',
-                  autoDetection: autoDetection
+                  autoDetection: autoDetection,
+                  lidMode: lidMode
                 }));
               },
               (err) => {

@@ -449,14 +449,24 @@ export class RenderWebSocketService {
         
         // Handle different message types
         if (data.type === 'transcription') {
-          console.log('📝 Received transcription:', data.text);
+          console.log('📝 Received transcription with LID support:', {
+            text: data.text,
+            detectedLanguage: data.detectedLanguage,
+            lidMode: data.lidMode,
+            isPartial: data.isPartial
+          });
           const detectedLanguage = data.detectedLanguage || data.language;
           this.detectedLanguage = detectedLanguage || '';
           if (this.onTranscriptionUpdate) {
             this.onTranscriptionUpdate(data.text, detectedLanguage);
           }
         } else if (data.type === 'final') {
-          console.log('✅ Received final transcription:', data.text);
+          console.log('✅ Received final transcription with LID support:', {
+            text: data.text,
+            detectedLanguage: data.detectedLanguage,
+            lidMode: data.lidMode,
+            reason: data.reason
+          });
           const detectedLanguage = data.detectedLanguage || data.language;
           this.detectedLanguage = detectedLanguage || '';
           if (this.onTranscriptionUpdate) {
@@ -490,7 +500,12 @@ export class RenderWebSocketService {
             console.warn('⚠️ Detected language may not be fully supported:', data.language);
           }
         } else if (data.type === 'ready') {
-          console.log('✅ Server ready message received');
+          console.log('✅ Server ready message received with LID support');
+          console.log('📊 LID Configuration:', {
+            autoDetection: data.autoDetection,
+            lidMode: data.lidMode,
+            message: data.message
+          });
           this.isInitialized = true;
           this.processAudioQueue(); // Process any queued audio
         } else if (data.type === 'initialized') {
@@ -513,18 +528,23 @@ export class RenderWebSocketService {
           const errorPhase = errorDetails.phase || 'unknown';
           const errorType = errorDetails.errorType || 'UnknownError';
           
-          console.error('❌ Server error:', {
+          console.error('❌ Server error with LID support:', {
             message: data.error || data.message,
             phase: errorPhase,
             type: errorType,
-            details: errorDetails
+            details: errorDetails,
+            lidMode: data.lidMode,
+            isNetworkError: data.isNetworkError,
+            reason: data.reason,
+            errorCode: data.errorCode
           });
           
           // Enhanced error reporting for Azure Speech SDK issues
           if (errorPhase === 'azure_initialization') {
-            console.error('🔧 Azure Speech SDK initialization failed:', {
+            console.error('🔧 Azure Speech SDK initialization failed with LID:', {
               language: errorDetails.language,
               autoDetection: errorDetails.autoDetection,
+              lidMode: data.lidMode,
               errorType: errorType
             });
             
@@ -533,6 +553,8 @@ export class RenderWebSocketService {
               console.error('💡 Potential fix: Audio configuration issue - try restarting the connection or check Azure Speech SDK compatibility');
             } else if (errorType.includes('AutoDetect')) {
               console.error('💡 Potential fix: Auto-detection issue - try using a specific language instead of auto-detect');
+            } else if (errorType.includes('LanguageId')) {
+              console.error('💡 Potential fix: Language identification issue - try using AtStart mode instead of Continuous');
             }
           }
           
@@ -544,6 +566,15 @@ export class RenderWebSocketService {
             setTimeout(() => {
               if (this.ws && this.ws.readyState === WebSocket.OPEN) {
                 console.log('🔄 Attempting to reinitialize after quota error...');
+                this.sendInitMessage();
+              }
+            }, 2000);
+          } else if (data.isNetworkError) {
+            console.warn('🌐 Network error detected, attempting to reconnect...');
+            // For network errors, try to restart recognition after a delay
+            setTimeout(() => {
+              if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                console.log('🔄 Attempting to restart recognition after network error...');
                 this.sendInitMessage();
               }
             }, 2000);
@@ -726,25 +757,32 @@ export class RenderWebSocketService {
       console.log('📊 WebSocket state:', this.ws?.readyState);
       console.log('📊 Connection status:', this.isConnected);
 
-      console.log('📤 Sending init message:', {
+      // Determine LID mode based on source language
+      const lidMode = this.sourceLanguage === 'auto' ? 'Continuous' : 'AtStart';
+      const autoDetection = this.sourceLanguage === 'auto';
+
+      console.log('📤 Sending init message with LID support:', {
         type: 'init',
-        sourceLanguage: this.sourceLanguage,
-        realTime: true
+        language: this.sourceLanguage,
+        autoDetection: autoDetection,
+        lidMode: lidMode
       });
 
       const initMessage = {
         type: 'init',
-        sourceLanguage: this.sourceLanguage,
-        realTime: true
+        language: this.sourceLanguage,
+        autoDetection: autoDetection,
+        lidMode: lidMode
       };
 
       this.sendMessage(initMessage);
       this.isInitMessageSent = true;
-      console.log('✅ Init message sent successfully');
+      console.log('✅ Init message sent successfully with LID support');
       console.log('📤 Sent init message to server:', {
         type: 'init',
-        sourceLanguage: this.sourceLanguage,
-        realTime: true
+        language: this.sourceLanguage,
+        autoDetection: autoDetection,
+        lidMode: lidMode
       });
       
       // Add a small delay to ensure the message is sent
